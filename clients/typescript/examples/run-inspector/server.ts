@@ -5,8 +5,8 @@ import { stripTypeScriptTypes } from "node:module";
 import { normalize, relative } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { LightspeedClient, type LightspeedClientOptions } from "@lightspeed-ai/sdk";
-import { createRpcProxy } from "@lightspeed-ai/sdk/server";
+
+import { HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -17,11 +17,9 @@ function required(name: string): string {
 const password = Buffer.from(required("INSPECTOR_PASSWORD"));
 const port = Number(process.env.PORT ?? 18090);
 
-const options: LightspeedClientOptions = {
-  endpoint: required("LIGHTSPEED_API_URL"),
-  apiKey: required("LIGHTSPEED_API_KEY"),
-};
-if (process.env.LIGHTSPEED_UNIVERSE) options.universe = process.env.LIGHTSPEED_UNIVERSE;
+const endpoint = required("LIGHTSPEED_API_URL").replace(/\/$/, "");
+const runtimeToken = required("LIGHTSPEED_RUNTIME_TOKEN");
+const universe = required("LIGHTSPEED_UNIVERSE");
 
 /** Stands in for your application's login. Any username, one shared password. */
 function signedIn(authorization: string | null | undefined): boolean {
@@ -31,21 +29,29 @@ function signedIn(authorization: string | null | undefined): boolean {
   return supplied.length === password.length && timingSafeEqual(supplied, password);
 }
 
-const rpc = createRpcProxy({
-  client: new LightspeedClient(options),
-  methods: [
-    "session/list",
-    "session/read",
-    "session/events/read",
-    "session/runs/list",
-    "session/runs/read",
-    "session/runs/cancel",
-    "session/runs/approvals/decide",
-    "blobs/read",
-  ],
-  authorize: ({ request }) =>
-    signedIn(request.headers.get("authorization")) ? {} : { deny: "unauthenticated" },
-});
+const allowedOperations = [
+  "session/list", "session/read", "session/events/read", "session/runs/list", "session/runs/read",
+  "session/runs/cancel", "session/runs/approvals/decide", "blobs/read",
+] as const;
+
+async function forward(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const allowed = allowedOperations.some((id) => {
+    const binding = HTTP_OPERATIONS[id];
+    const route = binding.path.replace("{universe}", encodeURIComponent(universe));
+    return request.method === binding.method && new RegExp("^" + route.replace(/\{[^}]+\}/g, "[^/]+") + "$").test(url.pathname);
+  });
+  if (!allowed) return new Response("not found", { status: 404 });
+  const headers = new Headers();
+  headers.set("authorization", `Bearer ${runtimeToken}`);
+  for (const name of ["content-type", "accept", "range"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  const init: RequestInit & { duplex?: "half" } = { method: request.method, headers, signal: request.signal };
+  if (request.body) { init.body = request.body; init.duplex = "half"; }
+  return fetch(endpoint + url.pathname.slice("/api/v1".length) + url.search, init);
+}
 
 const here = new URL("./", import.meta.url);
 const sdkDist = fileURLToPath(new URL("../../dist/", import.meta.url));
@@ -61,13 +67,14 @@ async function sdkModule(path: string): Promise<Response> {
 
 async function route(request: Request): Promise<Response> {
   const { pathname } = new URL(request.url);
-  if (pathname === "/rpc") return rpc(request);
   if (!signedIn(request.headers.get("authorization"))) {
     return new Response("sign in required", {
       status: 401,
       headers: { "www-authenticate": 'Basic realm="Run inspector"' },
     });
   }
+  if (pathname.startsWith("/api/v1/")) return forward(request);
+  if (pathname === "/connection") return Response.json({ universe });
   if (pathname === "/") {
     return new Response(await readFile(new URL("index.html", here)), {
       headers: { "content-type": "text/html; charset=utf-8" },
@@ -90,13 +97,14 @@ async function handle(incoming: IncomingMessage, outgoing: ServerResponse): Prom
     headers: incoming.headers as Record<string, string>,
     signal: closed.signal,
   };
-  if (incoming.method === "POST") {
+  if (incoming.method !== "GET" && incoming.method !== "HEAD") {
     init.body = Readable.toWeb(incoming) as ReadableStream;
     (init as { duplex?: string }).duplex = "half";
   }
   const response = await route(new Request(`http://${incoming.headers.host}${incoming.url}`, init));
   outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-  outgoing.end(Buffer.from(await response.arrayBuffer()));
+  if (!response.body) { outgoing.end(); return; }
+  Readable.fromWeb(response.body as import("node:stream/web").ReadableStream).pipe(outgoing);
 }
 
 createServer((incoming, outgoing) => {

@@ -8,8 +8,8 @@ node scripts/release/prepare-version.mjs --check
 grep -F "channel = \"$LIGHTSPEED_RELEASE_RUST_VERSION\"" rust-toolchain.toml >/dev/null
 grep -F "pub const REQUIRED_SCHEMA_REVISION: i64 = $LIGHTSPEED_SCHEMA_REVISION;" \
   crates/store-pg/src/migrations.rs >/dev/null
-grep -F "pub const PROTOCOL_VERSION: &str = \"$LIGHTSPEED_API_PROTOCOL_VERSION\";" \
-  crates/api/src/constants.rs >/dev/null
+grep -F "pub const HTTP_CONTRACT_REVISION: &str = \"$LIGHTSPEED_HTTP_CONTRACT_REVISION\";" \
+  crates/api/src/http_contract.rs >/dev/null
 grep -F "pub const ENVD_PROTOCOL_VERSION: u32 = $LIGHTSPEED_ENVD_PROTOCOL_VERSION;" \
   crates/environment-protocol/src/version.rs >/dev/null
 grep -F "pub const CONTROLLER_PROTOCOL_VERSION: u32 = $LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION;" \

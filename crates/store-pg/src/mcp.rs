@@ -4,7 +4,7 @@ use ::mcp::{
     PutMcpServerRecord, RemoteMcpTransport,
 };
 use async_trait::async_trait;
-use auth::{RequestHeaderValue, RequestHeaders};
+use credentials::{RequestHeaderValue, RequestHeaders};
 use sqlx::Row;
 
 use crate::PgStore;
@@ -16,7 +16,7 @@ impl McpRegistryStore for PgStore {
         record: PutMcpServerRecord,
         expected_revision: Option<u64>,
     ) -> Result<McpServerRecord, McpRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
         // A concurrent writer between the read and the write loses exactly one
@@ -101,7 +101,7 @@ impl McpRegistryStore for PgStore {
         &self,
         server_id: &McpServerId,
     ) -> Result<McpServerRecord, McpRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
         let mut tx = self
@@ -445,11 +445,11 @@ fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, McpRegi
             let value = match (row.literal_value, row.grant_id) {
                 (Some(value), None) => RequestHeaderValue::Literal { value },
                 (None, Some(grant_id)) => RequestHeaderValue::Credential {
-                    grant_id: auth::AuthGrantId::try_new(grant_id).map_err(|error| {
-                        McpRegistryError::Store {
+                    grant_id: credentials::CredentialGrantId::try_new(grant_id).map_err(
+                        |error| McpRegistryError::Store {
                             message: format!("decode mcp header grant id: {error}"),
-                        }
-                    })?,
+                        },
+                    )?,
                 },
                 _ => {
                     return Err(McpRegistryError::Store {
@@ -488,7 +488,7 @@ fn server_record_from_row(
         .map_err(|error| mcp_sql_error("decode mcp auth metadata", error))?;
     let auth_grant_id: Option<String> = row
         .try_get("auth_grant_id")
-        .map_err(|error| mcp_sql_error("decode mcp auth grant id", error))?;
+        .map_err(|error| mcp_sql_error("decode mcp credential grant id", error))?;
     let status: String = row
         .try_get("status")
         .map_err(|error| mcp_sql_error("decode mcp status", error))?;
@@ -530,10 +530,10 @@ fn server_record_from_row(
             .map_err(|error| mcp_sql_error("decode mcp private-network flag", error))?,
         auth_policy: auth_policy_from_columns(&auth_policy, auth_metadata_json)?,
         auth_grant_id: auth_grant_id
-            .map(auth::AuthGrantId::try_new)
+            .map(credentials::CredentialGrantId::try_new)
             .transpose()
             .map_err(|error| McpRegistryError::Store {
-                message: format!("decode mcp auth grant id: {error}"),
+                message: format!("decode mcp credential grant id: {error}"),
             })?,
         headers: headers_from_json(headers_json)?,
         status: status_from_str(&status)?,
@@ -757,14 +757,15 @@ fn mcp_sql_error(action: &str, error: sqlx::Error) -> McpRegistryError {
 mod tests {
     use super::*;
 
-    const MIGRATION: &str = include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql");
-
     #[test]
     fn stored_execution_values_round_trip_and_pass_the_check() {
         for execution in [McpExecution::Provider, McpExecution::Runtime] {
             let stored = execution_to_str(execution);
             assert_eq!(execution_from_str(stored).unwrap(), execution);
-            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+            assert!(
+                crate::MCP_SCHEMA_SQL.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
         }
         assert!(execution_from_str("native").is_err());
     }

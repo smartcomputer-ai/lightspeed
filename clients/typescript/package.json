@@ -30,9 +30,17 @@
       "default": "./dist/server.js"
     },
     "./schema/api.schema.json": "./schema/api.schema.json",
+    "./schema/http.json": "./schema/http.json",
+    "./schema/openapi.json": "./schema/openapi.json",
     "./schema/workflow.schema.json": "./schema/workflow.schema.json",
     "./schema/workflow.json": "./schema/workflow.json",
-    "./release.json": "./release.json"
+    "./release.json": "./release.json",
+    "./schema/platform.schema.json": "./schema/platform.schema.json",
+    "./schema/platform-http.json": "./schema/platform-http.json",
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
   },
   "files": [
     "dist",
@@ -54,7 +62,7 @@
     "generate": "node scripts/generate.mjs",
     "check:generated": "npm run generate && git diff --exit-code -- src/generated schema",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p examples/run-inspector/tsconfig.json --noEmit",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "test": "vitest run",
     "check": "npm run check:generated && npm run typecheck && npm run test && npm run build"
   },

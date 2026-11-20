@@ -114,7 +114,7 @@ The current implementation includes:
 - [x] **Sub-agents**: delegate work to supervised child agents with configurable profiles and limits
 - [x] **Agent profiles**: reusable session setups, shared across clients and sub-agents
 
-**Bots & channels**
+**Bots**
 
 - [x] **Bots**: create always-on agents that wake up for scheduled tasks,
   incoming webhooks, data changes, or chat messages; session instructions
@@ -122,7 +122,6 @@ The current implementation includes:
 - [x] **Bot federation**: bots talk to each other and coordinate work
 - [x] **Triggers**: bots can create and manage their own schedules, webhooks,
   and pollers
-- [x] **Chat channels**: talk to bots via Telegram and WhatsApp
 
 **Durability & scale**
 
@@ -149,7 +148,7 @@ The current implementation includes:
 
 - [x] **Encrypted secrets**: credentials are encrypted at rest, with automatic OAuth token refresh
 - [x] **Credential injection**: environments and jobs receive secrets without exposing them to the model
-- [x] **Role based access**: give users different responsibilities in the same universe: admin, AI operator, contributor, and viewer
+- [x] **Role based access**: give users different responsibilities in the same universe: owner, operator, contributor, and viewer
 - [x] **Multi-tenant by default**: isolate tenants in universes on one deployment or run dedicated per-tenant deployments
 
 ## Design
@@ -190,7 +189,7 @@ for focused checks, replay coverage, live-test prerequisites, and model evaluati
 - [Local development](docs/documentation/development/local-development.md)
 - [Environment variables](docs/documentation/reference/environment-variables.md)
 - [Access and security](docs/documentation/access-and-security/overview.md)
-- [JSON-RPC API reference](crates/api/contract/api-reference.md)
+- [HTTP API reference](crates/api/contract/api-reference.md)
 - [Contributing and releasing](docs/documentation/development/contributing-and-releasing.md)
 
 Preview the Starlight manual with `./dev.sh docs`.

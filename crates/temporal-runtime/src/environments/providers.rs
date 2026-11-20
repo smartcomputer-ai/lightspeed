@@ -3,88 +3,132 @@ use super::*;
 
 use ::environments::{
     DaemonBuild, EnvironmentCloseReason, EnvironmentDisplayStatus,
-    EnvironmentProviderBindingRecord, EnvironmentProviderId, EnvironmentProviderRecord,
-    EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentState, IdlePolicy,
-    ObservedTarget, PowerState, TargetPhase,
+    EnvironmentProviderBindingRecord, EnvironmentProviderBindingStore, EnvironmentProviderId,
+    EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentRecord,
+    EnvironmentRegistryError, EnvironmentSource, EnvironmentState, IdlePolicy, ObservedTarget,
+    PowerState, TargetPhase,
 };
 use environment_protocol::{
     control::template::{EnvironmentTemplate, ListTemplatesParams},
     ids::UniverseId,
 };
 
+/// Resolve the provider the caller may dial for this universe.
+pub(crate) async fn read_available_provider(
+    store: &(impl EnvironmentProviderStore + EnvironmentProviderBindingStore),
+    universe_id: uuid::Uuid,
+    provider_id: &EnvironmentProviderId,
+) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+    let provider = store.read_provider(provider_id).await?;
+    if !provider.available_to_all_universes {
+        store
+            .read_provider_binding(universe_id, provider_id)
+            .await?;
+    }
+    Ok(provider)
+}
+
 impl EnvironmentService {
-    pub(crate) async fn list_environment_provider_binding_records(
+    /// The providers this universe may use, as its members see them.
+    async fn available_environment_providers(
         &self,
-        _params: EnvironmentProviderBindingListParams,
-    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
-        let records = ::environments::EnvironmentProviderBindingStore::list_provider_bindings(
-            self.store.as_ref(),
-            self.store.config().universe_id,
+    ) -> Result<Vec<EnvironmentProviderRecord>, AgentApiError> {
+        let bound: std::collections::BTreeSet<EnvironmentProviderId> =
+            ::environments::EnvironmentProviderBindingStore::list_provider_bindings(
+                self.store.as_ref(),
+                self.store.config().universe_id,
+            )
+            .await
+            .map_err(map_environments_error)?
+            .into_iter()
+            .map(|binding| binding.provider_id)
+            .collect();
+        Ok(
+            ::environments::EnvironmentProviderStore::list_providers(self.store.as_ref())
+                .await
+                .map_err(map_environments_error)?
+                .into_iter()
+                .filter(|provider| {
+                    ::environments::provider_available(
+                        provider,
+                        bound.contains(&provider.provider_id),
+                    )
+                })
+                .collect(),
         )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(EnvironmentProviderBindingListResponse {
-            bindings: records
+    }
+
+    pub(crate) async fn list_available_environment_provider_records(
+        &self,
+        _params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
+        Ok(AvailableEnvironmentProviderListResponse {
+            providers: self
+                .available_environment_providers()
+                .await?
                 .iter()
-                .map(environment_provider_binding_view)
+                .map(available_environment_provider_view)
                 .collect(),
         })
     }
 
-    pub(crate) async fn read_environment_provider_binding_record(
+    pub(crate) async fn read_available_environment_provider_record(
         &self,
-        params: EnvironmentProviderBindingReadParams,
-    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
+        params: AvailableEnvironmentProviderReadParams,
+    ) -> Result<AvailableEnvironmentProviderReadResponse, AgentApiError> {
         let provider_id = parse_environment_provider_id(params.provider_id)?;
-        let record = ::environments::EnvironmentProviderBindingStore::read_provider_binding(
-            self.store.as_ref(),
-            self.store.config().universe_id,
-            &provider_id,
-        )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(EnvironmentProviderBindingReadResponse {
-            binding: environment_provider_binding_view(&record),
+        let provider = self
+            .available_environment_providers()
+            .await?
+            .into_iter()
+            .find(|provider| provider.provider_id == provider_id)
+            .ok_or_else(|| {
+                AgentApiError::not_found(format!(
+                    "environment provider {provider_id} is not available to this universe"
+                ))
+            })?;
+        Ok(AvailableEnvironmentProviderReadResponse {
+            provider: available_environment_provider_view(&provider),
         })
     }
 
-    /// Templates are listed live from every enabled binding's provider;
-    /// nothing about them is stored.
+    /// Templates are listed live from every provider available to the
+    /// universe; nothing about them is stored.
     pub(crate) async fn list_environment_template_records(
         &self,
         params: EnvironmentTemplateListParams,
     ) -> Result<EnvironmentTemplateListResponse, AgentApiError> {
         let universe_id = self.store.config().universe_id;
-        let bindings = match params
+        let requested = params
             .provider_id
             .map(parse_environment_provider_id)
-            .transpose()?
+            .transpose()?;
+        let available: Vec<EnvironmentProviderRecord> = self
+            .available_environment_providers()
+            .await?
+            .into_iter()
+            .filter(|provider| {
+                requested
+                    .as_ref()
+                    .is_none_or(|id| &provider.provider_id == id)
+            })
+            .collect();
+        if let Some(requested) = &requested
+            && available.is_empty()
         {
-            Some(provider_id) => vec![
-                ::environments::EnvironmentProviderBindingStore::read_provider_binding(
-                    self.store.as_ref(),
-                    universe_id,
-                    &provider_id,
-                )
-                .await
-                .map_err(map_environments_error)?,
-            ],
-            None => ::environments::EnvironmentProviderBindingStore::list_provider_bindings(
-                self.store.as_ref(),
-                universe_id,
-            )
-            .await
-            .map_err(map_environments_error)?,
-        };
+            return Err(AgentApiError::invalid_request(format!(
+                "environment provider {requested} is not available to this universe"
+            )));
+        }
         let universe = UniverseId::new(universe_id.to_string()).map_err(|error| {
             AgentApiError::internal(format!(
                 "universe id does not fit the controller protocol: {error}"
             ))
         })?;
         let mut templates = Vec::new();
-        for binding in bindings.into_iter().filter(|binding| binding.enabled) {
+        for provider in available {
             let controller = self
-                .connect_provider_controller(&binding.provider_id)
+                .connect_provider_controller(&provider.provider_id)
                 .await
                 .map_err(ControllerError::into_api_error)?;
             let response = controller
@@ -99,7 +143,7 @@ impl EnvironmentService {
                 response?
                     .templates
                     .iter()
-                    .map(|template| environment_template_view(&binding.provider_id, template)),
+                    .map(|template| environment_template_view(&provider.provider_id, template)),
             );
         }
         templates.sort_by(|left, right| {
@@ -136,12 +180,21 @@ pub(crate) fn parse_environment_provider_id(
         .map_err(|error| AgentApiError::invalid_request(format!("invalid provider id: {error}")))
 }
 
+pub(crate) fn available_environment_provider_view(
+    record: &EnvironmentProviderRecord,
+) -> AvailableEnvironmentProviderView {
+    AvailableEnvironmentProviderView {
+        provider_id: record.provider_id.to_string(),
+        display_name: record.display_name.clone(),
+        available_to_all_universes: record.available_to_all_universes,
+    }
+}
+
 pub(crate) fn environment_provider_binding_view(
     record: &EnvironmentProviderBindingRecord,
 ) -> EnvironmentProviderBindingView {
     EnvironmentProviderBindingView {
         provider_id: record.provider_id.to_string(),
-        enabled: record.enabled,
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
@@ -354,6 +407,7 @@ pub(crate) fn status_view(value: EnvironmentDisplayStatus) -> EnvironmentStatusV
 
 fn close_reason_view(value: EnvironmentCloseReason) -> EnvironmentCloseReasonView {
     match value {
+        EnvironmentCloseReason::UniverseDeleted => EnvironmentCloseReasonView::UniverseDeleted,
         EnvironmentCloseReason::Requested => EnvironmentCloseReasonView::Requested,
         EnvironmentCloseReason::KeyRevoked => EnvironmentCloseReasonView::KeyRevoked,
         EnvironmentCloseReason::EphemeralGrace => EnvironmentCloseReasonView::EphemeralGrace,
@@ -381,6 +435,7 @@ pub(crate) fn environment_provider_view(
             .ok()
             .map(|base| base.as_str().to_owned()),
         has_credential: record.has_credential,
+        available_to_all_universes: record.available_to_all_universes,
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }
@@ -431,6 +486,7 @@ mod tests {
             has_credential: false,
             created_at_ms: 1,
             updated_at_ms: 1,
+            available_to_all_universes: false,
         };
         let view = environment_provider_view(&record);
         assert_eq!(view.data_route_base, None);
@@ -495,6 +551,7 @@ mod tests {
                 data_route_base: None,
                 credential: ::environments::ProviderCredentialChange::Keep,
                 updated_at_ms: 1,
+                available_to_all_universes: Some(false),
             })
             .await
             .unwrap();
@@ -502,7 +559,6 @@ mod tests {
             .put_provider_binding(PutEnvironmentProviderBinding {
                 universe_id: store.universe_id(),
                 provider_id: provider_id.clone(),
-                enabled: true,
                 updated_at_ms: 1,
             })
             .await

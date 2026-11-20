@@ -48,7 +48,7 @@ use super::{
 pub use state::{BotDelivery, CoalesceBuffer, ControlledSession, WaitingLane};
 use state::{
     ControllerState, DispatchAction, EmissionDisposition, LaneResolution, LaneTerminal,
-    PendingInvocation, ROTATION_RETRY_DELAY_MS, resolve_invocations_for_run, used_carried_tool,
+    PendingInvocation, ROTATION_RETRY_DELAY_MS, resolve_invocations_for_run,
 };
 
 /// `workflow_kind` the controller records as lifecycle controller and
@@ -421,7 +421,6 @@ pub(super) fn ensure_request(
     session_id: String,
     display_name: String,
     applied_profile_revision: Option<u64>,
-    tools_ref: Option<String>,
     routed_session: Option<&bots::RoutedSession>,
 ) -> BotEnsureSessionRequest {
     BotEnsureSessionRequest {
@@ -440,7 +439,6 @@ pub(super) fn ensure_request(
             workflow_id: workflow_id.to_owned(),
             workflow_kind: BOT_CONTROLLER_WORKFLOW_KIND.to_owned(),
         },
-        tools_ref,
     }
 }
 
@@ -567,31 +565,6 @@ async fn reconcile_run(ctx: &Ctx, run_id: &str, target: &str) {
             }),
         }
     }
-    let unresolved = ctx.state(|state| {
-        state
-            .active_by_session
-            .get(target)
-            .is_some_and(|lane| lane.resolution.is_none())
-    });
-    if unresolved {
-        let carried = ctx.state(|state| {
-            state
-                .extra_session(target)
-                .map(|session| session.carried_tool_ids.clone())
-                .unwrap_or_default()
-        });
-        if used_carried_tool(&pulled.invocations, run_id, &carried) {
-            ctx.state_mut(|state| {
-                state.set_lane_resolution(
-                    target,
-                    LaneResolution {
-                        outcome: BotEventOutcome::Handled,
-                        summary: None,
-                    },
-                )
-            });
-        }
-    }
 }
 
 // ── Sessions ────────────────────────────────────────────────────────────────
@@ -642,7 +615,6 @@ async fn reconcile_session(ctx: &Ctx) {
                 state.main_session_id(),
                 state.bot_label(),
                 state.applied_revision_for_ensure(),
-                None,
                 None,
             )
         });

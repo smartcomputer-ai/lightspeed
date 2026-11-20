@@ -4,28 +4,31 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { PermissionIdentityProvider, type PermissionAction } from "@/lib/permissions";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
+import type { UniverseAction } from "@lightspeed-ai/platform-shared";
+import { PermissionIdentityProvider } from "@/lib/permissions";
 import { SettingsIndexRedirect, settingsIndexPath } from "./universe-nav";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
-const ALL_ON = vi.hoisted(() => ({ bots: true, channels: true }));
+const ALL_ON = vi.hoisted(() => ({ bots: true }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role, features: ALL_ON }, handle: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role, actions: [...universeActions([mocks.role as never])], features: ALL_ON }, handle: "test", isLoading: false }),
 }));
 
-const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
+const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
   viewer: ["read"],
   contributor: ["read", "createSession", "useResource"],
   operator: ["read", "createSession", "useResource", "configureResource"],
-  admin: ["read", "createSession", "useResource", "configureResource", "manageAccess"],
+  owner: ["read", "createSession", "useResource", "configureResource", "administer"],
 };
 const DESTINATIONS: [string, string][] = [
   ["viewer", "/u/test/bots"],
   ["contributor", "/u/test/bots"],
-  ["operator", "/u/test/settings/channels"],
-  ["admin", "/u/test/settings/general"],
+  ["operator", "/u/test/bots"],
+  ["owner", "/u/test/settings/general"],
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
@@ -33,18 +36,18 @@ it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
 });
 
 it("treats a universe that names no feature states as having every feature off", () => {
-  const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test/settings/templates");
-  const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
+  const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
+  expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test/sessions");
+  const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
   expect(settingsIndexPath({ handle: "test" }, viewer)).toBe("/u/test/sessions");
 });
 
-it("skips a switched-off settings page, and lands on sessions when bots are off", () => {
-  const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ handle: "test", features: { bots: true, channels: false } }, operator))
-    .toBe("/u/test/settings/templates");
-  const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
-  expect(settingsIndexPath({ handle: "test", features: { bots: false, channels: false } }, viewer))
+it("lands on the universe home when no settings page is on, sessions when bots are off", () => {
+  const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
+  expect(settingsIndexPath({ handle: "test", features: { bots: true } }, operator))
+    .toBe("/u/test/bots");
+  const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
+  expect(settingsIndexPath({ handle: "test", features: { bots: false } }, viewer))
     .toBe("/u/test/sessions");
 });
 
@@ -83,6 +86,6 @@ it.each(DESTINATIONS)("redirects a %s from /settings to %s", async (role, path) 
       </MemoryRouter>
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(path);
 });

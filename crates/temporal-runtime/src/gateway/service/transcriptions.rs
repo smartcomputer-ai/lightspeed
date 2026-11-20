@@ -170,35 +170,24 @@ impl GatewayAgentApi {
         Ok(view)
     }
 
-    fn authorize_transcription_owner(&self, view: &TranscriptionView) -> Result<(), AgentApiError> {
-        // Person callers can only access their own drafts. Direct universe keys
-        // retain their method-group authority; core does not resolve person roles.
-        if let Some(actor) = self.caller()?.actor
-            && view.created_by != (Attribution::Actor { id: actor })
-        {
-            return Err(AgentApiError::forbidden());
-        }
-        Ok(())
-    }
-
     pub(super) async fn start_transcription_impl(
         &self,
         params: TranscriptionStartParams,
-    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+    ) -> Result<TranscriptionResponse, AgentApiError> {
         self.authorize_method(METHOD_TRANSCRIPTIONS_START, None)
             .await?;
         let view = self
             .admit_transcription(params, self.attribution()?)
             .await?;
-        Ok(AgentApiOutcome::new(TranscriptionResponse {
+        Ok(TranscriptionResponse {
             transcription: self.transcription_content(view).await?,
-        }))
+        })
     }
 
     pub(super) async fn read_transcription_impl(
         &self,
         params: TranscriptionReadParams,
-    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+    ) -> Result<TranscriptionResponse, AgentApiError> {
         self.authorize_method(METHOD_TRANSCRIPTIONS_READ, None)
             .await?;
         let view = self
@@ -206,16 +195,15 @@ impl GatewayAgentApi {
             .await?
             .ok_or_else(|| AgentApiError::not_found("transcription not found"))?
             .view;
-        self.authorize_transcription_owner(&view)?;
-        Ok(AgentApiOutcome::new(TranscriptionResponse {
+        Ok(TranscriptionResponse {
             transcription: self.transcription_content(view).await?,
-        }))
+        })
     }
 
     pub(super) async fn cancel_transcription_impl(
         &self,
         params: TranscriptionCancelParams,
-    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+    ) -> Result<TranscriptionResponse, AgentApiError> {
         self.authorize_method(METHOD_TRANSCRIPTIONS_CANCEL, None)
             .await?;
         let view = self
@@ -223,7 +211,6 @@ impl GatewayAgentApi {
             .await?
             .ok_or_else(|| AgentApiError::not_found("transcription not found"))?
             .view;
-        self.authorize_transcription_owner(&view)?;
         if !view.status.is_terminal() {
             let handle = self
                 .client
@@ -249,9 +236,9 @@ impl GatewayAgentApi {
             .await?
             .map(|s| s.view)
             .unwrap_or(view);
-        Ok(AgentApiOutcome::new(TranscriptionResponse {
+        Ok(TranscriptionResponse {
             transcription: self.transcription_content(view).await?,
-        }))
+        })
     }
 }
 

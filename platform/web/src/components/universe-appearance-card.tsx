@@ -20,7 +20,7 @@ export function UniverseAppearanceCard({ universe }: { universe: Universe }) {
   // The latest choice: a slower response to an earlier one must not win.
   const latest = useRef(shown);
   const save = useMutation({
-    mutationFn: (next: Appearance) => api<Universe>("PATCH", `/api/v1/universes/${universe.id}`, next),
+    mutationFn: (next: Appearance) => api<Universe>("PATCH", `/api/ui/universes/${universe.id}`, next),
     onSuccess: (updated, next) => {
       if (latest.current !== next) return;
       setSaved(next);

@@ -206,8 +206,12 @@ fn notify() -> RunTerminalNotifyIntent {
 fn observed_call(id: &str) -> ObservedToolCall {
     ObservedToolCall {
         call_id: ToolCallId::new(id),
-        tool_id: Some(ToolId::new("read_file")),
-        tool_name: ToolName::new("read_file"),
+        target: Some(ResolvedToolTarget::Mcp {
+            server_tool_id: ToolId::new("mcp_server"),
+            server_label: "Server".into(),
+            remote_name: "search".into(),
+        }),
+        tool_name: ToolName::new("mcp_server__search"),
         provider_kind: Some("openai.responses.function_call".to_owned()),
         arguments_ref: blob("arguments"),
         native_call_ref: Some(blob("native call")),
@@ -243,9 +247,8 @@ fn approvals() -> BTreeMap<ApprovalId, ApprovalRecord> {
         ),
         (
             provider_continuation(),
-            Attribution::Key {
-                key_id: "ci-bot".to_owned(),
-                scope_kind: AttributedKeyScope::Universe,
+            Attribution::Token {
+                name: "ci-bot".to_owned(),
             },
         ),
         (
@@ -666,7 +669,7 @@ fn tooling_state() -> ToolingState {
                 description_ref: Some(blob("server description")),
                 allowed_tools: Some(vec!["search".to_owned()]),
                 execution: RemoteMcpExecution::Runtime,
-                exposure: RemoteMcpExposure::Search,
+                exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Always,
                 defer_loading: Some(true),
             }),
@@ -860,8 +863,8 @@ fn code_call(request_id: &str, status: CodeToolCallStatus) -> (String, CodeToolC
                 request_id: request_id.to_owned(),
             },
             binding_id: "read".to_owned(),
-            tool_id: ToolId::new("read_file"),
-            tool_name: ToolName::new("read_file"),
+            tool_id: ToolId::new("mcp_server"),
+            tool_name: ToolName::new("mcp_server__search"),
             arguments_ref: blob("code arguments"),
         },
         call_id: ToolCallId::new(format!("code_{request_id}")),
@@ -914,8 +917,12 @@ fn code_tool_state() -> CodeToolState {
                     bindings: BTreeMap::from([(
                         "read".to_owned(),
                         CodeToolBinding {
-                            tool_id: ToolId::new("read_file"),
-                            tool_name: ToolName::new("read_file"),
+                            target: ResolvedToolTarget::Mcp {
+                                server_tool_id: ToolId::new("mcp_server"),
+                                server_label: "Server".into(),
+                                remote_name: "search".into(),
+                            },
+                            tool_name: ToolName::new("mcp_server__search"),
                         },
                     )]),
                     max_calls: 10,

@@ -1288,12 +1288,16 @@ impl<'a> CoreAgentProjector<'a> {
         try_join_all(calls.iter().map(|call| async move {
             let arguments = self.read_blob_text(&call.arguments_ref).await?;
             Ok(ToolCallEventView {
-                tool_id: call.tool_id.as_ref().map(|id| id.as_str().to_owned()),
+                tool_id: call.tool_id().map(|id| id.as_str().to_owned()),
                 call_id: call.call_id.as_str().to_owned(),
                 tool_name: call.tool_name.as_str().to_owned(),
                 arguments_ref: call.arguments_ref.as_str().to_owned(),
                 arguments: Some(truncate_utf8(&arguments, MAX_INLINE_TEXT_BYTES)),
-                display: tool_call_display(call.tool_name.as_str(), &arguments),
+                display: tool_call_display(
+                    call.target.as_ref(),
+                    call.tool_name.as_str(),
+                    &arguments,
+                ),
             })
         }))
         .await
@@ -1328,7 +1332,7 @@ impl<'a> CoreAgentProjector<'a> {
                         let result = result_by_call.get(call.call_id.as_str());
                         let arguments = self.read_blob_text(&call.arguments_ref).await?;
                         Ok(ToolCallView {
-                            tool_id: call.tool_id.as_ref().map(|id| id.as_str().to_owned()),
+                            tool_id: call.tool_id().map(|id| id.as_str().to_owned()),
                             call_id: call.call_id.as_str().to_owned(),
                             tool_name: call.tool_name.as_str().to_owned(),
                             arguments_ref: call.arguments_ref.as_str().to_owned(),
@@ -1344,7 +1348,7 @@ impl<'a> CoreAgentProjector<'a> {
                             // A call that names no tool never starts. Any other is
                             // only requested until its start commits.
                             status: result.map(|result| result.status).unwrap_or(
-                                if call.tool_id.is_some() {
+                                if call.target.is_some() {
                                     ToolItemStatus::Requested
                                 } else {
                                     ToolItemStatus::Unavailable
@@ -1358,7 +1362,11 @@ impl<'a> CoreAgentProjector<'a> {
                                 .get(call.call_id.as_str())
                                 .cloned()
                                 .unwrap_or_default(),
-                            display: tool_call_display(call.tool_name.as_str(), &arguments),
+                            display: tool_call_display(
+                                call.target.as_ref(),
+                                call.tool_name.as_str(),
+                                &arguments,
+                            ),
                             started_at_ms: None,
                             finished_at_ms: None,
                             duration_ms: None,
@@ -2011,13 +2019,7 @@ fn promise_source_to_api(source: &harness::PromiseSource) -> api::PromiseSourceK
 fn attribution(value: Option<&harness::Attribution>) -> Option<api::Attribution> {
     Some(match value?.clone() {
         harness::Attribution::Actor { id } => api::Attribution::Actor { id },
-        harness::Attribution::Key { key_id, scope_kind } => api::Attribution::Key {
-            key_id,
-            scope_kind: match scope_kind {
-                harness::AttributedKeyScope::Deployment => api::AccessScopeKind::Deployment,
-                harness::AttributedKeyScope::Universe => api::AccessScopeKind::Universe,
-            },
-        },
+        harness::Attribution::Token { name } => api::Attribution::Token { name },
         harness::Attribution::Local => api::Attribution::Local,
         harness::Attribution::Internal { component, cause } => {
             api::Attribution::Internal { component, cause }
@@ -3001,8 +3003,25 @@ fn json_field_text(value: &Value, field: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplayView> {
+fn tool_call_display(
+    target: Option<&harness::ResolvedToolTarget>,
+    tool_name: &str,
+    arguments: &str,
+) -> Option<ToolCallDisplayView> {
     let json = serde_json::from_str::<Value>(arguments).ok();
+    if let Some(harness::ResolvedToolTarget::Mcp {
+        server_label,
+        remote_name,
+        ..
+    }) = target
+    {
+        return Some(ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Mcp,
+            verb: server_label.clone(),
+            target: Some(remote_name.clone()),
+            detail: json.as_ref().and_then(first_scalar_text),
+        });
+    }
     let normalized = tool_name.to_ascii_lowercase();
     let view = match normalized.as_str() {
         "code_execute" => ToolCallDisplayView {
@@ -3342,27 +3361,6 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["brief"]))
                 .map(|brief| summary_line(&brief)),
         },
-        "message_send" => ToolCallDisplayView {
-            group: ToolCallDisplayGroup::Message,
-            verb: "Send".to_owned(),
-            target: json
-                .as_ref()
-                .and_then(|json| first_string(json, &["text"]))
-                .map(|text| summary_line(&text)),
-            detail: json
-                .as_ref()
-                .and_then(|json| first_string(json, &["replyTo", "reply_to"]))
-                .map(|reply| format!("reply to #{reply}")),
-        },
-        "message_noop" => ToolCallDisplayView {
-            group: ToolCallDisplayGroup::Message,
-            verb: "Skip".to_owned(),
-            target: None,
-            detail: json
-                .as_ref()
-                .and_then(|json| first_string(json, &["reason"]))
-                .map(|reason| summary_line(&reason)),
-        },
         "sleep" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Other,
             verb: "Sleep".to_owned(),
@@ -3372,19 +3370,6 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .map(|ms| format!("{ms} ms")),
             detail: None,
         },
-        _ if tool_name
-            .strip_prefix("mcp_")
-            .and_then(|name| name.split_once("__"))
-            .is_some_and(|(server, tool)| !server.is_empty() && !tool.is_empty()) =>
-        {
-            let (server, tool) = tool_name.strip_prefix("mcp_")?.split_once("__")?;
-            ToolCallDisplayView {
-                group: ToolCallDisplayGroup::Mcp,
-                verb: server.to_owned(),
-                target: Some(tool.to_owned()),
-                detail: json.as_ref().and_then(first_scalar_text),
-            }
-        }
         _ => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Other,
             verb: tool_name.to_owned(),
@@ -3583,23 +3568,19 @@ mod tests {
                 },
             ),
             (
-                harness::Attribution::Key {
-                    key_id: "ci-bot".into(),
-                    scope_kind: harness::AttributedKeyScope::Universe,
+                harness::Attribution::Token {
+                    name: "ci-bot".into(),
                 },
-                api::Attribution::Key {
-                    key_id: "ci-bot".into(),
-                    scope_kind: api::AccessScopeKind::Universe,
+                api::Attribution::Token {
+                    name: "ci-bot".into(),
                 },
             ),
             (
-                harness::Attribution::Key {
-                    key_id: "platform".into(),
-                    scope_kind: harness::AttributedKeyScope::Deployment,
+                harness::Attribution::Token {
+                    name: "platform".into(),
                 },
-                api::Attribution::Key {
-                    key_id: "platform".into(),
-                    scope_kind: api::AccessScopeKind::Deployment,
+                api::Attribution::Token {
+                    name: "platform".into(),
                 },
             ),
             (harness::Attribution::Local, api::Attribution::Local),
@@ -3709,20 +3690,20 @@ mod tests {
 
     #[test]
     fn code_display_summarizes_source_without_exposing_it_in_the_row() {
-        let display = tool_call_display("code_execute", r#"{"code":"const result = await tools.vfs_read_file({path:'/notes'});\ntext(result);\n"}"#).unwrap();
+        let display = tool_call_display(None, "code_execute", r#"{"code":"const result = await tools.vfs_read_file({path:'/notes'});\ntext(result);\n"}"#).unwrap();
         assert_eq!(display.group, ToolCallDisplayGroup::Code);
         assert_eq!(display.verb, "Run code");
         assert_eq!(display.target.as_deref(), Some("JavaScript"));
         assert_eq!(display.detail.as_deref(), Some("2 lines"));
         assert_eq!(
-            tool_call_display("code_execute", r#"{"code":"return 1"}"#)
+            tool_call_display(None, "code_execute", r#"{"code":"return 1"}"#)
                 .unwrap()
                 .detail
                 .as_deref(),
             Some("1 line")
         );
         for arguments in ["{", "{}", r#"{"code":" "}"#] {
-            let display = tool_call_display("code_execute", arguments).unwrap();
+            let display = tool_call_display(None, "code_execute", arguments).unwrap();
             assert_eq!(display.group, ToolCallDisplayGroup::Code);
             assert_eq!(display.detail, None);
         }
@@ -3782,7 +3763,7 @@ mod tests {
             ),
         ] {
             for name in names {
-                let display = tool_call_display(name, args).unwrap();
+                let display = tool_call_display(None, name, args).unwrap();
                 assert_eq!(display.group, group, "{name}");
                 assert_eq!(display.verb, verb, "{name}");
                 assert_eq!(display.target.as_deref(), Some(target), "{name}");
@@ -3878,7 +3859,7 @@ mod tests {
                 "process1",
             ),
         ] {
-            let display = tool_call_display(name, args).unwrap();
+            let display = tool_call_display(None, name, args).unwrap();
             assert_eq!(display.group, group, "{name}");
             assert_eq!(display.verb, verb, "{name}");
             assert_eq!(display.target.as_deref(), Some(target), "{name}");
@@ -3890,13 +3871,32 @@ mod tests {
 
     #[test]
     fn injected_mcp_display_preserves_names_and_unknown_tools_stay_generic() {
-        let display = tool_call_display("mcp_docs__Search", r#"{"query":"QuickJS"}"#).unwrap();
+        let binding = harness::ResolvedToolTarget::Mcp {
+            server_tool_id: harness::ToolId::new("mcp_docs__internal"),
+            server_label: "docs__internal".into(),
+            remote_name: "search_by_document_metadata".into(),
+        };
+        let display = tool_call_display(
+            Some(&binding),
+            "mcp_docs__search_hash_metadata",
+            r#"{"query":"QuickJS"}"#,
+        )
+        .unwrap();
         assert_eq!(display.group, ToolCallDisplayGroup::Mcp);
-        assert_eq!(display.verb, "docs");
-        assert_eq!(display.target.as_deref(), Some("Search"));
+        assert_eq!(display.verb, "docs__internal");
+        assert_eq!(
+            display.target.as_deref(),
+            Some("search_by_document_metadata")
+        );
         assert_eq!(display.detail.as_deref(), Some("QuickJS"));
-        for name in ["custom_tool", "mcp_unknown", "mcp___", "mcp_docs__"] {
-            let display = tool_call_display(name, "{}").unwrap();
+        for name in [
+            "mcp_docs__Search",
+            "custom_tool",
+            "mcp_unknown",
+            "mcp___",
+            "mcp_docs__",
+        ] {
+            let display = tool_call_display(None, name, "{}").unwrap();
             assert_eq!(display.group, ToolCallDisplayGroup::Other);
             assert_eq!(display.verb, name);
         }
@@ -3905,6 +3905,7 @@ mod tests {
     #[test]
     fn runtime_mcp_search_call_displays_the_resolved_server_and_tool() {
         let display = tool_call_display(
+            None,
             "mcp_call",
             r#"{"server":"configurator","tool":"lightspeed_models_list","arguments":{}}"#,
         )
@@ -3915,6 +3916,7 @@ mod tests {
         assert_eq!(display.detail, None);
 
         let display = tool_call_display(
+            None,
             "mcp_call",
             r#"{"server":"stripe","tool":"retrieve_subscription","arguments":{"id":"sub_1R0aB3"}}"#,
         )
@@ -3943,6 +3945,7 @@ mod tests {
     #[test]
     fn subagent_calls_display_the_profile_and_the_brief() {
         let display = tool_call_display(
+            None,
             "agent_run",
             r#"{"agent":"reviewer","input":"Review the diff on skills2.\n\nFocus on tests."}"#,
         )
@@ -3956,6 +3959,7 @@ mod tests {
         );
 
         let display = tool_call_display(
+            None,
             "agent_spawn",
             r#"{"agent":"researcher","input":"Find prior art","label":"Prior art"}"#,
         )
@@ -3964,6 +3968,7 @@ mod tests {
         assert_eq!(display.detail.as_deref(), Some("Prior art"));
 
         let display = tool_call_display(
+            None,
             "await",
             r#"{"promises":["promise_3","promise_4"],"mode":"any"}"#,
         )
@@ -3977,6 +3982,7 @@ mod tests {
     #[test]
     fn bot_emit_distinguishes_self_from_addressed_peers() {
         let display = tool_call_display(
+            None,
             "bot_emit",
             r#"{"kind":"bug.confirmed","summary":"Duplicates on page boundary","to":"escalations","reply":true}"#,
         )
@@ -3990,6 +3996,7 @@ mod tests {
         );
 
         let display = tool_call_display(
+            None,
             "bot_emit",
             r#"{"kind":"research.followup","summary":"Nightly","sessionKey":"nightly"}"#,
         )
@@ -3999,27 +4006,6 @@ mod tests {
             display.detail.as_deref(),
             Some("research.followup · key nightly")
         );
-    }
-
-    #[test]
-    fn channel_message_tools_display_as_messages() {
-        let display = tool_call_display(
-            "message_send",
-            r#"{"text":"On it — checking the logs now.\nMore soon.","replyTo":12}"#,
-        )
-        .expect("display");
-        assert_eq!(display.group, ToolCallDisplayGroup::Message);
-        assert_eq!(display.verb, "Send");
-        assert_eq!(
-            display.target.as_deref(),
-            Some("On it — checking the logs now.")
-        );
-        assert_eq!(display.detail.as_deref(), Some("reply to #12"));
-
-        let display =
-            tool_call_display("message_noop", r#"{"reason":"already answered"}"#).expect("display");
-        assert_eq!(display.verb, "Skip");
-        assert_eq!(display.detail.as_deref(), Some("already answered"));
     }
 
     #[test]
@@ -4034,6 +4020,7 @@ mod tests {
     #[test]
     fn runtime_mcp_detail_display_names_the_requested_tools() {
         let display = tool_call_display(
+            None,
             "mcp_find_tools",
             r#"{"server":"configurator","names":["models_list","sessions_read"]}"#,
         )
@@ -4129,7 +4116,7 @@ mod tests {
         let batch_id = harness::ToolBatchId::new(1);
         let call = |id: &str, tool_id: Option<&str>| harness::ObservedToolCall {
             call_id: harness::ToolCallId::new(id),
-            tool_id: tool_id.map(harness::ToolId::new),
+            target: tool_id.map(harness::ToolId::new).map(Into::into),
             tool_name: harness::ToolName::new("read_file"),
             provider_kind: None,
             arguments_ref: arguments_ref.clone(),
@@ -4342,8 +4329,8 @@ mod tests {
         let mut state = CoreAgentState::new();
         state.workflow_tools.declaration_version = Some(1);
         state.workflow_tools.lifecycle_controller = Some(harness::WorkflowEndpointRef {
-            workflow_id: "channels/session-1".to_owned(),
-            workflow_kind: "channelSessionWorkflowV1".to_owned(),
+            workflow_id: "plugins/session-1".to_owned(),
+            workflow_kind: "PluginSessionWorkflow".to_owned(),
         });
 
         assert_eq!(
@@ -4351,8 +4338,8 @@ mod tests {
             Some(SessionIntegrationInput {
                 version: 1,
                 lifecycle_controller: Some(WorkflowEndpointInput {
-                    workflow_id: "channels/session-1".to_owned(),
-                    workflow_kind: "channelSessionWorkflowV1".to_owned(),
+                    workflow_id: "plugins/session-1".to_owned(),
+                    workflow_kind: "PluginSessionWorkflow".to_owned(),
                 }),
                 tools: Vec::new(),
             })
@@ -4368,8 +4355,8 @@ mod tests {
             .parse()
             .expect("universe id");
         let receiver = harness::WorkflowEndpointRef {
-            workflow_id: "channels/session-1".to_owned(),
-            workflow_kind: "channels.session".to_owned(),
+            workflow_id: "plugins/session-1".to_owned(),
+            workflow_kind: "plugin.session".to_owned(),
         };
         let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
         let binding = harness::WorkflowToolBinding::admit(
@@ -4377,7 +4364,7 @@ mod tests {
             harness::WorkflowToolDefinition {
                 workflow_tool_id: harness::WorkflowToolId::new("message-send"),
                 schema_revision: 1,
-                semantic_type: "channels.message.send.v1".to_owned(),
+                semantic_type: "plugin.message.send.v1".to_owned(),
                 tool: ToolSpec {
                     id: harness::ToolId::new("message_send"),
                     execution: Default::default(),
@@ -5827,7 +5814,7 @@ mod tests {
                     toolset_revision: 0,
                     calls: vec![harness::ObservedToolCall {
                         call_id: call_id.clone(),
-                        tool_id: None,
+                        target: None,
                         tool_name: harness::ToolName::new("mcp_echo__hello"),
                         provider_kind: None,
                         arguments_ref: arguments_ref.clone(),

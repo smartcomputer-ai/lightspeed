@@ -14,59 +14,165 @@ add the optional services below as the deployment needs them.
 
 ## Supply settings to the right process
 
-Keep separate configuration for runtime, Platform, and optional services.
-For example, `LIGHTSPEED_POSTGRES_URL` selects the runtime database, while
-`LIGHTSPEED_PLATFORM_DATABASE_URL` selects the Platform database. Giving one
-process the other's URL does not connect the two applications correctly; their
-schemas and migration histories are independent.
+Set `LIGHTSPEED_POSTGRES_URL` on the runtime and
+`LIGHTSPEED_PLATFORM_DATABASE_URL` on Platform. Each application has its
+own database and migrations. Keep agent and provider configuration in its
+universe. Use environment variables or protected files for deployment
+settings, and restart the process that reads a setting after changing it.
 
-`LIGHTSPEED_API_URL` is a client setting used by the Platform, CLI, and
-connector host. It does not configure where the runtime listens. That address
-comes from `LIGHTSPEED_GATEWAY_BIND`.
-
-In deployed containers, supply environment variables or protected
-environment files. Docker `--env-file` uses `KEY=value`, without `export` or
-shell quotes. Shell startup scripts use shell syntax instead. A file that
-works with `source` is not necessarily interpreted the same way by Docker.
-
-The Rust server, CLI, evaluator, and Incus provider can load a `.env` file from
-the working directory or its parents. Avoid an unrelated checkout's `.env`
-becoming implicit production configuration. The development launcher applies
-additional local defaults, including public development credentials. Use its
-settings for local work only.
-
-Environment settings are read by the processes that use them. Recreate or
-restart the affected service after changing its environment. A provider
-integration edited through the Platform is a stored universe resource and
-follows its own update path; it is not a deployment environment-file edit.
+Docker's `--env-file` takes `KEY=value` lines. Use shell syntax in files
+loaded by a shell. The Rust runtime and CLI can also load a `.env` file
+from the current directory or its parents. Run production services from a
+directory set aside for that installation.
 
 ## Keep deployment-wide settings aligned
 
-All runtime roles serving one deployment need a coherent view of its durable
-state and routing:
-
-| Setting group | What must agree |
+| Setting group | What must agree across the deployment |
 | --- | --- |
-| Runtime storage | Runtime PostgreSQL database and selected blob backend, including object bucket/prefix where configured. |
-| Temporal | Frontend address, namespace, TLS and credential settings, and the session, bot, and channel task-queue names. |
+| Runtime storage | PostgreSQL, object storage backend, and bucket or container and prefix. |
+| Temporal | Address, namespace, TLS and credentials, and the task queue for each worker role. |
 | Secrets | The master key used to encrypt and resolve stored credentials. |
-| Environment routing | The one environment gateway's internal URL and shared routing token. |
-| Provider transport | Required deployment fallbacks and network access for the roles performing discovery or generation. |
+| Environment routing | The shared environment gateway URL and routing token. |
+| Runtime API authentication | The configured runtime token set on every application gateway replica, and matching tokens in trusted clients. |
 
-Roles and listener addresses can differ by process. Authenticated gateways
-serve both the Platform and direct clients, checking each key's scope and
-allowed method groups. The Platform separately checks its members' roles and
-session visibility. See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+Give each deployment its own task queues if it shares a Temporal namespace.
+Set each queue independently, including `LIGHTSPEED_TASK_QUEUE_CODE` if you
+run Code Mode. See [the task queue reference](../reference/environment-variables.md)
+for the variable names.
 
-If multiple deployments share a Temporal namespace, set all three queue
-variables independently. A deployment-specific `LIGHTSPEED_TASK_QUEUE` does
-not change `LIGHTSPEED_TASK_QUEUE_BOTS` or
-`LIGHTSPEED_TASK_QUEUE_CHANNELS`. Keep the connector host in the matching
-Temporal namespace too.
+## Set Platform defaults
+
+A Platform Admin can open **Admin → Platform → Settings** to control
+personal organization creation and set the default universe limits. Personal
+organizations are enabled by default. The initial limits are 25 universes
+per personal organization and 100 per shared organization. Turning personal
+organization creation off stops new ones from being created. Existing
+organizations remain available.
+
+Each setting shows where its value comes from. An environment variable
+locks the setting in the UI. Otherwise the Platform Admin's saved value
+applies, or the built-in default after **Reset to default**. Set a particular
+organization's own limit in its **Admin → Settings** page and choose
+**Use the default** to make it follow the deployment setting again.
+
+For hosted member access, configure [Company sign-in (SSO)](../access-and-security/single-sign-on.md)
+and review [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+The [Platform environment settings](../reference/environment-variables.md#platform-backend)
+cover sign-in, session lifetimes, and API key expiry.
+
+## Enroll organizations with workload identity
+
+A pipeline can use a short-lived OIDC bearer token to create one shared
+organization and act as its Admin service user. Mount a YAML file on each
+Platform replica, set `LIGHTSPEED_PLATFORM_FEDERATION_FILE` to its path,
+and restart Platform. Use the same file on every replica. Without this
+setting, workload federation is off.
+
+This example allows the `apply` ServiceAccount in namespaces starting with
+`team-` to enroll up to 50 organizations across the rule. Choose an audience
+specific to this deployment and project it into the pipeline pod's token.
+Restrict who can run workloads as those ServiceAccounts.
+
+```yaml
+issuers:
+  - name: cluster
+    issuer: https://oidc.example.com/clusters/prod/
+    audiences: [lightspeed-platform-prod]
+    algorithms: [RS256]
+    maxTokenLifetimeSeconds: 3600
+    clockSkewSeconds: 60
+    keys:
+      discoveryUrl: https://kubernetes.default.svc/.well-known/openid-configuration
+      jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+enrollment:
+  - issuer: cluster
+    subjectPattern: "system:serviceaccount:team-*:apply"
+    maxOrganizations: 50
+    handlePattern: "^team-[a-z0-9-]+$"
+    organization: { universeQuota: null }
+    serviceUser: { name: deployer, role: admin }
+```
+
+Set `issuer` to the exact token `iss`, including any trailing slash. Omit
+`keys` to use the issuer's public discovery document and its `jwks_uri`.
+For offline verification, use `keys: { jwksFile: /etc/lightspeed/jwks.json }`.
+For Kubernetes API discovery as shown above, Platform's own mounted token
+must be accepted by the API server and have permission to read discovery
+and signing keys. Platform rereads the CA and fetch credential on refresh.
+Each replica caches keys for an hour, refreshes on an unknown key ID at most
+once per 30 seconds, and accepts previously fetched keys during an outage
+for up to 24 hours from their last successful refresh.
+
+Send the workload token as an `Authorization: Bearer` credential with
+`POST /api/v1/organizations/enroll` and a JSON body such as
+`{"handle":"team-research","name":"Research"}`. Platform uses the first rule
+whose issuer and full subject match. In a subject pattern, `*` matches any
+substring. The issuer and subject pattern identify the rule for quota
+accounting. A null universe quota follows the shared organization default.
+
+| HTTP result | Meaning |
+| --- | --- |
+| `201` | Platform created the organization, its Admin service user, and the credential. The response contains `organizationId` and `enrolled: true`. |
+| `200` | The workload already belongs to this organization. A retry returns the same ID and `enrolled: false`. |
+| `401` | The workload token failed verification or the binding is inactive. |
+| `403` | The workload or requested handle falls outside enrollment policy, or the credential's restrictions deny the operation. |
+| `409` | The handle is taken, the workload already belongs to or enrolled another organization, or the rule is at capacity. |
+
+After enrollment, present a current workload token on ordinary Platform
+API requests. Disabling the service user or removing its binding takes
+effect on the next request. Its enrollment continues to occupy a rule slot
+until the organization is deleted. The Platform audit records the issuer
+and subject for enrollment and federated authentication.
+
+### Run a GitOps job
+
+Mount a projected ServiceAccount token with the audience configured for this
+Platform. Point the CLI at the mounted file so it reads the current token on
+every request, including after Kubernetes rotates it.
+
+```sh
+export LIGHTSPEED_API_URL=https://platform.example.com/api/v1
+export LIGHTSPEED_API_TOKEN_FILE=/var/run/secrets/lightspeed/token
+lightspeed config apply --enroll -f organization.yaml -f universe.yaml
+```
+
+Supply exactly one organization document. Its handle and name identify the
+enrollment request. The name defaults to the handle when omitted. Re-running
+the command reuses the organization and applies any outstanding changes.
+For enrollment alone, run
+`lightspeed platform organization enroll --handle team-research --name Research`.
+To supply the token file as a flag, place `--token-file PATH` before the command.
+
+Declare a workload binding under its service user, using the issuer's
+configured name and the exact token subject:
+
+```yaml
+schemaVersion: 1
+kind: organization
+handle: team-research
+name: Research
+serviceUsers:
+  - name: deployer
+    role: admin
+    federatedCredentials:
+      - issuer: cluster
+        subject: system:serviceaccount:team-research:apply
+```
+
+A binding can also specify `serviceAccountUid` and `restrictions`. Organization
+exports include these declarations. Omitting a binding during apply preserves
+it. To revoke it, open the service user's details or use
+`lightspeed platform service-user federated-credential SERVICE_USER_ID delete CREDENTIAL_ID`.
+The same CLI command group supports `list` and `put`. A workload needs the
+explicit `allowServiceUserKeys` restriction and organization permission to
+manage credentials. Platform admins can see the enrolling issuer, subject,
+and matching rule in the organization's settings.
 
 ## Secure the Temporal connection
 
-Every runtime process and the connector host open their own connection to the
+Every runtime process opens its own connection to the
 Temporal frontend. Workflow inputs and results travel over it, including
 prompts and tool output, and whoever can reach the frontend can start, signal,
 and read workflows in the namespace. With only `TEMPORAL_ADDRESS` and
@@ -74,7 +180,7 @@ and read workflows in the namespace. With only `TEMPORAL_ADDRESS` and
 credential. Use that only for a frontend on a private network that nothing
 else can reach.
 
-For any other frontend, give both processes the same settings:
+Use TLS when the frontend leaves that private boundary. Give each runtime process the same settings:
 
 ```dotenv
 TEMPORAL_ADDRESS=temporal.internal.example:7233
@@ -99,8 +205,7 @@ TEMPORAL_TLS_CLIENT_KEY_FILE=/etc/lightspeed/temporal/client.key
   certificate and an API key can be combined when the frontend asks for both.
 
 Supply the private key and the API key from your secret manager and mount the
-files read-only. They are read when a process connects, so restart the runtime
-processes and the connector host after rotating one. A setting that
+files read-only. They are read when a process connects, so restart the affected runtime processes after rotating one. A setting that
 contradicts another, or a file that is missing or holds the wrong kind of
 content, stops the process at startup with an error that names the variable.
 The [environment-variable reference](../reference/environment-variables.md#temporal-connection-security)
@@ -116,11 +221,14 @@ callers:
 
 | Setting | Example | Caller and purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_GATEWAY_BIND` | `0.0.0.0:18080` | Address inside the runtime's network namespace where HTTP listens. |
-| `LIGHTSPEED_API_URL` on Platform | `http://lightspeed-runtime:18080/rpc` | Private Platform-to-runtime JSON-RPC route. |
+| `LIGHTSPEED_GATEWAY_BIND` | `0.0.0.0:18080` | Private HTTP API listener (`--bind`; default `127.0.0.1:18080`). |
+| `LIGHTSPEED_PUBLIC_BIND` | `0.0.0.0:18082` | OAuth callback, client metadata, and bot webhook listener (`--public-bind`; default `127.0.0.1:18082`). |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND` | `0.0.0.0:18083` | Daemon connections and private worker routes (`--environment-bind`; default `127.0.0.1:18083`). |
+| `LIGHTSPEED_API_URL` on Platform | `http://lightspeed-runtime:18080/api/v1` | Private Platform-to-runtime HTTP API base URL. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `https://lightspeed.example.com` | Public browser origin used for Platform authentication. |
-| `LIGHTSPEED_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | Public runtime origin used for OAuth callbacks, bot hooks, and environment addresses. Registered daemons must dial this origin, or one listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, because they sign it when they register. |
-| `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | `http://lightspeed-runtime:18080` | Private base URL workers use for environment routes; omit `/rpc`. |
+| `LIGHTSPEED_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | OAuth callback and bot webhook origin; defaults to the public listener address. |
+| `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | Daemon connection origin; defaults to the environment listener address. Daemons must dial this origin, or one listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, because they sign it when they register. |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | `http://lightspeed-runtime:18083` | Private base URL workers use for environment routes; omit `/api/v1`. |
 
 An address containing `localhost` is relative to the process using it. Inside
 a container it refers to that container. Conversely, binding to `0.0.0.0`
@@ -131,9 +239,11 @@ Preserve paths, query strings, host, and scheme as described in
 [Configure the public edge](self-hosting.md#configure-the-public-edge).
 Daemon control and data routes require WebSocket upgrades and long-lived
 connections. Workers also need the private environment route even when the
-public WebSockets are reachable.
+public WebSockets are reachable. All three listeners serve `/health` and
+`/ready`; keep the application API listener private even when callbacks and daemon
+connections are publicly reachable.
 
-The internal environment token is separate from a user's API key or a daemon
+The internal environment token is separate from an API token or a daemon
 registration key. Set the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on the
 environment gateway and the processes calling it. A process without the
 `environment-gateway` role requires both the URL and token, including a
@@ -152,28 +262,13 @@ It must decode to 32 bytes. All runtime processes resolving the same stored
 secrets must use that key. Replacing it is not an automatic key rotation: the
 existing ciphertext remains encrypted with the previous value.
 
-Keep the Platform authentication secret stable too. If WhatsApp is enabled,
-preserve its media-locator key and authentication directory. These values
-protect different state and are not interchangeable. The
-[recovery inventory](upgrades-and-recovery.md#preserve-a-complete-recovery-set)
-explains what needs to be retained together.
+Keep `LIGHTSPEED_PLATFORM_AUTH_SECRET` stable across Platform restarts.
+It protects sign-in state. See
+[the recovery inventory](upgrades-and-recovery.md#preserve-a-complete-recovery-set).
 
-Provider API keys can be stored per universe through **Models → Add provider**.
-This keeps the credential associated with the team that uses
-it. Deployment-level `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are fallback
-credentials when the corresponding universe record is absent. A disabled or
-broken stored record blocks fallback.
-
-Choose each universe's agent and speech-to-text defaults under **Models →
-Defaults**, or through `lightspeed model defaults`. Each selection names a
-provider, API kind, and model. New sessions use an explicit session model,
-then the profile model, then the universe default; existing sessions keep
-their resolved model. There is no deployment-wide model fallback.
-
-Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` from older
-configuration: the runtime rejects them at startup. See
-[Models and credentials](../using-lightspeed/models-and-credentials.md#choose-universe-defaults)
-for setup and precedence.
+Configure [models and credentials](../using-lightspeed/models-and-credentials.md)
+per universe, including the default model for agent runs and, if needed,
+speech-to-text.
 
 ## Choose the blob backend
 
@@ -234,10 +329,6 @@ Remote PostgreSQL connections support TLS in the release build. Use
 username/password authentication when that is the deployment's chosen method.
 Normal HTTPS/TLS uses the clients' existing CA trust; manual certificate files
 are needed only if a private authority must be added to that trust.
-Changing a bucket or endpoint does not copy existing content, so plan that
-change as a data migration and test old attachments and workspace files as
-well as newly written content.
-
 `LIGHTSPEED_BLOB_CACHE_BYTES` controls a per-process cache. Increasing worker
 replicas also increases the aggregate cache budget. Blob collection is a
 separate policy, described in [operations](operations.md#manage-retention-and-blob-collection).
@@ -326,61 +417,26 @@ Temporal is configured separately.
 
 ### Execution environments
 
-The daemon receives its own `LIGHTSPEED_ENVD_*` settings on the machine where
-it runs. Its working directory and filesystem root describe that machine,
-not the runtime's VFS. Retain its state directory when its registered identity
-should survive restarts.
+Run `lightspeed-envd` on the machine that supplies compute and configure
+it there using `LIGHTSPEED_ENVD_*`. Keep its state directory when its
+registered identity needs to survive restarts. See
+[Bring your own compute](../environments/bring-your-own-compute.md).
 
-The Incus provider uses a JSON configuration file selected by `--config` or
-`LIGHTSPEED_INCUS_PROVIDER_CONFIG`. Templates, Incus credentials, and ingress
-policy belong there. The Platform then registers the provider and binds it
-to universes. Follow [Bring your own compute](../environments/bring-your-own-compute.md)
-or [Incus VMs](../environments/incus-vms.md) for complete procedures.
-
-### Chat connectors
-
-The connector host uses `LIGHTSPEED_CONNECTOR_API_KEY` against an authenticated
-runtime and the deployment's Temporal namespace, reached with the same
-`TEMPORAL_*` settings as the runtime
-([Secure the Temporal connection](#secure-the-temporal-connection)). Its deployment-scoped key needs
-the `deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put`
-method groups for account discovery, credential leasing, inbound admission,
-and attachment uploads. Provider bot tokens are leased from core rather than
-configured on the connector host.
-
-WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` on
-persistent storage and a stable
-`LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`. Configure
-`LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` with the internal connector health
-base URLs so Platform administrators can see host status. This aggregation
-does not start connector workers.
-
-The default host discovers all enabled accounts for its selected providers.
-If running several hosts, give them nonoverlapping account selections. See
-[Chat channels](../using-lightspeed/chat-channels.md) for setup and
-[operations](operations.md#scale-the-process-that-does-the-work) for scaling.
+Register a provisioner under **Admin → Platform → Environment providers**.
+It can serve every universe or be limited to selected ones. Follow the
+[Incus setup guide](../environments/incus-vms.md) for a working provider.
 
 ### MCP and Configurator
 
-An agent's runtime MCP connection is a stored universe resource. To reach a
-private endpoint, both the server record's `allowPrivateNetwork` and the
-deployment's `LIGHTSPEED_MCP_PRIVATE_NETWORKS` must permit it. OAuth metadata,
-client registration, and token requests use the same list, decided for each
-endpoint by its own host: list an internal authorization server as well as
-the MCP server it protects. Without an entry, OAuth traffic is public HTTPS
-only.
+For an agent to reach a private MCP server, allow private network access
+on the server record and list the endpoint in
+`LIGHTSPEED_MCP_PRIVATE_NETWORKS`. List any separate internal OAuth
+authorization server as well. See [Tools and MCP](../using-lightspeed/tools-and-mcp.md).
 
-Configurator is a separately deployed MCP server that manages Lightspeed. Its
-mode must match its upstream gateway, and a non-loopback listener requires an
-explicit allowed-host configuration. The Platform's Configurator URL enables
-its setup flow; it does not start the service. The setup provisions a dedicated
-universe key for configuring resources and stores it as an outbound credential.
-That key has no session or VFS access. See [Agent and tool access](../access-and-security/agent-and-tool-access.md)
-for what attaching Configurator lets an agent do.
-
-See [Tools and MCP](../using-lightspeed/tools-and-mcp.md) and the
-[Configurator variables](../reference/environment-variables.md#configurator-mcp)
-before enabling those paths.
+If you run Configurator, point it to Platform's `/api/v1` and configure
+Platform with the MCP service URL. The managed setup gives the agent a
+restricted Platform service-user key. See
+[Configurator MCP](../integrating-and-extending/configurator-mcp.md).
 
 ## Verify a configuration change
 

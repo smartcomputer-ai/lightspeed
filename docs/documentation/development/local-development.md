@@ -48,28 +48,27 @@ to configure it.
 ## Development logins
 
 The default authenticated `./dev.sh` (full profile) ensures a **Test** universe
-and these accounts on every startup:
+in a shared **Development** organization and these users on every startup:
 
 | Role in Test | Login |
 | --- | --- |
-| Admin | `admin@lightspeed.dev` (or `LIGHTSPEED_PLATFORM_ADMIN_EMAIL`) |
+| Owner | `admin@lightspeed.dev` (or `LIGHTSPEED_PLATFORM_ADMIN_EMAIL`) |
 | Operator | `operator@lightspeed.dev` |
 | Contributor | `contributor@lightspeed.dev` |
 | Viewer | `viewer@lightspeed.dev` |
 
 New accounts share `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`, defaulting to
-`lightspeed-dev-password`. Admin keeps its Platform administrator role; the
-other accounts receive only their listed universe role. Startup reuses existing
-accounts and the Test universe, restores the listed universe roles, and preserves
+`lightspeed-dev-password`. Admin keeps its Platform administrator role and is
+the Development Organization Admin. The other users are organization Creators, so they can
+create their own universes, and receive the listed role in Test. Startup reuses
+existing users and the Test universe, restores these roles, and preserves
 existing passwords and content. Changing the password variable does not reset
 existing logins.
 
 Set `LIGHTSPEED_PLATFORM_DEV_SEED=false` to disable these fixtures. Ordinary
 Platform startup and other launcher profiles leave them disabled. Seeding creates
-the runtime universe through the Platform's deployment key, then records the
-accounts and memberships in the Platform database. A supplied key needs
-`deployment/universes` access for that step and the usual Platform permissions
-for interactive work.
+the runtime universe through the Platform's runtime token, then records the
+organization and memberships in the Platform database.
 
 ## Company sign-in with local Keycloak
 
@@ -100,7 +99,7 @@ share password `lightspeed-local-password`:
 | `sso-admin` | Platform admin, with only the admin entitlement |
 | `sso-denied` | No application entitlement; sign-in is refused |
 
-Add `sso-user` to a universe through **Members** after its first sign-in.
+Add `sso-user` to a universe through the universe's **Settings → Members** after its first sign-in.
 For the existing bootstrap admin, open `http://localhost:5173/app/login`
 directly and choose **Admins**. The fixture credentials and HTTP configuration are for local use only.
 
@@ -136,8 +135,8 @@ profiles stored in a universe.
 
 | Command | Use it for |
 | --- | --- |
-| `./dev.sh full` | The complete editable product: runtime, Platform API and UI, Configurator MCP, local infrastructure, and the optional local daemon. This is the default. |
-| `./dev.sh runtime` | Rust runtime and daemon work against local infrastructure, without Platform or Configurator. |
+| `./dev.sh full` | The complete editable product: runtime, Platform API and UI, local infrastructure, and the optional local daemon. This is the default. |
+| `./dev.sh runtime` | Rust runtime and daemon work against local infrastructure, without Platform. |
 | `./dev.sh platform` | Platform API and UI work against the existing runtime named by `LIGHTSPEED_API_URL`. It starts local infrastructure but does not start that runtime. |
 | `./dev.sh demo` | UI work against the in-browser demo backend at `http://localhost:5175/demo/`. It needs neither Docker nor the Rust runtime. |
 | `./dev.sh docs` | Documentation with live reload at `http://127.0.0.1:4321/docs/`. Needs only Node and npm; `doc` and `documentation` are aliases. |
@@ -161,22 +160,38 @@ override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
 Both full and runtime-only profiles default to authenticated access. The
-launcher provisions a persistent CLI deployment key and, for full, a separate
-Platform service key when none is supplied. From a second terminal, run
-`target/debug/lightspeed connect dev` after building the CLI. No browser or
-manual key copying is required. Use `--no-api-key-bootstrap` to supply your
-own keys; migrations and universe setup still run. Explicit
-`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private
-local access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md)
-for setup, key replacement and universe selection.
+launcher saves persistent CLI and Platform runtime tokens in owner-only files
+under `.lightspeed/cli/` and configures the runtime to accept them. From a second
+terminal, run `target/debug/lightspeed connect dev` after building the CLI.
+Use `--no-token-bootstrap` to require configured or saved tokens. Set
+`LIGHTSPEED_API_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_API_TOKEN`, or their `_FILE`
+variants, to supply them. Migrations and universe setup still run. Explicit
+`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private local
+access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
 
-Telegram and WhatsApp connector processes are opt-in. For example,
-`LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account
-discovery through the core API. Configure the corresponding account and
-credentials before expecting messages to flow. Bots and Channels core already
-run inside the Rust runtime; they don't require the connector host to exist.
-See [Channel connectors](../integrating-and-extending/channel-connectors.md)
-for connector development and setup.
+The full and platform profiles start Configurator against Platform. An
+Organization Admin can install it from a universe template, which gives it a
+restricted service-user credential.
+
+The runtime starts three HTTP listeners in the full and runtime profiles:
+
+| Listener | Default address | Routes |
+| --- | --- | --- |
+| Private application API | `127.0.0.1:18080` | `/api/v1/...` |
+| Public ingress | `127.0.0.1:18082` | `/ingress/credentials/callback`, `/ingress/credentials/client-metadata.json`, `/ingress/webhooks/bots/…` |
+| Environment gateway | `127.0.0.1:18083` | Machine registration, control, and worker environment routes |
+
+Set `LIGHTSPEED_GATEWAY_BIND`, `LIGHTSPEED_PUBLIC_BIND`, and
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND` to override those binds. The launcher checks
+all three ports before starting infrastructure and waits for all three health
+endpoints. Worker `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` uses the environment
+listener. Keep the application API reachable only by Platform and trusted operator clients.
+
+`LIGHTSPEED_PUBLIC_BASE_URL` advertises the public callback and webhook origin;
+it defaults from the public bind. Daemon origin validation uses the separate
+`LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`, defaulting from the environment bind.
+When putting a reverse proxy in front, configure the advertised origins for their
+respective listeners. Public ingress serves no application API routes.
 
 ## Follow a change to its owner
 
@@ -210,8 +225,7 @@ trace tells you where the regression test belongs.
 Vite updates the web UI as you edit. The Platform backend runs through `tsx
 watch` and restarts on relevant source changes. The Rust runtime and daemon
 run through ordinary `cargo run`; the supervisor does not watch and rebuild
-them. Configurator and the optional connector host also run without watch
-mode in the full profile.
+them.
 
 For a Rust change, run the focused test first, then stop and restart the
 profile to exercise the new executable:
@@ -246,6 +260,7 @@ startup needs an explicit migration first:
 
 ```bash
 source scripts/dev/env.sh
+export LIGHTSPEED_AUTH_MODE=single  # private local development only
 cargo run -p temporal-runtime -- migrate
 cargo run -p temporal-runtime
 ```
@@ -286,10 +301,10 @@ also create a new namespace and set `TEMPORAL_NAMESPACE` to it in `.env`, as des
 With the infrastructure up, create it using
 `docker exec lightspeed-temporal temporal operator namespace create --namespace <name>`;
 `./dev.sh` fails waiting for a namespace that does not exist.
-After a successful reset, start `./dev.sh` to provision development keys again,
+After a successful reset, start `./dev.sh` to generate development tokens again,
 then run `target/debug/lightspeed connect dev` to refresh the CLI connection.
-Manual database resets leave the launcher's saved credentials in place and
-require [explicit key repair](../using-lightspeed/cli.md#connect-to-local-development).
+Manual database resets leave the launcher's saved tokens in place. Tokens are
+configuration and do not depend on database rows.
 A changed migration checksum requires understanding the schema history;
 deleting rows does not repair a ledger mismatch. See
 [Changing contracts](changing-contracts.md#database-migrations) before editing

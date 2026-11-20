@@ -1,0 +1,5385 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PlatformApi",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "PlatformConnectionDetails": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "serviceUser"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "platformAdmin": {
+              "type": "boolean",
+              "description": "Whether the principal is a Platform Admin. Credential restrictions still apply to every operation."
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "name",
+            "platformAdmin"
+          ],
+          "additionalProperties": false
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "session",
+                "cliSession",
+                "personalKey",
+                "serviceUserKey",
+                "federated"
+              ]
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "organizations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "restrictions": {
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "principal",
+        "credential",
+        "organizations",
+        "restrictions"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSessionReadParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformSessionReadResult": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "serviceUser"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "name",
+            "email"
+          ],
+          "additionalProperties": false
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "session",
+                "cliSession",
+                "personalKey",
+                "serviceUserKey",
+                "federated"
+              ]
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "session": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                }
+              },
+              "required": [
+                "id",
+                "createdAt",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "principal",
+        "credential",
+        "session"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSessionRevokeParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformSessionRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsListParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "description": "Null for a key that never expires.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lastUsedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "organizationIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "start",
+              "createdAt",
+              "expiresAt",
+              "enabled",
+              "lastUsedAt",
+              "restrictions"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "credentials"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "expiresInDays": {
+          "description": "Days until the key expires. Omitted uses the deployment default; null creates a key that never expires, which a deployment maximum refuses.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsCreateResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "description": "Null for a key that never expires.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsReplaceParams": {
+      "type": "object",
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsReplaceResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "description": "Null for a key that never expires.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsRevokeParams": {
+      "type": "object",
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsCredentialsListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "description": "Null for a key that never expires.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lastUsedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "organizationIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "owner": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "user"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id",
+                      "name",
+                      "email"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "serviceUser"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id",
+                      "name",
+                      "enabled"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "start",
+              "createdAt",
+              "expiresAt",
+              "enabled",
+              "lastUsedAt",
+              "restrictions",
+              "owner"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Keys that can reach the organization: its service users' keys, and personal keys of people with a role in it whose restrictions allow it."
+        }
+      },
+      "required": [
+        "credentials"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "description": "Null for a key that never expires.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lastUsedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "organizationIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "start",
+              "createdAt",
+              "expiresAt",
+              "enabled",
+              "lastUsedAt",
+              "restrictions"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "credentials"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "expiresInDays": {
+          "description": "Days until the key expires. Omitted uses the deployment default; null creates a key that never expires, which a deployment maximum refuses.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "name",
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsCreateResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "description": "Null for a key that never expires.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsReplaceParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId",
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsReplaceResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "description": "Null for a key that never expires.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsPutParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Identifies the key among the service user's keys."
+        },
+        "secret": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^lsa_[A-Za-z0-9_-]{64,}$",
+          "description": "The key's secret: `lsa_` followed by at least 64 letters, digits, `-` or `_`. `lightspeed platform api-key generate-secret` makes one."
+        },
+        "expiresAt": {
+          "description": "When the key stops working. Omitted or null: never, which a deployment maximum refuses.",
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "dryRun": {
+          "description": "Report what would change without changing it.",
+          "type": "boolean"
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "name",
+        "secret",
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsPutResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "start": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "expiresAt": {
+                  "description": "Null for a key that never expires.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "lastUsedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "restrictions": {
+                  "type": "object",
+                  "properties": {
+                    "organizationIds": {
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "universeIds": {
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "operations": {
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "readOnly": {
+                      "type": "boolean"
+                    },
+                    "allowUniverseCreation": {
+                      "type": "boolean"
+                    },
+                    "allowServiceUserKeys": {
+                      "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "prefix",
+                "start",
+                "createdAt",
+                "expiresAt",
+                "enabled",
+                "lastUsedAt",
+                "restrictions"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only for a dry run that would create the key."
+        },
+        "created": {
+          "type": "boolean"
+        },
+        "secretReplaced": {
+          "type": "boolean"
+        },
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "restrictions",
+              "expiresAt"
+            ]
+          },
+          "description": "Settings that differed and were, or would be, changed."
+        }
+      },
+      "required": [
+        "credential",
+        "created",
+        "secretReplaced",
+        "updated"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsRevokeParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId",
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSettingsListParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformSettingsListResult": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "personalOrganizations",
+                  "personalUniverseQuota",
+                  "sharedUniverseQuota"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                ],
+                "description": "The value in effect."
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "environment",
+                  "platform",
+                  "default"
+                ],
+                "description": "Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default."
+              },
+              "defaultValue": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "environmentVariable": {
+                "type": "string",
+                "description": "The environment variable that sets this value for the whole deployment."
+              },
+              "updatedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "When the value set here was last changed."
+              }
+            },
+            "required": [
+              "key",
+              "value",
+              "source",
+              "defaultValue",
+              "environmentVariable",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSettingsPutParams": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "enum": [
+            "personalOrganizations",
+            "personalUniverseQuota",
+            "sharedUniverseQuota"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The new value; null returns the setting to its default."
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSettingsPutResult": {
+      "type": "object",
+      "properties": {
+        "setting": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "enum": [
+                "personalOrganizations",
+                "personalUniverseQuota",
+                "sharedUniverseQuota"
+              ]
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ],
+              "description": "The value in effect."
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "environment",
+                "platform",
+                "default"
+              ],
+              "description": "Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default."
+            },
+            "defaultValue": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ]
+            },
+            "environmentVariable": {
+              "type": "string",
+              "description": "The environment variable that sets this value for the whole deployment."
+            },
+            "updatedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "When the value set here was last changed."
+            }
+          },
+          "required": [
+            "key",
+            "value",
+            "source",
+            "defaultValue",
+            "environmentVariable",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "setting"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsListParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsListResult": {
+      "type": "object",
+      "properties": {
+        "organizations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "handle": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The organization's deployment-unique name."
+              },
+              "personal": {
+                "type": "boolean"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "creator",
+                      "admin"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The highest organization role the caller holds, for display."
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "createUniverse",
+                    "administerUniverses",
+                    "manageMembers",
+                    "manageServiceUsers",
+                    "managePolicy"
+                  ]
+                },
+                "description": "What the caller may do in the organization: the union of every role it holds there."
+              },
+              "universeQuota": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "How many universes the organization may hold."
+              },
+              "universeQuotaSource": {
+                "type": "string",
+                "enum": [
+                  "organization",
+                  "deployment"
+                ],
+                "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
+              },
+              "canCreateUniverse": {
+                "type": "boolean",
+                "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+              },
+              "universeCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "baseUniverseRole": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
+              },
+              "defaultProtected": {
+                "type": "boolean"
+              },
+              "requireProtected": {
+                "type": "boolean"
+              },
+              "membershipPolicy": {
+                "type": "object",
+                "properties": {
+                  "members": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "email": {
+                              "type": "string",
+                              "format": "email",
+                              "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "creator",
+                                "admin"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "email",
+                            "role"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "issuer": {
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "subject": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "creator",
+                                "admin"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "issuer",
+                            "subject",
+                            "role"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "directoryGroupMappings": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "issuer": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "group": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "member",
+                            "creator",
+                            "admin"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "issuer",
+                        "group",
+                        "role"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "enrollment": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subjectPattern": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject",
+                  "subjectPattern"
+                ],
+                "additionalProperties": false
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "handle",
+              "personal",
+              "role",
+              "actions",
+              "universeQuota",
+              "universeQuotaSource",
+              "canCreateUniverse",
+              "baseUniverseRole",
+              "defaultProtected",
+              "requireProtected",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "canCreate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "organizations",
+        "canCreate"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsEnrollParams": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "handle",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsEnrollResult": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enrolled": {
+          "type": "boolean",
+          "description": "True when this request created the organization; false when the workload already belongs to it."
+        }
+      },
+      "required": [
+        "organizationId",
+        "enrolled"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "handle": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "initialAdminUserId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "universeQuota": {
+          "description": "The organization's own universe limit; omitted or null follows the deployment default.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseUniverseRole": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaultProtected": {
+          "type": "boolean"
+        },
+        "requireProtected": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsCreateResult": {
+      "type": "object",
+      "properties": {
+        "organization": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The organization's deployment-unique name."
+            },
+            "personal": {
+              "type": "boolean"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The highest organization role the caller holds, for display."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "createUniverse",
+                  "administerUniverses",
+                  "manageMembers",
+                  "manageServiceUsers",
+                  "managePolicy"
+                ]
+              },
+              "description": "What the caller may do in the organization: the union of every role it holds there."
+            },
+            "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "How many universes the organization may hold."
+            },
+            "universeQuotaSource": {
+              "type": "string",
+              "enum": [
+                "organization",
+                "deployment"
+              ],
+              "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
+            },
+            "canCreateUniverse": {
+              "type": "boolean",
+              "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+            },
+            "universeCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "baseUniverseRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "viewer",
+                    "contributor",
+                    "operator",
+                    "owner"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
+            },
+            "defaultProtected": {
+              "type": "boolean"
+            },
+            "requireProtected": {
+              "type": "boolean"
+            },
+            "membershipPolicy": {
+              "type": "object",
+              "properties": {
+                "members": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "issuer": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "issuer",
+                          "subject",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "directoryGroupMappings": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "group": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "group",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "enrollment": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subjectPattern": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "subject",
+                "subjectPattern"
+              ],
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "handle",
+            "personal",
+            "role",
+            "actions",
+            "universeQuota",
+            "universeQuotaSource",
+            "canCreateUniverse",
+            "baseUniverseRole",
+            "defaultProtected",
+            "requireProtected",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "organization"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsReadParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsReadResult": {
+      "type": "object",
+      "properties": {
+        "organization": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The organization's deployment-unique name."
+            },
+            "personal": {
+              "type": "boolean"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The highest organization role the caller holds, for display."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "createUniverse",
+                  "administerUniverses",
+                  "manageMembers",
+                  "manageServiceUsers",
+                  "managePolicy"
+                ]
+              },
+              "description": "What the caller may do in the organization: the union of every role it holds there."
+            },
+            "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "How many universes the organization may hold."
+            },
+            "universeQuotaSource": {
+              "type": "string",
+              "enum": [
+                "organization",
+                "deployment"
+              ],
+              "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
+            },
+            "canCreateUniverse": {
+              "type": "boolean",
+              "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+            },
+            "universeCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "baseUniverseRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "viewer",
+                    "contributor",
+                    "operator",
+                    "owner"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
+            },
+            "defaultProtected": {
+              "type": "boolean"
+            },
+            "requireProtected": {
+              "type": "boolean"
+            },
+            "membershipPolicy": {
+              "type": "object",
+              "properties": {
+                "members": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "issuer": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "issuer",
+                          "subject",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "directoryGroupMappings": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "group": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "group",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "enrollment": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subjectPattern": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "subject",
+                "subjectPattern"
+              ],
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "handle",
+            "personal",
+            "role",
+            "actions",
+            "universeQuota",
+            "universeQuotaSource",
+            "canCreateUniverse",
+            "baseUniverseRole",
+            "defaultProtected",
+            "requireProtected",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "organization"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsUpdateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "universeQuota": {
+          "description": "The organization's own universe limit; null returns it to the deployment default.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseUniverseRole": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaultProtected": {
+          "type": "boolean"
+        },
+        "requireProtected": {
+          "type": "boolean"
+        },
+        "membershipPolicy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "creator",
+                      "admin"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsUpdateResult": {
+      "type": "object",
+      "properties": {
+        "organization": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The organization's deployment-unique name."
+            },
+            "personal": {
+              "type": "boolean"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The highest organization role the caller holds, for display."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "createUniverse",
+                  "administerUniverses",
+                  "manageMembers",
+                  "manageServiceUsers",
+                  "managePolicy"
+                ]
+              },
+              "description": "What the caller may do in the organization: the union of every role it holds there."
+            },
+            "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "How many universes the organization may hold."
+            },
+            "universeQuotaSource": {
+              "type": "string",
+              "enum": [
+                "organization",
+                "deployment"
+              ],
+              "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
+            },
+            "canCreateUniverse": {
+              "type": "boolean",
+              "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+            },
+            "universeCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "baseUniverseRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "viewer",
+                    "contributor",
+                    "operator",
+                    "owner"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
+            },
+            "defaultProtected": {
+              "type": "boolean"
+            },
+            "requireProtected": {
+              "type": "boolean"
+            },
+            "membershipPolicy": {
+              "type": "object",
+              "properties": {
+                "members": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "issuer": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "issuer",
+                          "subject",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "directoryGroupMappings": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "group": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "group",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "enrollment": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subjectPattern": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "subject",
+                "subjectPattern"
+              ],
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "handle",
+            "personal",
+            "role",
+            "actions",
+            "universeQuota",
+            "universeQuotaSource",
+            "canCreateUniverse",
+            "baseUniverseRole",
+            "defaultProtected",
+            "requireProtected",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "organization"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsMembersListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsMembersListResult": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ]
+              },
+              "added": {
+                "type": "boolean",
+                "description": "Holds an explicit membership that an admin added; removing the member removes it."
+              },
+              "declared": {
+                "type": "boolean",
+                "description": "The organization's membership policy or a directory group grants membership; only changing that policy removes it."
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "userId",
+              "name",
+              "email",
+              "role",
+              "added",
+              "declared",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "members"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsMembersPutParams": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "default": "member",
+          "type": "string",
+          "enum": [
+            "member",
+            "creator",
+            "admin"
+          ]
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "userId",
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsMembersPutResult": {
+      "type": "object",
+      "properties": {
+        "member": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "userId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "member",
+                "creator",
+                "admin"
+              ]
+            },
+            "added": {
+              "type": "boolean",
+              "description": "Holds an explicit membership that an admin added; removing the member removes it."
+            },
+            "declared": {
+              "type": "boolean",
+              "description": "The organization's membership policy or a directory group grants membership; only changing that policy removes it."
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "userId",
+            "name",
+            "email",
+            "role",
+            "added",
+            "declared",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "member"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsMembersDeleteParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId",
+        "userId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsMembersDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsServiceUsersListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsServiceUsersListResult": {
+      "type": "object",
+      "properties": {
+        "serviceUsers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "organizationId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "federatedCredentials": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "issuer": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "serviceAccountUid": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "restrictions": {
+                      "type": "object",
+                      "properties": {
+                        "organizationIds": {
+                          "maxItems": 1000,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "universeIds": {
+                          "maxItems": 1000,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "operations": {
+                          "maxItems": 1000,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        },
+                        "allowUniverseCreation": {
+                          "type": "boolean"
+                        },
+                        "allowServiceUserKeys": {
+                          "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "issuer",
+                    "subject"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "organizationId",
+              "name",
+              "enabled",
+              "role",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "serviceUsers"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsServiceUsersCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "role": {
+          "default": "member",
+          "type": "string",
+          "enum": [
+            "member",
+            "creator",
+            "admin"
+          ]
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsServiceUsersCreateResult": {
+      "type": "object",
+      "properties": {
+        "serviceUser": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "member",
+                "creator",
+                "admin"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "federatedCredentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "serviceAccountUid": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "restrictions": {
+                    "type": "object",
+                    "properties": {
+                      "organizationIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "universeIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "operations": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      },
+                      "allowUniverseCreation": {
+                        "type": "boolean"
+                      },
+                      "allowServiceUserKeys": {
+                        "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "name",
+            "enabled",
+            "role",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "serviceUser"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsServiceUsersUpdateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "member",
+            "creator",
+            "admin"
+          ]
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsServiceUsersUpdateResult": {
+      "type": "object",
+      "properties": {
+        "serviceUser": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "member",
+                "creator",
+                "admin"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "federatedCredentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "serviceAccountUid": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "restrictions": {
+                    "type": "object",
+                    "properties": {
+                      "organizationIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "universeIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "operations": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      },
+                      "allowUniverseCreation": {
+                        "type": "boolean"
+                      },
+                      "allowServiceUserKeys": {
+                        "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "name",
+            "enabled",
+            "role",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "serviceUser"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "issuer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "subject": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "serviceAccountUid": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "organizationIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "lastUsedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "issuer",
+              "subject",
+              "restrictions",
+              "id",
+              "lastUsedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "issuers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "credentials",
+        "issuers"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsPutParams": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "serviceAccountUid": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "createOnly": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issuer",
+        "subject",
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsPutResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "issuer": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "serviceAccountUid": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "lastUsedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "issuer",
+            "subject",
+            "restrictions",
+            "id",
+            "lastUsedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "credential"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsDeleteParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "credentialId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId",
+        "credentialId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAdoptParams": {
+      "type": "object",
+      "properties": {
+        "lightspeedUniverseId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "initialOwner": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "serviceUser"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "lightspeedUniverseId",
+        "name",
+        "initialOwner",
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAdoptResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "organizationRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "organizationRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesCreateParams": {
+      "type": "object",
+      "properties": {
+        "universeId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "handle": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "initialOwner": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "serviceUser"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "metadata": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "protected": {
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesCreateResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "organizationRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "organizationRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesUpdateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "archived"
+          ]
+        },
+        "metadata": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "protected": {
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesUpdateResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "organizationRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "organizationRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsListParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsListResult": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "universeId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "principal": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "serviceUser"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "operator",
+                  "owner"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "universeId",
+              "principal",
+              "role",
+              "name",
+              "active",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "grants"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsPutParams": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "serviceUser"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "viewer",
+            "contributor",
+            "operator",
+            "owner"
+          ]
+        },
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "principal",
+        "role",
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsPutResult": {
+      "type": "object",
+      "properties": {
+        "grant": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "universeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "principal": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "serviceUser"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "additionalProperties": false
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "active": {
+              "type": "boolean"
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "universeId",
+            "principal",
+            "role",
+            "name",
+            "active",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsDeleteParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grantId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe",
+        "grantId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesReadParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesReadResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "organizationRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "organizationRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyReadParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyReadResult": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyPutParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe",
+        "policy"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyPutResult": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

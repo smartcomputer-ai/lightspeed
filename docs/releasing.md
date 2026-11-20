@@ -2,7 +2,7 @@
 
 Lightspeed owns and publishes a coherent release containing the hosted runtime,
 the Incus provider, envd, the CLI, Configurator MCP, the platform backend/web
-image, the connector-host image (published as `platform-workers`), the generated
+image, the generated
 TypeScript client, the static in-browser demo and documentation site, API
 contracts, checksums, an SPDX SBOM, and a release manifest. A consumer should
 pin one manifest rather than selecting components separately.
@@ -67,20 +67,14 @@ gate with a non-production database whose user may create temporary databases:
 LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 ```
 
-The platform ledger was rebased on 2026-08-30 to the single
-`0000_platform_baseline` entry (auth, universes, setup installations): bots,
-triggers, events, channel accounts, and pairings moved into the Rust core
-schema, so the platform database holds people and the universe mapping
-and nothing else. Keep that shape: a new area gets its own migration, and its
-tables live in their own `platform/db/src/schema/<area>.ts`. A rebase
-invalidates the previous Drizzle ledger. A valuable existing database needs a
-validated migration/adoption procedure; replacing ledger rows by hand does not
-establish that its schema or data matches the baseline. Disposable development
-databases can be reset with `./dev.sh reset`. A journal with a single entry
-passes the gate on the empty-install check alone; the upgrade check resumes
-with the next migration. See
-[Upgrades and recovery](documentation/deployment/upgrades-and-recovery.md) for
-deployment maintenance and recovery requirements.
+The consolidated database baselines are runtime revision 8 and Platform
+revision 1 (`0000_initial_platform`). They require fresh databases and
+migration ledgers. Keep existing databases with their matching release until
+you have a validated data migration. For disposable local databases, use
+`./dev.sh reset` after stopping the launcher. A Platform journal with a single
+entry runs the empty-install gate. The upgrade check resumes with the next
+migration. See [Upgrades and recovery](documentation/deployment/upgrades-and-recovery.md)
+for the deployment procedure.
 
 ## Local release build
 
@@ -108,16 +102,10 @@ It requires no application runtime and is not included in the Platform image.
 The [documentation serving contract](site/README.md#content-negotiation-at-deployment)
 describes how the deployment can select Markdown using the `Accept` header.
 
-The same root lockfile deterministically stages the platform and connector-host
-runtime payloads. `make release-images` copies those prebuilt files into the
-`runtime`, Configurator, platform, and `platform-workers` images; it does not
-invoke Cargo or rebuild the web UI. The `platform-workers` image is the
-connector host (`platform/connectors`) with every provider dependency; it
-keeps its name so image references and manifest keys stay stable while Bots
-and Channels core run inside the `runtime` image. Image smoke tests compare
-the runtime's `lightspeed-runtime` executable byte-for-byte, start the platform
-image against PostgreSQL, check its health and SPA, and load the connector
-host's configuration and task-queue derivation from the staged runtime.
+The root lockfile stages the Platform payload for the release image.
+`make release-images` assembles the runtime, Configurator, and Platform images
+from the staged files. Smoke tests compare the runtime binary and run Platform
+against PostgreSQL.
 
 The Rust container is named `runtime` because it is the hosted product core,
 not merely an HTTP server. Its executable is `lightspeed-runtime`; standalone
@@ -218,8 +206,7 @@ and use those notes as the annotated tag message, as described in
   GitHub-hosted runners. Rust
   inputs run formatting, lint, cached workspace tests, contract checks, and
   the live migration-ledger acceptance test. TypeScript/contract inputs run
-  every generated consumer, all platform unit tests, the Channels Temporal
-  integration suite, and the platform empty-install/upgrade migration gate.
+  every generated consumer, all Platform unit tests, and the Platform empty-install/upgrade migration gate.
   Published manual, site, asset, and included reference changes run the docs
   adapter tests, Astro diagnostics, and a static build with link and asset
   validation. Shared dependency changes also select docs; build, release,

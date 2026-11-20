@@ -3,6 +3,7 @@ import { DetailHeader, type HeaderTool, type MainHeaderTool } from "@/components
 import { LoadingNote } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import type { WorkspaceFileEditing } from "./editing";
+import { effectiveMediaType } from "./media-types";
 import { canEdit } from "./registry";
 import type { FileContent, FileFacts, FileMode, FileProvider } from "./types";
 
@@ -67,7 +68,7 @@ export function FileHost({
     : provider.content === "text"
       ? { kind: "text", text: editing.value }
       : provider.content === "bytes" && bytes
-        ? { kind: "bytes", bytes, mediaType: facts.mediaType ?? "application/octet-stream" }
+        ? { kind: "bytes", bytes, mediaType: effectiveMediaType(facts) ?? "application/octet-stream" }
         : provider.content === "none"
           ? { kind: "none" }
           : null;

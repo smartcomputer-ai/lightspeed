@@ -1,7 +1,7 @@
 //! Bots: durable event routers that own controlled sessions in the core runtime.
 //!
 //! A bot is a universe record (brief, profile, budgets, capability grants)
-//! plus triggers (schedule, webhook, poll, inbox, chat). Every event goes
+//! plus triggers (schedule, webhook, poll, inbox). Every event goes
 //! through one admission pipeline into the bot's controller workflow, which
 //! owns the bot's controlled sessions. These are the wire shapes; the domain
 //! crate `bots` adds records, validation, and the pure pipeline logic.
@@ -266,7 +266,6 @@ pub enum BotTriggerKind {
     /// The bot's inbox for events other bots address to it; at most one
     /// per bot.
     Bot,
-    Chat,
 }
 
 impl BotTriggerKind {
@@ -276,7 +275,6 @@ impl BotTriggerKind {
             Self::Webhook => "webhook",
             Self::Poll => "poll",
             Self::Bot => "bot",
-            Self::Chat => "chat",
         }
     }
 }
@@ -406,74 +404,6 @@ pub struct PollCursorState {
     pub last_polled_at_ms: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ChatScope {
-    Direct,
-    Group,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ChatGroupActivation {
-    /// Act on mentions, replies to the bot, and trigger prefixes only.
-    #[default]
-    Mention,
-    /// Act on every message.
-    Always,
-}
-
-/// When the bot acts in a conversation.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatActivation {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<ChatGroupActivation>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub trigger_prefixes: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mention_names: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ChatTurnAccess {
-    /// Anyone in the conversation may take a turn.
-    #[default]
-    Anyone,
-    /// Only the listed provider handles may take a turn.
-    Listed,
-}
-
-/// Who may take a turn and who may issue control commands, by provider
-/// handle (Telegram user id, WhatsApp JID). Handle allowlists on the
-/// trigger replace any platform membership lookup.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatAccess {
-    #[serde(default)]
-    pub turn: ChatTurnAccess,
-    /// Handles allowed to take a turn when `turn` is `listed`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed: Vec<String>,
-    /// Handles allowed to issue `/activation` and `/status`; empty denies
-    /// control commands to everyone.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub controllers: Vec<String>,
-}
-
-/// Whether a conversation must present a pairing code before it connects.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ChatPairing {
-    /// A conversation connects once someone sends the trigger's pairing
-    /// code (minted by the server, shown to managers).
-    #[default]
-    Code,
-    /// Every matching conversation connects implicitly.
-    Open,
-}
-
 /// Per-kind trigger configuration. Routing, coalescing, filtering, and
 /// delivery policy are generic trigger fields, not part of the spec.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -517,29 +447,10 @@ pub enum BotTriggerSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<Vec<BotId>>,
     },
-    Chat {
-        /// The universe's channel account this connection serves.
-        account_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        match_scope: Option<ChatScope>,
-        #[serde(default)]
-        activation: ChatActivation,
-        #[serde(default)]
-        access: ChatAccess,
-        #[serde(default)]
-        pairing: ChatPairing,
-        /// Lower wins among matching chat triggers on one account.
-        #[serde(default = "default_chat_priority")]
-        priority: u32,
-    },
 }
 
 fn default_timezone() -> String {
     "UTC".to_owned()
-}
-
-fn default_chat_priority() -> u32 {
-    100
 }
 
 impl BotTriggerSpec {
@@ -549,7 +460,6 @@ impl BotTriggerSpec {
             Self::Webhook { .. } => BotTriggerKind::Webhook,
             Self::Poll { .. } => BotTriggerKind::Poll,
             Self::Bot { .. } => BotTriggerKind::Bot,
-            Self::Chat { .. } => BotTriggerKind::Chat,
         }
     }
 }
@@ -620,8 +530,7 @@ pub struct BotTriggerDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliver: Option<BotDeliverPolicy>,
     /// Idle-close policy for sessions this trigger routes to: absent inherits the
-    /// bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    /// chat default).
+    /// bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_close_after_ms: Option<u64>,
     #[serde(default = "default_true")]
@@ -634,11 +543,6 @@ pub struct BotTriggerInput {
     pub trigger_id: BotTriggerId,
     #[serde(flatten)]
     pub document: BotTriggerDocument,
-    /// Chat triggers with `pairing: code`: set a specific pairing code
-    /// (8–64 chars) instead of the server-minted one. Absent keeps the
-    /// stored code, so an edit never has to send it back.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pairing_code: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -683,54 +587,23 @@ pub struct BotTriggerView {
     pub updated_at_ms: i64,
 }
 
-/// What lets an outsider reach a trigger: whoever holds the ingest path can
-/// post events to the bot, and whoever holds the pairing code can connect a
-/// conversation to it. Kept apart from [`BotTriggerView`] so that reading or
-/// listing triggers never discloses either; only bot-management methods
-/// return this.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// The webhook ingest path, available through bot-management methods.
 pub struct BotTriggerSecretsView {
     /// Webhook triggers: the ingest path including its URL token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ingest_path: Option<String>,
-    /// Chat triggers with `pairing: code`: the code a conversation sends
-    /// once to connect.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pairing_code: Option<String>,
 }
 
 impl BotTriggerSecretsView {
-    /// A schedule, poll, inbox, or open chat trigger has neither secret.
+    /// Schedule, poll, and inbox triggers have no ingest path.
     pub fn is_empty(&self) -> bool {
-        self.ingest_path.is_none() && self.pairing_code.is_none()
+        self.ingest_path.is_none()
     }
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum BotEventMediaKind {
-    Image,
-    Audio,
-    Document,
-}
-
-/// A prepared attachment appended to the run input after the rendering;
-/// bytes live in the CAS.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct BotEventMedia {
-    /// Optional prepared UTF-8 text; the source attachment remains in blobRef.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_ref: Option<String>,
-    pub blob_ref: String,
-    pub kind: BotEventMediaKind,
-    pub mime: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
 
 /// What came of an event: the model's decision (`handled`, `deferred`,
 /// `ignored`, `blocked`) or the system's when no decision was possible.
@@ -812,7 +685,7 @@ pub struct BotEventView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_id: Option<BotTriggerId>,
     /// Event kind as authored by the source (`github.push`,
-    /// `schedule.fire`, `chat.message`, `bot.reply`).
+    /// `schedule.fire`, `bot.reply`).
     pub kind: String,
     pub summary: String,
     /// When the source says it happened.
@@ -827,8 +700,6 @@ pub struct BotEventView {
     /// The routed session; absent means the bot's main session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<BotRoutedSessionView>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub media: Vec<BotEventMedia>,
     /// Sending bot for bot-originated events (self or addressed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_bot_id: Option<BotId>,
@@ -1380,7 +1251,7 @@ mod tests {
         let mut names = Vec::new();
         property_names(&schema, &mut names);
         assert!(names.iter().any(|name| name == "triggerId"), "{names:?}");
-        for secret in ["ingestPath", "pairingCode", "webhookToken"] {
+        for secret in ["ingestPath", "webhookToken"] {
             assert!(
                 !names.iter().any(|name| name == secret),
                 "BotTriggerView must not declare {secret}"
@@ -1400,7 +1271,6 @@ mod tests {
             let text = definition(response).to_string();
             assert!(!text.contains("BotTriggerSecretsView"), "{response}");
             assert!(!text.contains("ingestPath"), "{response}");
-            assert!(!text.contains("pairingCode"), "{response}");
         }
         for (method, role) in [
             (crate::METHOD_BOTS_TRIGGERS_READ, RecommendedRole::Viewer),
@@ -1432,18 +1302,13 @@ mod tests {
     fn trigger_secrets_read_flat_and_omit_what_a_trigger_lacks() {
         let webhook = BotTriggerSecretsReadResponse {
             secrets: BotTriggerSecretsView {
-                ingest_path: Some("/hooks/bots/u/triage/github/tok".to_owned()),
-                pairing_code: None,
+                ingest_path: Some("/ingress/webhooks/bots/u/triage/github/tok".to_owned()),
             },
         };
         assert_eq!(
             serde_json::to_value(&webhook).unwrap(),
-            json!({ "ingestPath": "/hooks/bots/u/triage/github/tok" })
+            json!({ "ingestPath": "/ingress/webhooks/bots/u/triage/github/tok" })
         );
-        let chat: BotTriggerSecretsReadResponse =
-            serde_json::from_value(json!({ "pairingCode": "ABCDEFGH2345" })).unwrap();
-        assert_eq!(chat.secrets.pairing_code.as_deref(), Some("ABCDEFGH2345"));
-        assert!(chat.secrets.ingest_path.is_none());
         let none = BotTriggerSecretsReadResponse::default();
         assert!(none.secrets.is_empty());
         assert_eq!(serde_json::to_value(&none).unwrap(), json!({}));
@@ -1452,7 +1317,7 @@ mod tests {
         let mut names = Vec::new();
         property_names(&schema, &mut names);
         names.sort();
-        assert_eq!(names, ["ingestPath", "pairingCode"]);
+        assert_eq!(names, ["ingestPath"]);
     }
 
     fn webhook_view() -> BotTriggerView {
@@ -1484,23 +1349,20 @@ mod tests {
 
     #[test]
     fn a_trigger_view_ignores_secrets_it_is_handed_and_never_writes_them() {
-        // A payload in the shape an earlier server sent decodes without the
-        // two values, so no client keeps or echoes them through this type.
+        // A payload in the shape an earlier server sent decodes without its
+        // ingest path, so the client never echoes it through this type.
         let mut wire = serde_json::to_value(webhook_view()).unwrap();
-        wire["ingestPath"] = json!("/hooks/bots/u/triage/github/tok");
-        wire["pairingCode"] = json!("ABCDEFGH2345");
+        wire["ingestPath"] = json!("/ingress/webhooks/bots/u/triage/github/tok");
         let view: BotTriggerView = serde_json::from_value(wire).unwrap();
         assert_eq!(view, webhook_view());
         let written = serde_json::to_string(&view).unwrap();
-        assert!(!written.contains("/hooks/"), "{written}");
-        assert!(!written.contains("ABCDEFGH2345"), "{written}");
+        assert!(!written.contains("/ingress/webhooks/"), "{written}");
     }
 
     #[test]
     fn writes_answer_with_secrets_beside_the_view_and_omit_them_when_there_are_none() {
         let secrets = BotTriggerSecretsView {
-            ingest_path: Some("/hooks/bots/u/triage/github/tok".to_owned()),
-            pairing_code: None,
+            ingest_path: Some("/ingress/webhooks/bots/u/triage/github/tok".to_owned()),
         };
         let put = serde_json::to_value(BotTriggerPutResponse {
             trigger: webhook_view(),
@@ -1509,9 +1371,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             put["secrets"],
-            json!({ "ingestPath": "/hooks/bots/u/triage/github/tok" })
+            json!({ "ingestPath": "/ingress/webhooks/bots/u/triage/github/tok" })
         );
-        assert!(!put["trigger"].to_string().contains("/hooks/"), "{put}");
+        assert!(
+            !put["trigger"].to_string().contains("/ingress/webhooks/"),
+            "{put}"
+        );
         let bare = serde_json::to_value(BotTriggerPutResponse {
             trigger: webhook_view(),
             secrets: BotTriggerSecretsView::default(),
@@ -1539,10 +1404,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             created["triggerSecrets"],
-            json!({ "github": { "ingestPath": "/hooks/bots/u/triage/github/tok" } })
+            json!({ "github": { "ingestPath": "/ingress/webhooks/bots/u/triage/github/tok" } })
         );
         assert!(
-            !created["triggers"].to_string().contains("/hooks/"),
+            !created["triggers"]
+                .to_string()
+                .contains("/ingress/webhooks/"),
             "{created}"
         );
         created.as_object_mut().unwrap().remove("triggerSecrets");

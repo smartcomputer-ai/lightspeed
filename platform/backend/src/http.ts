@@ -1,8 +1,12 @@
+import { LightspeedApiError } from "@lightspeed-ai/sdk";
+import { WorkspaceTransferError } from "@lightspeed-ai/platform-shared";
+import { UniverseHandleCacheConflict } from "./universe-handles.js";
+import { RuntimeUnconfigured, GateRefusal } from "./runtime-client.js";
 import type { Context } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { ZodType } from "zod";
 
-/// Parses and validates a JSON body; throws a Response-shaped error the
-/// route turns into a 400 with zod issue details.
+/// Parses and validates a JSON body, returning a 400 response on failure.
 export async function parseBody<T>(c: Context, schema: ZodType<T>): Promise<
   { ok: true; data: T } | { ok: false; response: Response }
 > {
@@ -23,4 +27,51 @@ export async function parseBody<T>(c: Context, schema: ZodType<T>): Promise<
     };
   }
   return { ok: true, data: parsed.data };
+}
+
+/// Maps runtime failures onto API responses: notFound/conflict pass
+/// through as 404/409, transport or internal errors surface as 502. Only
+/// typed errors carry their message; anything else (a database driver error
+/// includes its SQL and parameters) is logged here and answered generically.
+export async function withApiErrors(
+  c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 410 | 500 | 501 | 502) => Response },
+  fn: () => Promise<Response>,
+): Promise<Response> {
+  try {
+    return await fn();
+  } catch (error) {
+    // Preserve the framework status and let the app choose its UI/problem shape.
+    if (error instanceof HTTPException) throw error;
+    if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
+    if (error instanceof UniverseHandleCacheConflict) return c.json({ error: error.message }, 409);
+    if (error instanceof RuntimeUnconfigured) {
+      return c.json({ error: error.message }, 501);
+    }
+    if (error instanceof GateRefusal) {
+      return c.json({ error: error.status === 404 ? "not found" : error.message }, error.status);
+    }
+    const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+    if (code === "23505") return c.json({ error: "record already exists" }, 409);
+    if (error instanceof LightspeedApiError) {
+      if (error.kind === "modelDefaultUnset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
+      if (error.kind === "operationPending") return c.json({ error: error.message, kind: error.kind, submissionId: error.data?.submissionId }, 409);
+      if (error.kind === "invalidRequest" || error.kind === "audioBlobTooLarge") return c.json({ error: error.message }, 400);
+      // Core refusing the Platform means its own runtime token or gate is wrong: the
+      // caller was already admitted here.
+      if (error.kind === "unauthenticated") return c.json({ error: "runtime rejected the Platform token" }, 502);
+      if (error.kind === "forbidden") return c.json({ error: "runtime refused the Platform" }, 500);
+      if (error.kind === "rejected") return c.json({ error: error.message }, 409);
+      if (error.kind === "sessionExecutionStopped") return c.json({ error: error.message, kind: error.kind }, 409);
+      if (error.kind === "gone") return c.json({ error: error.message, kind: error.kind }, 410);
+      if (error.kind === "notFound") {
+        return c.json({ error: "not found in runtime" }, 404);
+      }
+      if (error.kind === "conflict") {
+        return c.json({ error: `runtime conflict: ${error.message}` }, 409);
+      }
+      return c.json({ error: `runtime error: ${error.message}` }, 502);
+    }
+    console.error("unhandled request error", error);
+    return c.json({ error: "internal error" }, 502);
+  }
 }

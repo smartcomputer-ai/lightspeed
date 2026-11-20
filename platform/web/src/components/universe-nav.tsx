@@ -1,8 +1,9 @@
 import type { ComponentType } from "react";
-import { ApiKeyIcon, BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, TemplateIcon, WorkspaceIcon } from "@/icons";
+import { BotIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, WorkspaceIcon } from "@/icons";
 import { Navigate } from "react-router-dom";
 import type { FeatureKey, FeatureStates } from "@lightspeed-ai/platform-shared";
-import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
+import type { UniverseAction } from "@lightspeed-ai/platform-shared";
+import { useActionPermissions } from "@/lib/permissions";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 
 /// One universe page in the sidebar. The item shows when the caller holds
@@ -13,13 +14,13 @@ export interface UniverseNavItem {
   path: string;
   label: string;
   icon: ComponentType;
-  action: PermissionAction;
+  action: UniverseAction;
   feature?: FeatureKey;
 }
 
 export function navItemVisible(
   item: UniverseNavItem,
-  can: (action: PermissionAction) => boolean,
+  can: (action: UniverseAction) => boolean,
   features: FeatureStates | undefined,
 ): boolean {
   return can(item.action) && (!item.feature || features?.[item.feature] === true);
@@ -32,13 +33,12 @@ export interface UniverseNavGroup {
 
 /// The universe's own configuration, in the order `/settings` resolves.
 const SETTINGS_NAV: UniverseNavItem[] = [
-  { path: "settings/general", label: "General", icon: SettingsIcon, action: "manageAccess" },
-  { path: "settings/channels", label: "Channels", icon: ChannelIcon, action: "configureResource", feature: "channels" },
-  { path: "settings/templates", label: "Templates", icon: TemplateIcon, action: "configureResource" },
+  { path: "settings/general", label: "General", icon: SettingsIcon, action: "administer" },
+  { path: "settings/members", label: "Members", icon: MemberIcon, action: "administer" },
 ];
 
-/// The work itself (with the workspaces that hold it), the setup agents are made from, access (credentials,
-/// keys and members), and the universe's settings. A group renders only when
+/// The work itself, the setup agents use (including outbound credentials),
+/// and the universe's access and settings. A group renders only when
 /// one of its items is visible.
 export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
@@ -57,22 +57,20 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
       { path: "environments", label: "Environments", icon: EnvironmentIcon, action: "read" },
       { path: "mcp-servers", label: "MCP servers", icon: McpServerIcon, action: "read" },
       { path: "models", label: "Models", icon: ModelIcon, action: "read" },
+      { path: "credentials", label: "Credentials", icon: CredentialIcon, action: "configureResource" },
     ],
   },
   {
-    label: "Access",
+    label: "Settings",
     items: [
-      { path: "credentials", label: "Credentials", icon: CredentialIcon, action: "configureResource" },
-      { path: "api-keys", label: "API keys", icon: ApiKeyIcon, action: "manageAccess" },
-      { path: "members", label: "Members", icon: MemberIcon, action: "read" },
+      ...SETTINGS_NAV,
     ],
   },
-  { label: "Settings", items: SETTINGS_NAV },
 ];
 
 /// The sidebar's names for a universe page, most specific first, given the
 /// path below `/u/:handle/`: ["Sessions"], or ["General", "Settings"] for a
-/// page under its own group's path. Groups like Setup and Access are only
+/// page under its own group's path. Groups like Setup are only
 /// headings in the menu, not part of the path. Unknown pages yield [].
 export function universeSectionTrail(path: string): string[] {
   for (const group of UNIVERSE_NAV) {
@@ -86,7 +84,7 @@ export function universeSectionTrail(path: string): string[] {
 /// universe's home.
 export function settingsIndexPath(
   universe: { handle: string; features?: FeatureStates },
-  can: (action: PermissionAction) => boolean,
+  can: (action: UniverseAction) => boolean,
 ): string {
   const first = SETTINGS_NAV.find((item) => navItemVisible(item, can, universe.features));
   return first ? `/u/${universe.handle}/${first.path}` : universeHome(universe);

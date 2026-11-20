@@ -14,6 +14,12 @@ use super::{
 fn subagent_failure(error: api::AgentApiError) -> ActivityError {
     use api::AgentApiErrorKind as Kind;
     match error.kind {
+        Kind::Gone => ActivityError::application(
+            temporalio_common::error::ApplicationFailure::builder(error)
+                .type_name(temporal_workflow::UNIVERSE_UNKNOWN_ERROR_TYPE.to_owned())
+                .non_retryable(true)
+                .build(),
+        ),
         Kind::InvalidRequest
         | Kind::NotFound
         | Kind::Forbidden

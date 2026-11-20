@@ -282,7 +282,7 @@ impl FakeLlm {
             });
             tool_calls.push(ObservedToolCall {
                 call_id,
-                tool_id: Some(tool_id.clone()),
+                target: Some(tool_id.clone().into()),
                 tool_name: tool_name.clone(),
                 provider_kind: Some("fake".to_owned()),
                 arguments_ref,

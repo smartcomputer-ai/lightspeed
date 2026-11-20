@@ -12,7 +12,7 @@ Start with the extension path that fits the work:
 | Use another service speaking Responses or Chat Completions | Configure an OpenAI-compatible provider connection and select its model route. |
 | Support another model wire protocol | Implement a native client and request materializer, then add its API kind to the runtime. |
 
-The runtime has no general plugin-directory loader or public RPC for installing
+The runtime has no general plugin-directory loader or public API for installing
 an arbitrary Rust handler. A compiled extension becomes part of a new runtime
 build. MCP and [workflow tools](workflow-tools.md) let an implementation run
 in its own service or worker.
@@ -109,12 +109,13 @@ does not need a new harness-specific transport.
 
 ## Configure another compatible model service
 
-If the service implements an existing OpenAI-style API, configure an endpoint
-before considering a native adapter. The provider record selects transport
-and credentials; the session selects provider ID, API kind, and model name.
+For a service that implements an existing OpenAI-style API, configure an
+endpoint. Its provider record supplies the connection and credentials.
+The session selects the provider ID, API kind, and model name. On Platform,
+use a caller with `configureResource` in the universe and permission to call
+`credentials/providers/create`.
 
-For example, the following are `auth/providers/create` parameters for a
-credentialless loopback service:
+These parameters register a loopback service that needs no credential.
 
 ```json
 {
@@ -130,8 +131,8 @@ credentialless loopback service:
 }
 ```
 
-The authentication provider record includes the `model:` prefix. A session or
-profile's model configuration uses the provider ID without that prefix:
+The credential provider record includes the `model:` prefix. A session or
+profile's model configuration uses the provider ID without that prefix.
 
 ```json
 {
@@ -184,7 +185,7 @@ Use the existing implementation layers as the source map:
 | --- | --- |
 | [Native clients](../../../crates/llm-clients/README.md) | Provider request/response types, transport, streaming where supported, and provider error handling. |
 | [Runtime executor](../../../crates/llm-runtime/src/executor.rs) | Generation and compaction adapter implementations and retry classification. |
-| [Provider credentials](../../../crates/llm-runtime/src/provider_keys.rs) and [endpoint admission](../../../crates/auth/src/providers.rs) | Admit supported endpoint/API kinds and resolve the configured connection and credentials at the effectful boundary. |
+| [Provider credentials](../../../crates/llm-runtime/src/provider_keys.rs) and [endpoint admission](../../../crates/credentials/src/providers.rs) | Admit supported endpoint/API kinds and resolve the configured connection and credentials at the effectful boundary. |
 | [Tool catalog materialization](../../../crates/llm-runtime/src/tool_catalog.rs) | Render admitted tool definitions and map model calls back to their identities. |
 | [API route conversion](../../../crates/temporal-runtime/src/gateway/service/api_config.rs) | Validate the public model route against supported kinds. |
 | [Hosted adapter assembly](../../../crates/temporal-runtime/src/worker/activities/state.rs) | Register generation and compaction implementations used by workers. |

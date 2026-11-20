@@ -14,7 +14,6 @@ async fn recent(api: &HttpAgentApi, resume: bool) -> Result<Vec<api::SessionSumm
         })
         .await
         .map_err(api_error)?
-        .result
         .sessions)
 }
 

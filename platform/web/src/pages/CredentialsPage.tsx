@@ -78,18 +78,16 @@ type SecretKind = "token" | "environment";
 const REUSABLE_CREDENTIAL_KINDS = new Set(["staticToken", "gitHubApp", "customOAuth"]);
 
 /// A credential made for exactly one thing lives on that thing's page: model
-/// keys and subscription logins on Models, MCP server logins on MCP servers,
-/// channel bot tokens on Channels. Credential pickers elsewhere still offer
-/// every grant.
+/// keys and subscription logins on Models, and MCP server logins on MCP servers.
+/// Credential pickers elsewhere still offer every grant.
 export function isReusableCredential(
   grant: Pick<SecretGrant, "providerKind" | "providerId" | "metadata">,
 ): boolean {
   return REUSABLE_CREDENTIAL_KINDS.has(grant.providerKind)
-    && !isSubscriptionGrant(grant)
-    && grant.providerId !== "telegram";
+    && !isSubscriptionGrant(grant);
 }
 
-export function CredentialsPage({ admin: _admin }: { admin: boolean }) {
+export function CredentialsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
@@ -111,17 +109,17 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
   const inventory = useQuery({
     queryKey: ["secrets", universeId],
     queryFn: () =>
-      api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
+      api<SecretsInventory>("GET", `/api/ui/universes/${universeId}/secrets`),
   });
   const github = useQuery({
     queryKey: ["integrations", "github", universeId],
     queryFn: () =>
-      api<GitHubIntegration>("GET", `/api/v1/universes/${universeId}/integrations/github`),
+      api<GitHubIntegration>("GET", `/api/ui/universes/${universeId}/integrations/github`),
   });
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ["secrets", universeId] }),
-      queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] }),
+      queryClient.invalidateQueries({ queryKey: ["credential-grants", universeId] }),
       queryClient.invalidateQueries({ queryKey: ["models", universeId] }),
       queryClient.invalidateQueries({ queryKey: ["integrations"] }),
     ]);
@@ -130,7 +128,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
     mutationFn: (grantId: string) =>
       api<SecretGrant>(
         "DELETE",
-        `/api/v1/universes/${universeId}/secrets/grants/${encodeURIComponent(grantId)}`,
+        `/api/ui/universes/${universeId}/secrets/grants/${encodeURIComponent(grantId)}`,
       ),
     onSuccess: () => void invalidate(),
   });
@@ -152,7 +150,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
     <>
       <PageHeader
         title="Credentials"
-        description="Reusable tokens and secrets owned by this universe. A brokered credential never leaves Lightspeed, which attaches it to its own requests to MCP servers. A retrievable credential can also be assigned to an environment, whose processes receive its value, and leased by trusted services."
+        description="Tokens and secrets that agents in this universe use to connect to external services. Manage keys for accessing Lightspeed under Settings → API keys, or Admin → organization → API keys. A brokered credential stays in Lightspeed; a retrievable credential can also be assigned to an environment or leased by trusted services."
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>
@@ -509,7 +507,7 @@ function PasteCredentialDialog({
       if (kind === "environment") {
         return api<SecretGrant>(
           "POST",
-          `/api/v1/universes/${universeId}/secrets/environment`,
+          `/api/ui/universes/${universeId}/secrets/environment`,
           {
             value: secret,
             ...(grantId.trim() ? { grantId: grantId.trim() } : {}),
@@ -519,7 +517,7 @@ function PasteCredentialDialog({
       }
       return api<SecretGrant>(
         "POST",
-        `/api/v1/universes/${universeId}/secrets/grants`,
+        `/api/ui/universes/${universeId}/secrets/grants`,
         {
           token: secret,
           exposure: retrievable ? "retrievable" : "brokered",
@@ -727,7 +725,7 @@ function ReplaceValueDialog({
     mutationFn: () =>
       api<SecretGrant>(
         "POST",
-        `/api/v1/universes/${universeId}/secrets/grants/${encodeURIComponent(grant!.grantId)}/replace`,
+        `/api/ui/universes/${universeId}/secrets/grants/${encodeURIComponent(grant!.grantId)}/replace`,
         { value },
       ),
     onSuccess: () => {

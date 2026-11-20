@@ -1,18 +1,14 @@
 //! Access classification of every public method, and the few access inputs
 //! and views sessions and bots carry.
 //!
-//! Core gates a request by its key: the key's scope and the method's group
-//! (derived from the method name). Everything about people is decided by
-//! whoever asserts actors, such as the Platform; the recommended role and the
-//! target of each method are contract metadata for such gates, and core never
-//! evaluates them.
+//! Caller permissions belong to an external gate such as the Platform.
+//! Scope, API family, recommended role and target are published metadata;
+//! the runtime does not apply them as caller permissions.
 
 use super::*;
-use std::collections::BTreeSet;
 use uuid::Uuid;
 
-/// What a key reaches or a request addresses: one universe, or the
-/// deployment.
+/// What a request addresses: one universe, or the deployment.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -46,9 +42,7 @@ impl AccessScope {
     }
 }
 
-/// The kind of an [`AccessScope`]: the deployment, or a universe. Where a
-/// record already belongs to one universe this is enough to tell a universe
-/// key of that universe from a deployment key.
+/// The kind of request target: the deployment or a universe.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -68,9 +62,8 @@ impl AccessScopeKind {
     }
 }
 
-/// The methods a key may call, by group. Every public method but
-/// `initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
-/// new method never changes what an existing key reaches beyond its group.
+/// The API family of a method, published for external authorization gates.
+/// `initialize` and `universe/watch` have no single family.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -81,7 +74,7 @@ pub enum MethodGroup {
     /// Destructive session operations and deletion retention.
     #[serde(rename = "session/delete")]
     SessionDelete,
-    /// `blobs/put` alone, so connectors can upload attachments without
+    /// `blobs/put` and `blobs/upload`, so connectors can upload attachments without
     /// reading sessions.
     #[serde(rename = "blobs/put")]
     BlobsPut,
@@ -100,34 +93,23 @@ pub enum MethodGroup {
     Environments,
     #[serde(rename = "bots")]
     Bots,
-    /// Channel accounts, pairings and conversations.
-    #[serde(rename = "channels")]
-    Channels,
-    /// `channels/inbound/admit`: what a connector delivers.
-    #[serde(rename = "channels/inbound")]
-    ChannelsInbound,
-    /// `auth/*` except leasing.
-    #[serde(rename = "auth")]
-    Auth,
-    /// `auth/grants/lease`: resolving a brokered credential for delivery.
-    #[serde(rename = "auth/lease")]
-    AuthLease,
+    /// `credentials/*` except leasing.
+    #[serde(rename = "credentials")]
+    Credentials,
+    /// `credentials/grants/lease`: resolving a brokered credential for delivery.
+    #[serde(rename = "credentials/lease")]
+    CredentialsLease,
     #[serde(rename = "deployment/universes")]
     DeploymentUniverses,
-    #[serde(rename = "deployment/api-keys")]
-    DeploymentApiKeys,
     /// Environment providers and their universe bindings.
     #[serde(rename = "deployment/environment-providers")]
     DeploymentEnvironmentProviders,
-    /// `deployment/channels/accounts/list`: a connector host's discovery.
-    #[serde(rename = "deployment/channels")]
-    DeploymentChannels,
     #[serde(rename = "deployment/sessions")]
     DeploymentSessions,
 }
 
 impl MethodGroup {
-    pub const ALL: [MethodGroup; 19] = [
+    pub const ALL: [MethodGroup; 15] = [
         Self::Session,
         Self::SessionDelete,
         Self::BlobsPut,
@@ -138,14 +120,10 @@ impl MethodGroup {
         Self::Mcp,
         Self::Environments,
         Self::Bots,
-        Self::Channels,
-        Self::ChannelsInbound,
-        Self::Auth,
-        Self::AuthLease,
+        Self::Credentials,
+        Self::CredentialsLease,
         Self::DeploymentUniverses,
-        Self::DeploymentApiKeys,
         Self::DeploymentEnvironmentProviders,
-        Self::DeploymentChannels,
         Self::DeploymentSessions,
     ];
 
@@ -162,14 +140,10 @@ impl MethodGroup {
             Self::Mcp => "mcp",
             Self::Environments => "environments",
             Self::Bots => "bots",
-            Self::Channels => "channels",
-            Self::ChannelsInbound => "channels/inbound",
-            Self::Auth => "auth",
-            Self::AuthLease => "auth/lease",
+            Self::Credentials => "credentials",
+            Self::CredentialsLease => "credentials/lease",
             Self::DeploymentUniverses => "deployment/universes",
-            Self::DeploymentApiKeys => "deployment/api-keys",
             Self::DeploymentEnvironmentProviders => "deployment/environment-providers",
-            Self::DeploymentChannels => "deployment/channels",
             Self::DeploymentSessions => "deployment/sessions",
         }
     }
@@ -178,80 +152,61 @@ impl MethodGroup {
         Self::ALL.into_iter().find(|group| group.as_str() == value)
     }
 
-    /// Deployment groups address the deployment, never one universe; only a
-    /// deployment key holds them.
+    /// Deployment families address the deployment, never one universe.
     pub fn is_deployment(self) -> bool {
         matches!(
             self,
             Self::DeploymentUniverses
-                | Self::DeploymentApiKeys
                 | Self::DeploymentEnvironmentProviders
-                | Self::DeploymentChannels
                 | Self::DeploymentSessions
         )
     }
 
-    /// Every group a key of `scope` may hold, which is what a key asked for
-    /// with the literal `all` receives. A key is never given groups it did
-    /// not ask for.
-    pub fn allowed_in(scope: AccessScope) -> BTreeSet<MethodGroup> {
-        Self::ALL
-            .into_iter()
-            .filter(|group| scope == AccessScope::Deployment || !group.is_deployment())
-            .collect()
-    }
-
     /// The group a method belongs to, from its name. `None` for
-    /// `initialize`, which every key may call, and for names outside the
-    /// contract. `universe/watch` checks the group of each requested kind.
+    /// `initialize`, `universe/watch`, and names outside the contract.
     pub fn of(method: &str) -> Option<MethodGroup> {
+        method_access(method)?;
         let group = |prefix: &str| method.starts_with(prefix);
-        Some(if method == "blobs/put" {
-            Self::BlobsPut
-        } else if matches!(method, "session/delete" | "session/retention/put") {
-            Self::SessionDelete
-        } else if group("deployment/sessions/") {
-            Self::DeploymentSessions
-        } else if group("session/") || group("blobs/") {
-            Self::Session
-        } else if group("transcriptions/") {
-            Self::Transcriptions
-        } else if group("vfs/") {
-            Self::Vfs
-        } else if group("profiles/") {
-            Self::Profiles
-        } else if group("models/") {
-            Self::Models
-        } else if group("mcp/") {
-            Self::Mcp
-        } else if group("environments/") {
-            Self::Environments
-        } else if group("bots/") {
-            Self::Bots
-        } else if group("channels/inbound/") {
-            Self::ChannelsInbound
-        } else if group("channels/") {
-            Self::Channels
-        } else if method == "auth/grants/lease" {
-            Self::AuthLease
-        } else if group("auth/") {
-            Self::Auth
-        } else if group("deployment/universes/") {
-            Self::DeploymentUniverses
-        } else if group("deployment/api-keys/") {
-            Self::DeploymentApiKeys
-        } else if group("deployment/environment-provider") {
-            Self::DeploymentEnvironmentProviders
-        } else if group("deployment/channels/") {
-            Self::DeploymentChannels
-        } else {
-            return None;
-        })
+        Some(
+            if matches!(method, METHOD_BLOBS_PUT | METHOD_BLOBS_UPLOAD) {
+                Self::BlobsPut
+            } else if matches!(method, "session/delete" | "session/retention/put") {
+                Self::SessionDelete
+            } else if group("deployment/sessions/") {
+                Self::DeploymentSessions
+            } else if group("session/") || group("blobs/") {
+                Self::Session
+            } else if group("transcriptions/") {
+                Self::Transcriptions
+            } else if group("vfs/") {
+                Self::Vfs
+            } else if group("profiles/") {
+                Self::Profiles
+            } else if group("models/") {
+                Self::Models
+            } else if group("mcp/") {
+                Self::Mcp
+            } else if group("environments/") {
+                Self::Environments
+            } else if group("bots/") {
+                Self::Bots
+            } else if method == "credentials/grants/lease" {
+                Self::CredentialsLease
+            } else if group("credentials/") {
+                Self::Credentials
+            } else if group("deployment/universes/") {
+                Self::DeploymentUniverses
+            } else if group("deployment/environment-provider") {
+                Self::DeploymentEnvironmentProviders
+            } else {
+                return None;
+            },
+        )
     }
 }
 
-/// Who created a resource or authored bytes. An actor is whatever a key
-/// allowed to assert one said; core compares it and never resolves it.
+/// Who created a resource or authored bytes. Actors are opaque caller claims;
+/// the runtime records them without resolving caller permissions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -259,17 +214,10 @@ impl MethodGroup {
     rename_all_fields = "camelCase"
 )]
 pub enum Attribution {
-    /// The actor a key asserted for its request.
+    /// The actor the caller named for its request.
     Actor { id: String },
-    /// A key acting for itself, named by its key id. A key id is unique
-    /// among the keys of one scope, so `scopeKind` says whether it names a
-    /// deployment key or a key of the universe the record belongs to. The
-    /// id survives a change of secret; the secret's display prefix does not
-    /// and is deliberately not recorded.
-    Key {
-        key_id: String,
-        scope_kind: AccessScopeKind,
-    },
+    /// The configured runtime token's name, never its secret.
+    Token { name: String },
     /// An unauthenticated local development request, or an in-process call.
     Local,
     /// The runtime's own work: a bot, a delegated session, a registration,
@@ -278,12 +226,8 @@ pub enum Attribution {
 }
 
 impl Attribution {
-    /// A key of `scope` acting for itself.
-    pub fn key(key_id: impl Into<String>, scope: AccessScope) -> Self {
-        Self::Key {
-            key_id: key_id.into(),
-            scope_kind: scope.kind(),
-        }
+    pub fn token(name: impl Into<String>) -> Self {
+        Self::Token { name: name.into() }
     }
 
     /// The asserted actor, if this is one.
@@ -378,9 +322,8 @@ pub struct ResourceAccessSummary {
     pub created_by: Option<Attribution>,
 }
 
-/// What a public method does, independent of its RPC spelling. Requests are
-/// gated by their key's groups; this classifies what the runtime's own work
-/// may do and which role a gate built on the contract should require.
+/// What a public method does, independent of its operation ID. This classifies
+/// the runtime's own work and the role an external gate should require.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum UniverseAction {
@@ -402,7 +345,7 @@ pub enum UniverseAction {
     /// Use a workspace, environment or MCP server, or store bytes.
     UseResource,
     /// Configure a workspace, environment, MCP server or shared
-    /// configuration such as credentials and channels.
+    /// configuration such as credentials.
     ConfigureResource,
     CreateWorkspace,
 }
@@ -418,8 +361,7 @@ pub enum MethodAccess {
     /// A universe method for machines only, such as connectors delivering
     /// messages or triggers leasing a credential. No person calls it.
     Service,
-    /// A deployment method: it addresses the deployment and needs a
-    /// deployment key.
+    /// A deployment method: it addresses the deployment.
     Deployment,
 }
 
@@ -444,7 +386,7 @@ impl MethodAccess {
         };
         Some(match action {
             Read => RecommendedRole::Viewer,
-            SetSessionRetention => RecommendedRole::Admin,
+            SetSessionRetention => RecommendedRole::Owner,
             CreateSession | ControlSession | StopSession | CloseSession | ShareSession
             | InvokeBot | UseResource => RecommendedRole::Contributor,
             DeleteSession | ConfigureSession | CreateProfile | ManageProfile | CreateBot
@@ -463,7 +405,7 @@ pub enum RecommendedRole {
     Viewer,
     Contributor,
     Operator,
-    Admin,
+    Owner,
 }
 
 /// Where a method names the session it acts on, so a gate can decide per
@@ -478,12 +420,16 @@ pub enum MethodTarget {
 
 /// Find the declared requirement. Unknown methods never inherit a default.
 pub fn method_access(method: &str) -> Option<MethodAccess> {
-    crate::rpc::universe_method_access(method)
+    if method == crate::METHOD_BLOBS_UPLOAD {
+        return Some(MethodAccess::Universe(UniverseAction::UseResource));
+    }
+    crate::operations::universe_method_access(method)
         .or_else(|| crate::deployment::deployment_method_access(method))
 }
 
 /// The session a method acts on: every `session/` method but the list.
 pub fn method_target(method: &str) -> Option<MethodTarget> {
+    method_access(method)?;
     (method.starts_with("session/") && method != METHOD_SESSION_LIST)
         .then_some(MethodTarget::SessionId)
 }
@@ -527,42 +473,7 @@ mod tests {
         assert_eq!(MethodGroup::parse("identity"), None);
     }
 
-    #[test]
-    fn a_key_is_attributed_by_its_id_and_scope_kind() {
-        let universe = AccessScope::Universe {
-            universe_id: Uuid::from_u128(1),
-        };
-        assert_eq!(universe.kind(), AccessScopeKind::Universe);
-        assert_eq!(AccessScope::Deployment.kind(), AccessScopeKind::Deployment);
-        for kind in [AccessScopeKind::Deployment, AccessScopeKind::Universe] {
-            assert_eq!(
-                serde_json::to_value(kind).unwrap(),
-                serde_json::Value::String(kind.as_str().to_owned())
-            );
-        }
-
-        let attribution = Attribution::key("ci-bot", universe);
-        assert_eq!(
-            attribution,
-            Attribution::Key {
-                key_id: "ci-bot".into(),
-                scope_kind: AccessScopeKind::Universe,
-            }
-        );
-        let wire = serde_json::json!({"kind": "key", "keyId": "ci-bot", "scopeKind": "universe"});
-        assert_eq!(serde_json::to_value(&attribution).unwrap(), wire);
-        assert_eq!(
-            serde_json::from_value::<Attribution>(wire).unwrap(),
-            attribution
-        );
-        assert_eq!(
-            serde_json::to_value(Attribution::key("platform", AccessScope::Deployment)).unwrap(),
-            serde_json::json!({"kind": "key", "keyId": "platform", "scopeKind": "deployment"})
-        );
-    }
-
-    /// A key was once named by the display prefix of its secret. That record
-    /// names no key, so it is refused rather than read as one.
+    /// Legacy key attribution must be migrated before it can be read.
     #[test]
     fn an_attribution_naming_a_key_by_its_secret_prefix_does_not_decode() {
         for stale in [
@@ -586,23 +497,21 @@ mod tests {
             ("blobs/read", Some(MethodGroup::Session)),
             ("blobs/has", Some(MethodGroup::Session)),
             ("blobs/put", Some(MethodGroup::BlobsPut)),
+            ("blobs/upload", Some(MethodGroup::BlobsPut)),
             ("vfs/workspaces/create", Some(MethodGroup::Vfs)),
             ("profiles/put", Some(MethodGroup::Profiles)),
             ("models/list", Some(MethodGroup::Models)),
             ("mcp/servers/put", Some(MethodGroup::Mcp)),
             ("environments/jobs/create", Some(MethodGroup::Environments)),
             ("bots/create", Some(MethodGroup::Bots)),
-            ("channels/accounts/create", Some(MethodGroup::Channels)),
-            ("channels/inbound/admit", Some(MethodGroup::ChannelsInbound)),
-            ("auth/grants/import", Some(MethodGroup::Auth)),
-            ("auth/grants/lease", Some(MethodGroup::AuthLease)),
+            ("credentials/grants/import", Some(MethodGroup::Credentials)),
+            (
+                "credentials/grants/lease",
+                Some(MethodGroup::CredentialsLease),
+            ),
             (
                 "deployment/universes/create",
                 Some(MethodGroup::DeploymentUniverses),
-            ),
-            (
-                "deployment/api-keys/create",
-                Some(MethodGroup::DeploymentApiKeys),
             ),
             (
                 "deployment/environment-providers/bindings/put",
@@ -612,30 +521,15 @@ mod tests {
                 "deployment/environment-provider-bindings/list",
                 Some(MethodGroup::DeploymentEnvironmentProviders),
             ),
-            (
-                "deployment/channels/accounts/list",
-                Some(MethodGroup::DeploymentChannels),
-            ),
             ("initialize", None),
             ("deployment/identity/apply", None),
             ("access/policy/put", None),
+            ("session/unknown", None),
+            ("blobs/unknown", None),
+            ("deployment/universes/unknown", None),
         ] {
             assert_eq!(MethodGroup::of(method), group, "{method}");
         }
-    }
-
-    #[test]
-    fn universe_keys_never_hold_deployment_groups() {
-        let scope = AccessScope::Universe {
-            universe_id: Uuid::from_u128(1),
-        };
-        let universe_groups = MethodGroup::allowed_in(scope);
-        assert!(universe_groups.iter().all(|group| !group.is_deployment()));
-        assert!(universe_groups.contains(&MethodGroup::Session));
-        assert_eq!(
-            MethodGroup::allowed_in(AccessScope::Deployment),
-            MethodGroup::ALL.into_iter().collect()
-        );
     }
 
     #[test]
@@ -702,15 +596,10 @@ mod tests {
                 spec.method
             );
         }
-        // Machine methods sit in groups of their own, so a connector's key
-        // reaches nothing else.
+        // Machine methods have distinct families for external gates.
         assert_eq!(
-            MethodGroup::of(METHOD_CHANNELS_INBOUND_ADMIT),
-            Some(MethodGroup::ChannelsInbound)
-        );
-        assert_eq!(
-            MethodGroup::of(METHOD_AUTH_GRANTS_LEASE),
-            Some(MethodGroup::AuthLease)
+            MethodGroup::of(METHOD_CREDENTIALS_GRANTS_LEASE),
+            Some(MethodGroup::CredentialsLease)
         );
     }
 
@@ -737,8 +626,7 @@ mod tests {
             Some(RecommendedRole::Operator)
         );
         for method in [
-            METHOD_AUTH_GRANTS_LEASE,
-            METHOD_CHANNELS_INBOUND_ADMIT,
+            METHOD_CREDENTIALS_GRANTS_LEASE,
             METHOD_DEPLOYMENT_UNIVERSES_CREATE,
         ] {
             assert_eq!(
@@ -761,5 +649,6 @@ mod tests {
         assert_eq!(method_target(METHOD_SESSION_LIST), None);
         assert_eq!(method_target(METHOD_BLOBS_READ), None);
         assert_eq!(method_target(METHOD_BOTS_LIST), None);
+        assert_eq!(method_target("session/unknown"), None);
     }
 }

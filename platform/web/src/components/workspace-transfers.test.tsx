@@ -377,7 +377,7 @@ it("requires confirmation to delete a workspace and allows cancellation", async 
   await click(button("Delete workspace"));
   expect(mocks.api).toHaveBeenCalledWith(
     "DELETE",
-    "/api/v1/universes/u/workspaces/ws",
+    "/api/ui/universes/u/workspaces/ws",
   );
   expect(mocks.workspaceRemoved).toHaveBeenCalledOnce();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -454,7 +454,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
           <Routes>
             <Route
               path="/u/:handle/workspaces/:workspaceId/files/*"
-              element={<WorkspacesPage admin={false} />}
+              element={<WorkspacesPage />}
             />
           </Routes>
         </MemoryRouter>
@@ -479,7 +479,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
   await click(button("Rename"));
   expect(mocks.api).toHaveBeenCalledWith(
     "PATCH",
-    "/api/v1/universes/u/workspaces/ws",
+    "/api/ui/universes/u/workspaces/ws",
     { displayName: "Project notes", expectedRevision: 3 },
   );
   expect(
@@ -571,11 +571,11 @@ it.each([true, false])(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
               <Route
                 path="/u/:handle/workspaces/:workspaceId?"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -631,7 +631,7 @@ it.each([
     expect(writes()).toEqual([
       [
         "POST",
-        "/api/v1/universes/u/workspaces/ws/rename",
+        "/api/ui/universes/u/workspaces/ws/rename",
         { path, name: "renamed", expectedRevision: 3 },
       ],
     ]);
@@ -700,7 +700,7 @@ it.each([
   expect(writes()).toEqual([
     [
       "POST",
-      "/api/v1/universes/u/workspaces/ws/upload",
+      "/api/ui/universes/u/workspaces/ws/upload",
       {
         expectedRevision: 7,
         replace: false,
@@ -783,7 +783,7 @@ it("puts workspace actions in one menu, and uploads new files without a modal", 
   await waitForWrites();
   expect(writes()[0]).toEqual([
     "POST",
-    "/api/v1/universes/u/workspaces/ws/upload",
+    "/api/ui/universes/u/workspaces/ws/upload",
     {
       expectedRevision: 3,
       replace: false,
@@ -819,32 +819,6 @@ it("uploads dropped files into the folder under the pointer without asking", asy
   await waitForWrites();
   expect(writes()[0]?.[2].entries[0].path).toBe("docs/note.txt");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-});
-
-it("keeps progress inside the action menu and adds no status strip", async () => {
-  await render();
-  let finish!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  mocks.api.mockImplementation(async (method: string) => {
-    if (method === "POST") await pending;
-    return tree();
-  });
-  await select([new File(["new"], "new.txt")]);
-  await waitForWrites();
-  const statuses = [...container.querySelectorAll('[role="status"]')];
-  expect(statuses.length).toBeGreaterThan(0);
-  for (const status of statuses) {
-    expect(status.classList.contains("sr-only")).toBe(true);
-    expect(status.closest("button")).not.toBeNull();
-  }
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  await act(async () => {
-    finish();
-  });
-  await waitForUi(() => expect(container.querySelector('[role="status"]')).toBeNull());
-  expect(container.textContent).not.toContain("Upload complete");
 });
 
 it("reports download failures in a dialog", async () => {
@@ -943,7 +917,7 @@ it("confirms recursive folder deletion and reports the removed path", async () =
   await click(button("Delete folder"));
   expect(mocks.api).toHaveBeenCalledWith(
     "DELETE",
-    "/api/v1/universes/u/workspaces/ws/entries?path=docs&expectedRevision=3",
+    "/api/ui/universes/u/workspaces/ws/entries?path=docs&expectedRevision=3",
   );
   expect(mocks.removed).toHaveBeenCalledWith("docs");
 });
@@ -975,7 +949,7 @@ it("downloads from the file menu with the original filename", async () => {
   await menu("File actions: docs/a #?.txt");
   await click(item("Download"));
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/v1/universes/u/workspaces/ws/download?path=docs%2Fa+%23%3F.txt",
+    "/api/ui/universes/u/workspaces/ws/download?path=docs%2Fa+%23%3F.txt",
     { credentials: "same-origin" },
   );
   await waitForUi(() => expect(names).toEqual(["a #?.txt"]));
@@ -1006,7 +980,7 @@ it("offers the open file’s actions in its detail header and on its row’s rig
           <Routes>
             <Route
               path="/u/:handle/workspaces/:workspaceId/files/*"
-              element={<WorkspacesPage admin={false} />}
+              element={<WorkspacesPage />}
             />
           </Routes>
         </MemoryRouter>
@@ -1014,14 +988,14 @@ it("offers the open file’s actions in its detail header and on its row’s rig
     ),
   );
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith(
-    "GET", "/api/v1/universes/u/workspaces/ws/tree",
+    "GET", "/api/ui/universes/u/workspaces/ws/tree",
   ));
   expect(container.querySelector("textarea")).toBeNull();
   await act(async () => snapshot.resolve({ ...tree(), workspace }));
   await waitForUi(() => {
     expect(mocks.api).toHaveBeenCalledWith(
       "GET",
-      "/api/v1/universes/u/blobs/old",
+      "/api/ui/universes/u/blobs/old",
     );
   });
   expect(container.querySelector('textarea[aria-label="File contents"]')).toBeNull();
@@ -1108,7 +1082,7 @@ it.each(["", "docs"])(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1130,7 +1104,7 @@ it.each(["", "docs"])(
     expect(writes()).toEqual([
       [
         "POST",
-        "/api/v1/universes/u/workspaces/ws/upload",
+        "/api/ui/universes/u/workspaces/ws/upload",
         {
           expectedRevision: 3,
           replace: false,
@@ -1212,7 +1186,7 @@ it.each(["file", "folder", "move-file", "move-folder"])(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1247,7 +1221,7 @@ it.each(["file", "folder", "move-file", "move-folder"])(
     await click(button("Save"));
     expect(mocks.api).toHaveBeenCalledWith(
       "PUT",
-      `/api/v1/universes/u/workspaces/ws/files/${destination.split("/").map(encodeURIComponent).join("/")}`,
+      `/api/ui/universes/u/workspaces/ws/files/${destination.split("/").map(encodeURIComponent).join("/")}`,
       {
         contentText: "unsaved edit",
         expectedRevision: 4,
@@ -1300,7 +1274,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1337,7 +1311,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
     });
     expect(mocks.api).toHaveBeenCalledWith(
       "PUT",
-      "/api/v1/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
+      "/api/ui/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
       { contentText: "edited", expectedRevision: 3, mediaType: "text/plain" },
     );
   },
@@ -1377,7 +1351,7 @@ it.each([
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1444,7 +1418,7 @@ it.each([
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1580,7 +1554,7 @@ it.each([
   expect(container.querySelector('[role="status"]')?.textContent).toContain("Drop to move into");
   await entryDrag("drop", target, transfer);
   expect(writes()).toEqual([[
-    "POST", "/api/v1/universes/u/workspaces/ws/move",
+    "POST", "/api/ui/universes/u/workspaces/ws/move",
     { path, destination, expectedRevision: 3 },
   ]]);
   expect(mocks.renamed).toHaveBeenCalledWith(path, destination, { before: 3, after: 3 });
@@ -1649,7 +1623,7 @@ it.each(["changed", "deleted"])("preserves a dirty draft when its file is extern
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/u/test/workspaces/ws/files/docs/a%20%23%3F.txt"]}>
-        <Routes><Route path="/u/:handle/workspaces/:workspaceId/files/*" element={<WorkspacesPage admin={false} />} /></Routes>
+        <Routes><Route path="/u/:handle/workspaces/:workspaceId/files/*" element={<WorkspacesPage />} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   ));

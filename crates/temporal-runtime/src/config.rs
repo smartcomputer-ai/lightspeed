@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 mod object_storage;
 mod postgres;
+mod runtime_tokens;
+pub use runtime_tokens::RuntimeTokens;
 
 pub use postgres::postgres_pool_from_env;
 
@@ -35,12 +37,12 @@ pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
         .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_PG_UNIVERSE_ID: {error}"))
 }
 
-/// Local development or canonical principal authentication. Headers alone
+/// Local development or configured component authentication. Headers alone
 /// never authenticate a caller.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GatewayAuthMode {
     Single { universe_id: Uuid },
-    Authenticated,
+    Authenticated { tokens: Arc<RuntimeTokens> },
 }
 
 pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
@@ -55,14 +57,16 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
     let Some(mode) = optional_env("LIGHTSPEED_AUTH_MODE") else {
         anyhow::bail!(
             "LIGHTSPEED_AUTH_MODE is required: `single` (one universe, no authentication; \
-             local development only) or `authenticated` (scoped bearer keys)"
+             local development only) or `authenticated` (configured API tokens)"
         );
     };
     match mode.as_str() {
         "single" => Ok(GatewayAuthMode::Single {
             universe_id: universe_id_from_env()?,
         }),
-        "authenticated" => Ok(GatewayAuthMode::Authenticated),
+        "authenticated" => Ok(GatewayAuthMode::Authenticated {
+            tokens: Arc::new(RuntimeTokens::from_env()?),
+        }),
         other => anyhow::bail!(
             "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected single or authenticated; trusted-header and api-key are retired"
         ),
@@ -165,9 +169,6 @@ pub fn task_queue_from_env() -> anyhow::Result<String> {
     Ok(DEFAULT_TASK_QUEUE.to_owned())
 }
 
-/// Default task queue of the `channels` worker role.
-pub const DEFAULT_CHANNELS_TASK_QUEUE: &str = "lightspeed-channels";
-
 /// Default task queue of the `code` worker role.
 pub const DEFAULT_CODE_TASK_QUEUE: &str = "lightspeed-code";
 
@@ -181,7 +182,6 @@ pub const DEFAULT_CODE_MAX_CONCURRENT_EXECUTIONS: usize = 4;
 pub struct TaskQueues {
     pub sessions: String,
     pub bots: String,
-    pub channels: String,
     pub code: String,
 }
 
@@ -190,7 +190,6 @@ impl TaskQueues {
         Self {
             sessions: DEFAULT_TASK_QUEUE.to_owned(),
             bots: DEFAULT_BOTS_TASK_QUEUE.to_owned(),
-            channels: DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
             code: DEFAULT_CODE_TASK_QUEUE.to_owned(),
         }
     }
@@ -201,7 +200,6 @@ impl TaskQueues {
         let sessions = sessions.into();
         Self {
             bots: format!("{sessions}-bots"),
-            channels: format!("{sessions}-channels"),
             code: format!("{sessions}-code"),
             sessions,
         }
@@ -212,21 +210,18 @@ impl TaskQueues {
             crate::roles::Role::Gateway | crate::roles::Role::EnvironmentGateway => None,
             crate::roles::Role::Sessions => Some(&self.sessions),
             crate::roles::Role::Bots => Some(&self.bots),
-            crate::roles::Role::Channels => Some(&self.channels),
             crate::roles::Role::Code => Some(&self.code),
         }
     }
 }
 
 /// `LIGHTSPEED_TASK_QUEUE` (sessions), `LIGHTSPEED_TASK_QUEUE_BOTS`,
-/// `LIGHTSPEED_TASK_QUEUE_CHANNELS`, and `LIGHTSPEED_TASK_QUEUE_CODE`, with
-/// the deployment defaults.
+/// and `LIGHTSPEED_TASK_QUEUE_CODE`, with deployment defaults.
 pub fn task_queues_from_env() -> anyhow::Result<TaskQueues> {
     let defaults = TaskQueues::defaults();
     Ok(TaskQueues {
         sessions: task_queue_from_env()?,
         bots: optional_env("LIGHTSPEED_TASK_QUEUE_BOTS").unwrap_or(defaults.bots),
-        channels: optional_env("LIGHTSPEED_TASK_QUEUE_CHANNELS").unwrap_or(defaults.channels),
         code: optional_env("LIGHTSPEED_TASK_QUEUE_CODE").unwrap_or(defaults.code),
     })
 }
@@ -277,6 +272,12 @@ impl DeploymentStores {
     pub fn with_blob_cache(mut self, blob_cache: Option<Arc<BlobCache>>) -> Self {
         self.blob_cache = blob_cache;
         self
+    }
+
+    pub fn evict_universe_blobs(&self, universe_id: Uuid) {
+        if let Some(cache) = &self.blob_cache {
+            cache.evict_universe(universe_id);
+        }
     }
 
     pub fn changes(&self) -> &Arc<store_pg::changes::ChangeBus> {
@@ -406,7 +407,6 @@ mod tests {
         let queues = TaskQueues::derived_from("deployment-session");
         assert_eq!(queues.code, "deployment-session-code");
         assert_ne!(queues.code, queues.bots);
-        assert_ne!(queues.code, queues.channels);
     }
 
     #[test]

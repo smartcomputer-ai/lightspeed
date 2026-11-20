@@ -4,7 +4,7 @@
 //
 // Stateful dependencies run in Docker Compose. Rust and TypeScript processes
 // run from the checkout so cargo, tsx, and Vite retain their normal edit loops.
-import { prepareCliConnection, seedDevelopmentModelDefaults } from "./cli-connection.mjs";
+import { prepareCliConnection, seedDevelopmentModelDefaults, processEnvironment } from "./cli-connection.mjs";
 import { spawnSync } from "node:child_process";
 import {
   closeSync,
@@ -88,10 +88,13 @@ async function main() {
 
   if (plan.profile === "full" || plan.profile === "runtime") {
     phase = "preparing the development CLI connection";
-    const prepared = await prepareCliConnection({ root: repoRoot, env: plan.env, full: plan.profile === "full", noBootstrap: cli.noApiKeyBootstrap, run: runChecked });
-    if (prepared.platformSecret) {
-      plan.env.LIGHTSPEED_PLATFORM_API_KEY = prepared.platformSecret;
-      for (const processPlan of plan.processes) processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = prepared.platformSecret;
+    const prepared = await prepareCliConnection({ root: repoRoot, env: plan.env, full: plan.profile === "full", noBootstrap: cli.noTokenBootstrap, run: runChecked });
+    for (const processPlan of plan.processes) {
+      for (const name of ["LIGHTSPEED_API_TOKEN", "LIGHTSPEED_API_TOKEN_FILE", "LIGHTSPEED_API_TOKEN_CLI", "LIGHTSPEED_API_TOKEN_CLI_FILE", "LIGHTSPEED_API_TOKEN_PLATFORM", "LIGHTSPEED_API_TOKEN_PLATFORM_FILE", "LIGHTSPEED_PLATFORM_API_TOKEN", "LIGHTSPEED_PLATFORM_API_TOKEN_FILE"]) {
+        if (plan.env[name] === undefined) delete processPlan.env[name];
+        else processPlan.env[name] = plan.env[name];
+      }
+      processPlan.env = processEnvironment(processPlan.env, processPlan.name);
     }
     plan.cliHandoff = prepared.handoff;
   }
@@ -124,12 +127,9 @@ function parseCli(argv) {
   const help = removeFlag(args, "--help") || removeFlag(args, "-h");
   const planOnly = removeFlag(args, "--plan");
   removeFlag(args, "--debug");
-  // Accepted for compatibility; missing keys only warn since keys can be
-  // added per universe from the Platform UI (Models -> Add provider).
-  removeFlag(args, "--allow-missing-api-keys");
   const requireApiKeys = removeFlag(args, "--require-api-keys");
   const noEnvd = removeFlag(args, "--no-envd");
-  const noApiKeyBootstrap = removeFlag(args, "--no-api-key-bootstrap");
+  const noTokenBootstrap = removeFlag(args, "--no-token-bootstrap");
   let action = "start";
   let profile = "full";
 
@@ -154,8 +154,8 @@ function parseCli(argv) {
     throw new TypeError("--no-envd is supported only when starting a profile");
   }
 
-  if (noApiKeyBootstrap && action !== "start") throw new TypeError("--no-api-key-bootstrap is supported only when starting a profile");
-  return { action, profile, planOnly, help, volumes, requireApiKeys, noEnvd, noApiKeyBootstrap };
+  if (noTokenBootstrap && action !== "start") throw new TypeError("--no-token-bootstrap is supported only when starting a profile");
+  return { action, profile, planOnly, help, volumes, requireApiKeys, noEnvd, noTokenBootstrap };
 }
 
 function removeFlag(args, flag) {
@@ -188,26 +188,22 @@ function loadDevEnvironment() {
 }
 
 function createPlan(profile, sourceEnv) {
-  const runtimeRpc = sourceEnv.LIGHTSPEED_API_URL ?? "http://127.0.0.1:18080/rpc";
+  const runtimeApi = sourceEnv.LIGHTSPEED_API_URL ?? "http://127.0.0.1:18080/api/v1";
   const platformDatabaseUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_DATABASE_URL ??
     sourceEnv.LIGHTSPEED_TEST_POSTGRES_URL;
   const platformPort = positivePort(sourceEnv.PORT, 3_000, "PORT");
-  const configuratorPort = positivePort(
-    sourceEnv.LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT,
-    18_081,
-    "LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT",
-  );
-  const defaultConfiguratorMcpUrl = `http://127.0.0.1:${configuratorPort}/mcp`;
-  const configuratorMcpUrl =
-    sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? defaultConfiguratorMcpUrl;
-  const configuratorInternalTrustedHeader = "false";
+  const configuratorPort = positivePort(sourceEnv.LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT, 18_081, "LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT");
   const runtimePort = addressPort(sourceEnv.LIGHTSPEED_GATEWAY_BIND, 18_080);
+  const publicBind = sourceEnv.LIGHTSPEED_PUBLIC_BIND ?? "127.0.0.1:18082";
+  const publicPort = addressPort(publicBind, 18_082, "LIGHTSPEED_PUBLIC_BIND");
+  const environmentBind = sourceEnv.LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND ?? "127.0.0.1:18083";
+  const environmentPort = addressPort(environmentBind, 18_083, "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND");
   const temporalAddress =
     sourceEnv.TEMPORAL_ADDRESS ?? `127.0.0.1:${sourceEnv.TEMPORAL_PORT ?? "7233"}`;
   // The focused platform profile talks to whatever runtime LIGHTSPEED_API_URL
   // names; the frontend-only loop is `npm run demo` (in-browser backend).
-  const platformApiUrl = runtimeRpc;
+  const platformApiUrl = runtimeApi;
   const runtimeAuthMode =
     sourceEnv.LIGHTSPEED_AUTH_MODE ?? "authenticated";
   // Local environment daemon: a directly attached `lightspeed-envd` on the
@@ -221,40 +217,22 @@ function createPlan(profile, sourceEnv) {
   const envdWorkspace =
     sourceEnv.LIGHTSPEED_DEV_ENVD_CWD ?? path.join(repoRoot, ".lightspeed-dev", "envd", "workspace");
   const envdEndpoint = `ws://${envdListen.startsWith(":") ? "127.0.0.1" : envdListen.split(":")[0]}:${envdPort}/`;
-  const connectorNames = profile === "full" ? parseConnectors(sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS) : [];
-  if (profile !== "full" && sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS?.trim()) {
-    throw new TypeError("LIGHTSPEED_CHANNELS_CONNECTORS is supported only by the full development profile");
-  }
-  validateConnectorEnvironment(connectorNames, sourceEnv);
-
-  const connectorHealthPort = positivePort(
-    sourceEnv.LIGHTSPEED_CONNECTOR_HEALTH_PORT,
-    8_090,
-    "LIGHTSPEED_CONNECTOR_HEALTH_PORT",
-  );
-  const connectorMetricsPort = positivePort(
-    sourceEnv.LIGHTSPEED_CONNECTOR_METRICS_PORT,
-    9_090,
-    "LIGHTSPEED_CONNECTOR_METRICS_PORT",
-  );
-  const healthUrls =
-    connectorNames.length === 0 ? [] : [`http://127.0.0.1:${connectorHealthPort}`];
   const env = {
     ...sourceEnv,
     LIGHTSPEED_API_URL: platformApiUrl,
     LIGHTSPEED_AUTH_MODE: runtimeAuthMode,
+    LIGHTSPEED_PUBLIC_BIND: publicBind,
+    LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: environmentBind,
+    LIGHTSPEED_ENVIRONMENT_GATEWAY_URL: sourceEnv.LIGHTSPEED_ENVIRONMENT_GATEWAY_URL ?? `http://127.0.0.1:${environmentPort}`,
     LIGHTSPEED_MCP_PRIVATE_NETWORKS:
       sourceEnv.LIGHTSPEED_MCP_PRIVATE_NETWORKS ?? "localhost,127.0.0.1,::1",
-    LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL:
-      sourceEnv.LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL ??
-      (configuratorInternalTrustedHeader === "true" ? configuratorMcpUrl : ""),
     LIGHTSPEED_PLATFORM_DATABASE_URL: platformDatabaseUrl,
     LIGHTSPEED_PLATFORM_AUTH_SECRET:
       sourceEnv.LIGHTSPEED_PLATFORM_AUTH_SECRET ??
       "local-platform-auth-secret-0123456789abcdef",
     LIGHTSPEED_PLATFORM_BASE_URL:
       sourceEnv.LIGHTSPEED_PLATFORM_BASE_URL ??
-      `http://127.0.0.1:${platformPort}`,
+      "http://localhost:5173",
     LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS:
       sourceEnv.LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS ??
       "http://127.0.0.1:5173,http://localhost:5173",
@@ -267,21 +245,14 @@ function createPlan(profile, sourceEnv) {
     LIGHTSPEED_PLATFORM_DEV_SEED:
       sourceEnv.LIGHTSPEED_PLATFORM_DEV_SEED ??
       (profile === "full" && runtimeAuthMode === "authenticated" ? "true" : "false"),
-    LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL:
-      configuratorMcpUrl,
-    LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK:
-      sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK ?? "true",
-    LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER:
-      configuratorInternalTrustedHeader,
-    LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL:
-      sourceEnv.LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL ?? runtimeRpc,
     TEMPORAL_ADDRESS: temporalAddress,
     ...(envdEnabled
-      ? { LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT: envdEndpoint }
+      ? {
+          LIGHTSPEED_ALLOW_EXTERNAL_ENVIRONMENTS: sourceEnv.LIGHTSPEED_ALLOW_EXTERNAL_ENVIRONMENTS ?? "true",
+          LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT: envdEndpoint,
+        }
       : {}),
-    ...(healthUrls.length === 0 || sourceEnv.LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS
-      ? {}
-      : { LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS: healthUrls.join(",") }),
+
   };
 
   const tsx = path.join(repoRoot, "node_modules", ".bin", "tsx");
@@ -295,6 +266,10 @@ function createPlan(profile, sourceEnv) {
   if (profile === "runtime" || profile === "full") {
     ports.push({ name: "runtime gateway", port: runtimePort });
     readiness.push({ name: "runtime gateway", url: `http://127.0.0.1:${runtimePort}/health` });
+    ports.push({ name: "runtime public", port: publicPort });
+    readiness.push({ name: "runtime public", url: `http://127.0.0.1:${publicPort}/health` });
+    ports.push({ name: "environment gateway", port: environmentPort });
+    readiness.push({ name: "environment gateway", url: `http://127.0.0.1:${environmentPort}/health` });
     preparations.push({
       name: "runtime migration",
       command: "cargo",
@@ -341,11 +316,11 @@ function createPlan(profile, sourceEnv) {
         args: ["watch", "platform/backend/src/main.ts"],
         cwd: repoRoot,
         env,
-        // First-login bootstrap checks the canonical administrator through RPC.
+        // First-login bootstrap checks the canonical administrator through the HTTP API.
         // Wait for the configured runtime in both full and platform-only loops.
         startAfter: {
           name: "runtime gateway",
-          url: new URL("health", platformApiUrl).href,
+          url: new URL("../../health", `${platformApiUrl.replace(/\/$/, "")}/`).href,
         },
       },
       {
@@ -356,6 +331,21 @@ function createPlan(profile, sourceEnv) {
         env,
       },
     );
+  }
+
+  if (profile === "full" || profile === "platform") {
+    ports.push({ name: "configurator MCP", port: configuratorPort });
+    readiness.push({ name: "configurator MCP", url: `http://127.0.0.1:${configuratorPort}/health` });
+    processes.push({
+      name: "configurator", command: tsx, args: ["watch", "platform/configurator-mcp/src/bin.ts"], cwd: repoRoot,
+      // Deliberately construct this environment: the facade receives credentials
+      // per MCP request and must not inherit runtime or Platform authority.
+      env: { PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, NODE_OPTIONS: env.NODE_OPTIONS,
+        LIGHTSPEED_AUTH_MODE: "authenticated", LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST: "127.0.0.1",
+        LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT: String(configuratorPort),
+        LIGHTSPEED_CONFIGURATOR_MCP_API_URL: `http://127.0.0.1:${platformPort}/api/v1` },
+      startAfter: { name: "platform API", url: `http://127.0.0.1:${platformPort}/health` },
+    });
   }
 
   // The demo is the web UI over its in-browser backend: no infrastructure,
@@ -384,64 +374,14 @@ function createPlan(profile, sourceEnv) {
     });
   }
 
-  if (profile === "full") {
-    ports.push({ name: "Configurator MCP", port: configuratorPort });
-    readiness.push({ name: "Configurator MCP", url: `http://127.0.0.1:${configuratorPort}/health` });
-    processes.splice(1, 0, {
-      name: "configurator",
-      command: tsx,
-      args: ["platform/configurator-mcp/src/bin.ts"],
-      cwd: repoRoot,
-      env,
-    });
-    // Bots and Channels core run inside the Rust runtime. The only Node
-    // worker left is the connector host: one process serving every enabled
-    // Telegram/WhatsApp account it discovers through the core API.
-    if (connectorNames.length > 0) {
-      ports.push({ name: "connector host health", port: connectorHealthPort });
-      ports.push({ name: "connector host metrics", port: connectorMetricsPort });
-      readiness.push({
-        name: "connector host",
-        url: `http://127.0.0.1:${connectorHealthPort}/healthz`,
-      });
-      processes.push({
-        name: "connectors",
-        command: tsx,
-        args: ["platform/connectors/src/host/main.ts"],
-        cwd: repoRoot,
-        env: {
-          ...env,
-          LIGHTSPEED_CONNECTOR_PROVIDERS: connectorNames.join(","),
-          LIGHTSPEED_CONNECTOR_HEALTH_PORT: String(connectorHealthPort),
-          LIGHTSPEED_CONNECTOR_METRICS_PORT: String(connectorMetricsPort),
-          ...(connectorNames.includes("whatsapp") && !env.LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR
-            ? {
-                LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR: path.join(
-                  repoRoot,
-                  ".lightspeed-dev",
-                  "whatsapp-auth",
-                ),
-              }
-            : {}),
-        },
-        // Discovery needs the core API; wait for the gateway so a cold start
-        // does not log a failed first pass.
-        startAfter: {
-          name: "runtime gateway",
-          url: `http://127.0.0.1:${runtimePort}/health`,
-        },
-      });
-    }
-  }
 
   return {
     profile,
     env,
     preparations,
-    processes,
+    processes: processes.map(processPlan => ({ ...processPlan, env: processEnvironment(processPlan.env, processPlan.name) })),
     ports: uniquePorts(ports),
     readiness,
-    connectors: connectorNames,
     envd: envdEnabled ? { endpoint: envdEndpoint, workspace: envdWorkspace } : null,
     infra: profile !== "demo" && profile !== "docs",
     tools:
@@ -449,36 +389,6 @@ function createPlan(profile, sourceEnv) {
   };
 }
 
-function parseConnectors(value) {
-  if (value === undefined || value.trim() === "") return [];
-  const result = [];
-  for (const raw of value.split(",")) {
-    const connector = raw.trim();
-    if (connector !== "telegram" && connector !== "whatsapp") {
-      throw new TypeError(
-        `invalid LIGHTSPEED_CHANNELS_CONNECTORS entry ${JSON.stringify(connector)}; expected telegram or whatsapp`,
-      );
-    }
-    if (!result.includes(connector)) result.push(connector);
-  }
-  return result;
-}
-
-// Provider tokens are leased from the core (`auth/grants/lease`), so a
-// Telegram connector leases provider credentials from core. WhatsApp keeps its Baileys
-// session on disk and seals media locators with a deployment key.
-function validateConnectorEnvironment(connectors, env) {
-  if (connectors.length > 0 && !env.LIGHTSPEED_CONNECTOR_API_KEY?.trim()) {
-    throw new TypeError("development connectors require LIGHTSPEED_CONNECTOR_API_KEY with scoped capabilities");
-  }
-  if (!connectors.includes("whatsapp")) return;
-  const missing = ["LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY"].filter(
-    (name) => !env[name]?.trim(),
-  );
-  if (missing.length > 0) {
-    throw new TypeError(`whatsapp development connector requires ${missing.join(", ")}`);
-  }
-}
 
 function positivePort(raw, fallback, name) {
   if (raw === undefined || raw === "") return fallback;
@@ -489,10 +399,10 @@ function positivePort(raw, fallback, name) {
   return value;
 }
 
-function addressPort(address, fallback) {
+function addressPort(address, fallback, name = "LIGHTSPEED_GATEWAY_BIND") {
   if (!address) return fallback;
   const separator = address.lastIndexOf(":");
-  return positivePort(address.slice(separator + 1), fallback, "LIGHTSPEED_GATEWAY_BIND");
+  return positivePort(address.slice(separator + 1), fallback, name);
 }
 
 function uniquePorts(ports) {
@@ -573,7 +483,7 @@ async function runDevelopmentAction(options, env) {
     // An explicit reset invalidates the saved keys along with their database records.
     // Only clear them after success; ordinary startup must still require existing keys.
     rmSync(path.join(repoRoot, ".lightspeed", "cli"), { recursive: true, force: true });
-    console.log("[reset] Cleared saved development credentials. Start ./dev.sh to provision keys, then run lightspeed connect dev to refresh the CLI connection.");
+    console.log("[reset] Cleared saved development credentials. Start ./dev.sh to provision runtime tokens, then run lightspeed connect dev to refresh the CLI connection.");
     return;
   }
   const supervisor = readSupervisorState();
@@ -765,7 +675,12 @@ function printPlan(plan) {
       console.log(`  after: ${processPlan.startAfter.name} -> ${processPlan.startAfter.url ?? processPlan.startAfter.port}`);
     }
   }
-  console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
+  for (const service of plan.readiness) {
+    console.log(`ready: ${service.name} -> ${service.url ?? service.port}`);
+  }
+  const configurator = plan.processes.find(process => process.name === "configurator");
+  if (configurator) console.log(`configurator upstream: ${configurator.env.LIGHTSPEED_CONFIGURATOR_MCP_API_URL}`);
+  if (plan.processes.some(process => process.name === "platform")) console.log(`platform public URL: ${plan.env.LIGHTSPEED_PLATFORM_BASE_URL}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
   console.log(`development fixtures: ${plan.env.LIGHTSPEED_PLATFORM_DEV_SEED}`);
   console.log(
@@ -800,9 +715,6 @@ function printRunning(plan) {
   if (plan.profile === "docs") {
     console.log("  documentation http://127.0.0.1:4321/docs/");
   }
-  if (plan.connectors.length > 0) {
-    console.log(`  connectors    ${plan.connectors.join(", ")}`);
-  }
   console.log(
     plan.infra
       ? "\nPress Ctrl-C to stop host processes; infrastructure remains available.\n"
@@ -822,7 +734,7 @@ function printHelp() {
   ./dev.sh [profile] --require-api-keys    Fail full/runtime startup without provider keys
                                            (default only warns; keys can be added per
                                            universe under Models -> Add provider)
-  ./dev.sh [profile] --no-api-key-bootstrap  Use existing API keys; do not provision keys
+  ./dev.sh [profile] --no-token-bootstrap  Use configured or saved runtime tokens; do not generate tokens
   ./dev.sh [profile] --no-envd             Do not start the local environment daemon
                                            (same as LIGHTSPEED_DEV_ENVD=off)
   ./dev.sh [profile] --debug              Include launcher stack traces in errors
@@ -835,9 +747,8 @@ function printHelp() {
 The npm run dev commands are aliases for the same launcher.
 
 Profiles:
-  full      Infrastructure, Rust runtime (with Bots and Channels core),
-            Configurator, Platform, and web. LIGHTSPEED_CHANNELS_CONNECTORS
-            optionally adds the connector host serving telegram and/or whatsapp.
+  full      Infrastructure, Rust runtime (with Bots),
+            Platform, web, and the Configurator MCP facade.
   platform  Infrastructure, Platform API, and web UI against the runtime at
             LIGHTSPEED_API_URL (start one with the runtime profile).
   runtime   Infrastructure and the migrated Rust runtime.

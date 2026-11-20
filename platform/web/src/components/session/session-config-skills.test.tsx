@@ -14,7 +14,7 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   container?.remove();
 });
-async function setup(value: SessionConfig, options: { environments?: EnvironmentOption[]; workspaces?: WorkspaceOption[]; mcpServers?: McpServerOption[] } = {}) {
+async function setup(value: SessionConfig, options: { environments?: EnvironmentOption[]; workspaces?: WorkspaceOption[]; mcpServers?: McpServerOption[]; allowInherit?: boolean } = {}) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -25,7 +25,7 @@ async function setup(value: SessionConfig, options: { environments?: Environment
   }
   await act(async () => root.render(<Harness />));
   for (const button of container.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")) {
-    if (button.textContent?.includes("Environments") || button.textContent?.includes("Virtual File System") || button.textContent?.includes("Sub-agents") || button.textContent?.includes("Web")) {
+    if (["Environments", "Virtual File System", "Sub-agents", "Web", "MCP Servers"].some((title) => button.textContent?.includes(title))) {
       await act(async () => button.click());
     }
   }
@@ -34,6 +34,13 @@ async function toggle(name: string) {
   const button = container.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${name}"]`);
   expect(button).not.toBeNull();
   await act(async () => button!.click());
+}
+async function openOptions(selectedLabel: string) {
+  const trigger = Array.from(container.querySelectorAll<HTMLElement>('[data-slot="select-trigger"]'))
+    .find((button) => button.querySelector('[data-slot="select-value"]')?.textContent === selectedLabel);
+  expect(trigger).toBeDefined();
+  await act(async () => trigger!.click());
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-slot="select-content"]:not([data-closed]) [role="option"]'));
 }
 async function expand(name: string) {
   const button = container.querySelector<HTMLButtonElement>(`button[aria-label="Configure ${name}"]`);
@@ -75,6 +82,40 @@ it("requires explicit MCP attachments and removal before disabling the feature",
   await toggle("Enable MCP Servers");
   expect(current ?? {}).not.toHaveProperty("features.mcp");
   expect(error).toBeNull();
+});
+
+it("offers unused MCP servers and releases a replaced selection", async () => {
+  await setup({}, { mcpServers: [
+    { serverId: "offline", status: "disabled" },
+    { serverId: "first", status: "active" },
+    { serverId: "second", status: "active" },
+  ] });
+  await toggle("Enable MCP Servers");
+  const add = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .find((button) => button.textContent === "Add server")!;
+  await act(async () => add.click());
+  await act(async () => add.click());
+  expect(current).toHaveProperty("features.mcp.servers", [{ serverId: "first" }, { serverId: "second" }]);
+  expect(add.disabled).toBe(true);
+  const remove = container.querySelectorAll<HTMLButtonElement>('[aria-label="Remove MCP server"]');
+  await act(async () => remove[1]!.click());
+  const firstOptions = await openOptions("first");
+  expect(firstOptions.map((option) => option.textContent)).toEqual(["offline — disabled", "first", "second"]);
+  await act(async () => firstOptions[2]!.click());
+  await act(async () => add.click());
+  expect(current).toHaveProperty("features.mcp.servers", [{ serverId: "second" }, { serverId: "first" }]);
+  expect(add.disabled).toBe(true);
+  const options = await openOptions("second");
+  expect(options.map((option) => option.textContent)).toEqual(["offline — disabled", "second"]);
+  expect(error).toBeNull();
+});
+
+it("keeps a missing MCP server visible only in its saved row", async () => {
+  await setup({ features: { mcp: { servers: [{ serverId: "missing" }, { serverId: "known" }] } } }, {
+    mcpServers: [{ serverId: "known", status: "active" }],
+  });
+  expect(container.textContent).toContain("missing");
+  expect((await openOptions("known")).map((option) => option.textContent)).toEqual(["known"]);
 });
 
 it("shares the environment working directory while source overrides remain independent", async () => {
@@ -140,6 +181,7 @@ it("adds environments with jobs access, defaults the first, and enables selectio
     ],
     selection: true,
   });
+  expect(add.disabled).toBe(true);
   const label = Array.from(container.querySelectorAll("label"))
     .find((label) => label.textContent === "Environment selection tools")!;
   await act(async () => document.getElementById(label.htmlFor)!.click());
@@ -150,10 +192,27 @@ it("adds environments with jobs access, defaults the first, and enables selectio
   expect(error).toBeNull();
 });
 
-it("adds workspaces without changing an existing snapshot attachment", async () => {
+it("offers parent environment inheritance once after the named environments are exhausted", async () => {
+  await setup({ features: { environments: {} } }, {
+    allowInherit: true,
+    environments: [{ environmentId: "gone", status: "closed" }, { environmentId: "runner", status: "ready" }],
+  });
+  const add = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .find((button) => button.textContent === "Add environment")!;
+  await act(async () => add.click());
+  await act(async () => add.click());
+  expect(current).toHaveProperty("features.environments.environments", [
+    { environmentId: "runner", access: "jobs", default: true }, { inherit: true, access: "jobs" },
+  ]);
+  expect(add.disabled).toBe(true);
+  expect((await openOptions("runner")).map((option) => option.textContent)).toEqual(["runner"]);
+  expect(error).toBeNull();
+});
+
+it("adds distinct workspaces without changing an existing snapshot attachment", async () => {
   const snapshot = { path: "/archive", access: "read", snapshotRef: `sha256:${"a".repeat(64)}` };
   await setup({ features: { vfs: { workspaces: [snapshot] } } }, {
-    workspaces: [{ workspaceId: "files" }],
+    workspaces: [{ workspaceId: "files" }, { workspaceId: "notes" }],
   });
   const add = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
     .find((button) => button.textContent === "Add workspace")!;
@@ -162,9 +221,17 @@ it("adds workspaces without changing an existing snapshot attachment", async () 
   expect(current).toHaveProperty("features.vfs.workspaces", [
     snapshot,
     { workspaceId: "files", path: "/workspace", access: "edit" },
-    { workspaceId: "files", path: "/workspace-2", access: "edit" },
+    { workspaceId: "notes", path: "/workspace-2", access: "edit" },
   ]);
   expect(container.textContent).not.toContain("Target type");
+  expect(add.disabled).toBe(true);
+  const options = await openOptions("notes");
+  expect(options.map((option) => option.textContent)).toEqual(["notes"]);
+  await act(async () => options[0]!.click());
+  const remove = container.querySelectorAll<HTMLButtonElement>('[aria-label="Remove workspace attachment"]');
+  await act(async () => remove[1]!.click());
+  expect(add.disabled).toBe(false);
+  expect((await openOptions("notes")).map((option) => option.textContent)).toEqual(["files", "notes"]);
   expect(error).toBeNull();
 });
 it.each([
@@ -191,13 +258,6 @@ it.each([
   expect(error).toBeNull();
   expect(current).not.toHaveProperty(`features.vfs.${key}`);
   expect(current).toHaveProperty("features.environments.skills", {});
-});
-it("allows both VFS sources to be enabled without attachments", async () => {
-  await setup({ features: { vfs: {} } });
-  await toggle("VFS skill discovery");
-  await toggle("VFS prompt loading");
-  expect(error).toBeNull();
-  expect(current).toEqual({ features: { vfs: { workspaces: [], skills: {}, prompts: {} } } });
 });
 
 it("uses explicit VFS directory settings without inferring /workspace", async () => {

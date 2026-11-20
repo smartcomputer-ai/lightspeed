@@ -1,21 +1,17 @@
-//! Live PostgreSQL coverage of the bots and channels stores. Each test owns
+//! Live PostgreSQL coverage of the bot store. Each test owns
 //! a fresh universe and deletes it on the way out.
 
 use std::collections::BTreeMap;
 
 use api::{
     BotDocument, BotEventOutcome, BotId, BotTriggerDisabledReason, BotTriggerDocument,
-    BotTriggerId, BotTriggerKind, BotTriggerSpec, ChannelAccountDocument, ChannelAccountId,
-    ChannelPairedVia, ChannelProvider, PollCursorSpec, PollCursorState, PollSource, ProfileId,
+    BotTriggerId, BotTriggerKind, BotTriggerSpec, PollCursorSpec, PollCursorState, PollSource,
+    ProfileId,
 };
 use bots::{
     BotError, BotEventCursor, BotEventOutcomeWrite, BotEventRateScope, BotEventRecord,
     BotEventStore, BotStore, BotTriggerSecrets, BotTriggerStore, BotTriggerWrite,
     InsertBotEventOutcome, RoutedSession, RoutedSessionClosePolicy,
-};
-use channels::{
-    ChannelAccountStore, ChannelError, ChannelPairingFilter, ChannelPairingRecord,
-    ChannelPairingStore,
 };
 use harness::{BlobRef, storage::BlobStore};
 use sqlx::postgres::PgPoolOptions;
@@ -103,17 +99,6 @@ fn poll_spec() -> BotTriggerSpec {
     }
 }
 
-fn chat_spec(account_id: &str) -> BotTriggerSpec {
-    BotTriggerSpec::Chat {
-        account_id: account_id.to_owned(),
-        match_scope: None,
-        activation: Default::default(),
-        access: Default::default(),
-        pairing: Default::default(),
-        priority: 100,
-    }
-}
-
 fn trigger_write(trigger_id: &str, document: BotTriggerDocument) -> BotTriggerWrite {
     BotTriggerWrite {
         trigger_id: BotTriggerId::new(trigger_id),
@@ -151,7 +136,6 @@ fn event(
         sender_bot_id: sender_bot_id.map(BotId::new),
         hops: 1,
         in_reply_to: None,
-        media: Vec::new(),
         receiver: None,
         outcome: None,
         outcome_detail: None,
@@ -555,13 +539,6 @@ async fn pg_live_bot_triggers_put_disable_reenable_and_cursor() {
         .expect("list by kind");
     assert_eq!(by_kind.len(), 1);
     assert_eq!(by_kind[0].trigger_id.as_str(), "feed");
-    assert!(
-        store
-            .list_bot_triggers_by_kind(BotTriggerKind::Chat)
-            .await
-            .expect("list chat")
-            .is_empty()
-    );
 
     // Disable-all touches only enabled triggers and returns them.
     store
@@ -932,345 +909,15 @@ async fn pg_live_bot_events_log_rates_outcomes_and_roster() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires ./dev.sh infra or compatible Postgres"]
-async fn pg_live_channel_accounts_and_pairings() {
-    let store = live_store().await;
-    let universe_id = store.config().universe_id;
-    let account_id = ChannelAccountId::new("tg-main");
-    let document = ChannelAccountDocument {
-        provider: ChannelProvider::new("telegram"),
-        provider_account_id: "@triage_bot".to_owned(),
-        display_name: "Triage on Telegram".to_owned(),
-        credential_grant_id: Some("grant-tg".to_owned()),
-        settings: Default::default(),
-        enabled: true,
-    };
-
-    let created = store
-        .create_channel_account(account_id.clone(), document.clone(), 10)
-        .await
-        .expect("create account");
-    assert_eq!(created.revision, 1);
-    assert_eq!(created.document, document);
-    assert!(matches!(
-        store
-            .create_channel_account(account_id.clone(), document.clone(), 11)
-            .await,
-        Err(ChannelError::AccountAlreadyExists { .. })
-    ));
-    // The provider account id is unique per universe and provider.
-    assert!(matches!(
-        store
-            .create_channel_account(ChannelAccountId::new("tg-dup"), document.clone(), 12)
-            .await,
-        Err(ChannelError::InvalidInput { .. })
-    ));
-
-    let mut edited = document.clone();
-    edited.display_name = "Triage".to_owned();
-    edited.enabled = false;
-    let put = store
-        .put_channel_account(account_id.clone(), edited.clone(), Some(1), 20)
-        .await
-        .expect("put account");
-    assert_eq!(put.revision, 2);
-    assert_eq!(put.document, edited);
-    assert_eq!((put.created_at_ms, put.updated_at_ms), (10, 20));
-    assert!(matches!(
-        store
-            .put_channel_account(account_id.clone(), edited.clone(), Some(1), 21)
-            .await,
-        Err(ChannelError::AccountRevisionConflict {
-            expected: 1,
-            actual: 2,
-            ..
-        })
-    ));
-    let whatsapp = store
-        .put_channel_account(
-            ChannelAccountId::new("wa-main"),
-            ChannelAccountDocument {
-                provider: ChannelProvider::new("whatsapp"),
-                provider_account_id: "+15550000000".to_owned(),
-                display_name: "Triage on WhatsApp".to_owned(),
-                credential_grant_id: None,
-                settings: Default::default(),
-                enabled: true,
-            },
-            Some(9),
-            22,
-        )
-        .await
-        .expect("put creates account");
-    assert_eq!(whatsapp.revision, 1);
-
-    let listed = store
-        .list_channel_accounts(None)
-        .await
-        .expect("list accounts");
-    assert_eq!(
-        listed
-            .iter()
-            .map(|account| account.account_id.as_str().to_owned())
-            .collect::<Vec<_>>(),
-        vec!["tg-main", "wa-main"]
-    );
-    let telegram_only = store
-        .list_channel_accounts(Some(ChannelProvider::new("telegram")))
-        .await
-        .expect("list telegram");
-    assert_eq!(telegram_only.len(), 1);
-    assert_eq!(telegram_only[0].account_id, account_id);
-
-    // Deployment-wide listing skips disabled accounts unless asked.
-    let mine = |rows: Vec<(Uuid, channels::ChannelAccountRecord)>| {
-        rows.into_iter()
-            .filter(|(universe, _)| *universe == universe_id)
-            .map(|(_, account)| account.account_id.as_str().to_owned())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        mine(
-            store_pg::list_channel_accounts_all(store.pool(), None, false)
-                .await
-                .expect("list all enabled")
-        ),
-        vec!["wa-main"]
-    );
-    assert_eq!(
-        mine(
-            store_pg::list_channel_accounts_all(store.pool(), None, true)
-                .await
-                .expect("list all")
-        ),
-        vec!["tg-main", "wa-main"]
-    );
-    assert_eq!(
-        mine(
-            store_pg::list_channel_accounts_all(
-                store.pool(),
-                Some(ChannelProvider::new("telegram")),
-                true
-            )
-            .await
-            .expect("list all telegram")
-        ),
-        vec!["tg-main"]
-    );
-
-    // Pairings hang off a chat trigger and an account.
-    let bot_id = BotId::new("concierge");
-    store
-        .create_bot(bot_id.clone(), bot_document("concierge"), 30)
-        .await
-        .expect("create bot");
-    let mut chat = trigger_write("telegram", trigger_document(chat_spec("tg-main")));
-    chat.secrets.pairing_code = Some("ABCDEFGH2345".to_owned());
-    let trigger = store
-        .put_bot_trigger(&bot_id, chat, None, 31)
-        .await
-        .expect("create chat trigger");
-    assert_eq!(trigger.kind(), BotTriggerKind::Chat);
-    assert_eq!(
-        trigger.secrets.pairing_code.as_deref(),
-        Some("ABCDEFGH2345")
-    );
-    store
-        .put_bot_trigger(
-            &bot_id,
-            trigger_write("telegram-vip", trigger_document(chat_spec("tg-main"))),
-            None,
-            32,
-        )
-        .await
-        .expect("create second chat trigger");
-
-    let pairing = ChannelPairingRecord {
-        account_id: account_id.clone(),
-        chat_id: "chat-1".to_owned(),
-        bot_id: bot_id.clone(),
-        trigger_id: BotTriggerId::new("telegram"),
-        paired_via: ChannelPairedVia::Code,
-        paired_at_ms: 40,
-    };
-    assert!(matches!(
-        store
-            .upsert_channel_pairing(ChannelPairingRecord {
-                trigger_id: BotTriggerId::new("nope"),
-                ..pairing.clone()
-            })
-            .await,
-        Err(ChannelError::InvalidInput { .. })
-    ));
-    assert!(matches!(
-        store
-            .upsert_channel_pairing(ChannelPairingRecord {
-                account_id: ChannelAccountId::new("nope"),
-                ..pairing.clone()
-            })
-            .await,
-        Err(ChannelError::InvalidInput { .. })
-    ));
-    assert_eq!(
-        store
-            .upsert_channel_pairing(pairing.clone())
-            .await
-            .expect("upsert pairing"),
-        pairing
-    );
-    assert_eq!(
-        store
-            .read_channel_pairing(&account_id, "chat-1")
-            .await
-            .expect("read pairing"),
-        Some(pairing.clone())
-    );
-    assert_eq!(
-        store
-            .read_channel_pairing(&account_id, "chat-missing")
-            .await
-            .expect("read missing pairing"),
-        None
-    );
-    // A re-pair moves the chat to another trigger for the same chat.
-    let moved = ChannelPairingRecord {
-        trigger_id: BotTriggerId::new("telegram-vip"),
-        paired_at_ms: 41,
-        ..pairing.clone()
-    };
-    assert_eq!(
-        store
-            .upsert_channel_pairing(moved.clone())
-            .await
-            .expect("re-pair"),
-        moved
-    );
-    let second = ChannelPairingRecord {
-        chat_id: "chat-2".to_owned(),
-        paired_at_ms: 50,
-        ..pairing.clone()
-    };
-    store
-        .upsert_channel_pairing(second.clone())
-        .await
-        .expect("second pairing");
-
-    let all = store
-        .list_channel_pairings(ChannelPairingFilter::default())
-        .await
-        .expect("list pairings");
-    assert_eq!(all, vec![second.clone(), moved.clone()]);
-    let by_trigger = store
-        .list_channel_pairings(ChannelPairingFilter {
-            trigger_id: Some(BotTriggerId::new("telegram-vip")),
-            ..Default::default()
-        })
-        .await
-        .expect("list by trigger");
-    assert_eq!(by_trigger, vec![moved.clone()]);
-    let by_chat = store
-        .list_channel_pairings(ChannelPairingFilter {
-            account_id: Some(account_id.clone()),
-            chat_id: Some("chat-2".to_owned()),
-            ..Default::default()
-        })
-        .await
-        .expect("list by chat");
-    assert_eq!(by_chat, vec![second.clone()]);
-    assert!(
-        store
-            .list_channel_pairings(ChannelPairingFilter {
-                bot_id: Some(BotId::new("someone-else")),
-                ..Default::default()
-            })
-            .await
-            .expect("list by other bot")
-            .is_empty()
-    );
-
-    // Deleting the trigger drops its pairings; deleting the account drops
-    // the rest.
-    store
-        .delete_bot_trigger(&bot_id, &BotTriggerId::new("telegram-vip"))
-        .await
-        .expect("delete vip trigger");
-    assert_eq!(
-        store
-            .read_channel_pairing(&account_id, "chat-1")
-            .await
-            .expect("read moved pairing"),
-        None
-    );
-    assert_eq!(
-        store
-            .delete_channel_pairing(&account_id, "chat-2")
-            .await
-            .expect("delete pairing"),
-        second
-    );
-    assert!(matches!(
-        store.delete_channel_pairing(&account_id, "chat-2").await,
-        Err(ChannelError::PairingNotFound { .. })
-    ));
-    store
-        .upsert_channel_pairing(pairing.clone())
-        .await
-        .expect("pair again");
-    let deleted = store
-        .delete_channel_account(&account_id)
-        .await
-        .expect("delete account");
-    assert_eq!(deleted.account_id, account_id);
-    assert!(matches!(
-        store.read_channel_account(&account_id).await,
-        Err(ChannelError::AccountNotFound { .. })
-    ));
-    assert!(
-        store
-            .list_channel_pairings(ChannelPairingFilter::default())
-            .await
-            .expect("list after account delete")
-            .is_empty()
-    );
-
-    drop_universe(&store).await;
-}
-
-#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires Postgres"]
-async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs() {
+async fn pg_live_bot_event_roots_cover_document_and_prompt_and_roll_back_missing_refs() {
     let store = live_store().await;
     let bot_id = BotId::new("rooted-event");
     store
         .create_bot(bot_id.clone(), bot_document("profile"), 1)
         .await
         .expect("create bot");
-    let tools = store
-        .put_bytes(b"receiver tools".to_vec())
-        .await
-        .expect("tools");
-    let media = store
-        .put_bytes(b"media attachment".to_vec())
-        .await
-        .expect("media");
-    let transcript = store
-        .put_bytes(b"prepared transcript".to_vec())
-        .await
-        .expect("transcript");
-    let mut record = event(&bot_id, "with-tools", 1, 2, None, None);
-    record.receiver = Some(bots::EventReceiver::Workflow {
-        workflow_id: "conversation".to_owned(),
-        workflow_kind: "chat".to_owned(),
-        token: "receipt".to_owned(),
-        tools_ref: Some(tools.to_string()),
-    });
-    record.media = vec![api::BotEventMedia {
-        text_ref: Some(transcript.to_string()),
-        blob_ref: media.to_string(),
-        kind: api::BotEventMediaKind::Audio,
-        mime: "audio/ogg".to_owned(),
-        name: None,
-    }];
+    let record = event(&bot_id, "rooted", 1, 2, None, None);
     store
         .insert_bot_event(record.clone())
         .await
@@ -1283,25 +930,16 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
     .fetch_one(store.pool())
     .await
     .expect("roots");
-    assert_eq!(
-        roots, 5,
-        "document, prompt, source audio, transcript, and receiver tools are retained"
-    );
+    assert_eq!(roots, 2, "event document and prompt are retained");
     sqlx::query("UPDATE cas_blobs SET created_at_ms = 1, touched_at_ms = 1 WHERE universe_id = $1")
         .bind(store.config().universe_id)
         .execute(store.pool())
         .await
         .expect("age blobs");
-    let refs = [
-        &record.document_ref,
-        record.prompt_ref.as_ref().unwrap(),
-        &media.to_string(),
-        &transcript.to_string(),
-        &tools.to_string(),
-    ]
-    .into_iter()
-    .map(|r| BlobRef::parse(r.clone()).unwrap())
-    .collect::<Vec<_>>();
+    let refs = [&record.document_ref, record.prompt_ref.as_ref().unwrap()]
+        .into_iter()
+        .map(|r| BlobRef::parse(r.clone()).unwrap())
+        .collect::<Vec<_>>();
     assert!(
         store
             .delete_dead_blobs(&refs, 2, &[])
@@ -1335,7 +973,7 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
     .fetch_one(store.pool())
     .await
     .expect("events");
-    assert_eq!(events, 1, "a failed attachment rolls back its event");
+    assert_eq!(events, 1, "a failed blob reference rolls back its event");
     sqlx::query("DELETE FROM bot_events WHERE universe_id = $1 AND bot_id = $2")
         .bind(store.config().universe_id)
         .bind(bot_id.as_str())
@@ -1348,7 +986,7 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
             .await
             .expect("sweep released roots")
             .len(),
-        5
+        refs.len()
     );
     drop_universe(&store).await;
 }

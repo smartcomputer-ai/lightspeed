@@ -17,8 +17,6 @@ use crate::records::{RoutedSession, RoutedSessionClosePolicy};
 
 /// Longest route key taken from a CEL expression or a preset (characters).
 pub const MAX_ROUTE_KEY_CHARS: usize = 200;
-/// Longest routed-session label taken from a preset (characters).
-pub const MAX_ROUTE_LABEL_CHARS: usize = 200;
 /// Shared key of `perKey` routing when neither the expression nor the
 /// preset yields one.
 pub const DEFAULT_ROUTE_KEY: &str = "default";
@@ -147,7 +145,6 @@ pub fn evaluate_filter(filter: &str, context: &FilterContext) -> FilterResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoutePreset {
     Github,
-    Chat,
 }
 
 impl From<WebhookPreset> for RoutePreset {
@@ -171,13 +168,6 @@ pub fn compute_route_session(
     event_id: &str,
     context: &FilterContext,
 ) -> Option<RoutedSession> {
-    // A chat conversation always gets its own session: its reply tools are
-    // bound to the conversation, which the main session cannot carry.
-    let chat_default = BotTriggerRoute::PerKey { key: None };
-    let route = match (preset, route) {
-        (Some(RoutePreset::Chat), BotTriggerRoute::Bot) => &chat_default,
-        _ => route,
-    };
     match route {
         BotTriggerRoute::Bot => None,
         BotTriggerRoute::PerEvent => Some(RoutedSession {
@@ -192,10 +182,9 @@ pub fn compute_route_session(
                 .and_then(|expression| expression_route_key(expression, context))
                 .or_else(|| preset_route_key(preset, &context.data))
                 .unwrap_or_else(|| DEFAULT_ROUTE_KEY.to_owned());
-            let label = preset_route_label(preset, &context.data).unwrap_or_else(|| key.clone());
             Some(RoutedSession {
                 session_id: bot_keyed_session_id(bot_id, &key),
-                label,
+                label: key.clone(),
                 session_key: Some(key),
                 close_policy: RoutedSessionClosePolicy::Inherit,
             })
@@ -219,15 +208,9 @@ fn expression_route_key(expression: &str, context: &FilterContext) -> Option<Str
 }
 
 /// The preset's key for a payload: GitHub keys a pull request (`pr-N`), an
-/// issue (`issue-N`), or the repository; chat keys the conversation.
+/// issue (`issue-N`), or the repository.
 pub fn preset_route_key(preset: Option<RoutePreset>, data: &Value) -> Option<String> {
     match preset? {
-        RoutePreset::Chat => data
-            .get("conversation")
-            .and_then(|conversation| conversation.get("key"))
-            .and_then(Value::as_str)
-            .filter(|key| !key.is_empty())
-            .map(str::to_owned),
         RoutePreset::Github => {
             if let Some(number) = data
                 .get("pull_request")
@@ -248,20 +231,6 @@ pub fn preset_route_key(preset: Option<RoutePreset>, data: &Value) -> Option<Str
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         }
-    }
-}
-
-/// A human label for the routed session where the preset knows one (a
-/// chat's name); GitHub sessions are labelled by their key.
-pub fn preset_route_label(preset: Option<RoutePreset>, data: &Value) -> Option<String> {
-    match preset? {
-        RoutePreset::Chat => data
-            .get("conversation")
-            .and_then(|conversation| conversation.get("label"))
-            .and_then(Value::as_str)
-            .filter(|label| !label.is_empty())
-            .map(|label| truncate_chars(label, MAX_ROUTE_LABEL_CHARS).to_owned()),
-        RoutePreset::Github => None,
     }
 }
 
@@ -610,69 +579,5 @@ mod tests {
         )
         .unwrap();
         assert_eq!(routed.label, "issue-9");
-    }
-
-    #[test]
-    fn chat_preset_keys_and_labels_the_conversation() {
-        let ctx = context(json!({
-            "conversation": { "key": "telegram:12345", "label": "Ops room" },
-            "text": "hello"
-        }));
-        let routed =
-            compute_route_session(&bot(), &per_key(None), Some(RoutePreset::Chat), "e", &ctx)
-                .unwrap();
-        assert_eq!(routed.label, "Ops room");
-        assert_eq!(routed.session_key.as_deref(), Some("telegram:12345"));
-        let stored = serde_json::to_value(&routed).unwrap();
-        assert_eq!(stored["sessionKey"], "telegram:12345");
-        assert_eq!(
-            serde_json::from_value::<RoutedSession>(stored.clone()).unwrap(),
-            routed
-        );
-        let mut unkeyed = stored;
-        unkeyed.as_object_mut().unwrap().remove("sessionKey");
-        let unkeyed: RoutedSession = serde_json::from_value(unkeyed).unwrap();
-        assert_eq!(unkeyed.session_key, None);
-        assert_eq!(unkeyed.label, "Ops room");
-        assert_eq!(
-            routed.session_id,
-            bot_keyed_session_id(&bot(), "telegram:12345")
-        );
-
-        // The main session can never take a chat: `bot` is forced per key.
-        let forced = compute_route_session(
-            &bot(),
-            &BotTriggerRoute::Bot,
-            Some(RoutePreset::Chat),
-            "e",
-            &ctx,
-        )
-        .expect("chat always routes");
-        assert_eq!(forced, routed);
-
-        // Without a label the key labels the session.
-        let unlabelled = context(json!({ "conversation": { "key": "wa:1" } }));
-        let routed = compute_route_session(
-            &bot(),
-            &per_key(None),
-            Some(RoutePreset::Chat),
-            "e",
-            &unlabelled,
-        )
-        .unwrap();
-        assert_eq!(routed.label, "wa:1");
-        assert_eq!(
-            preset_route_label(Some(RoutePreset::Chat), &unlabelled.data),
-            None
-        );
-    }
-
-    #[test]
-    fn preset_labels_are_capped() {
-        let data = json!({ "conversation": { "key": "k", "label": "é".repeat(300) } });
-        let label = preset_route_label(Some(RoutePreset::Chat), &data).unwrap();
-        assert_eq!(label.chars().count(), MAX_ROUTE_LABEL_CHARS);
-        assert_eq!(preset_route_label(Some(RoutePreset::Github), &data), None);
-        assert_eq!(preset_route_label(None, &data), None);
     }
 }

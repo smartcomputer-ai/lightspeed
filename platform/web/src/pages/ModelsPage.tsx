@@ -18,7 +18,7 @@ import { useModelDefaults } from "@/lib/model-defaults";
 import type { ModelDefaults } from "@/api";
 import { useActiveUniverse } from "@/lib/universes";
 
-export function ModelsPage({ admin: _admin }: { admin: boolean }) {
+export function ModelsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;

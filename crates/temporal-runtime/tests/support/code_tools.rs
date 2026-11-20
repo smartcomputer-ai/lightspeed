@@ -119,7 +119,7 @@ impl CoreAgentLlm for OuterCallLlm {
                 LlmFinish::ToolCalls,
                 vec![ObservedToolCall {
                     call_id,
-                    tool_id: test_support::scripted_tool_id(&request, OUTER),
+                    target: test_support::scripted_tool_id(&request, OUTER).map(Into::into),
                     tool_name: name,
                     provider_kind: None,
                     arguments_ref: reference.clone(),
@@ -502,7 +502,6 @@ where
                     config: None,
                 })
                 .await?
-                .result
                 .run
                 .id;
             let bridge = CodeToolClient::new(

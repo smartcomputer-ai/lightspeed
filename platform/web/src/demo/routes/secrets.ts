@@ -1,23 +1,21 @@
-/// Universe secrets and what is built on them: auth grants, model provider
+/// Universe secrets and what is built on them: credential grants, model provider
 /// keys, coding-agent subscriptions, GitHub Apps, model discovery, and setup
 /// installation. Secret values are accepted and dropped; only the non-secret
 /// views the real gateway returns are kept.
 import { Hono } from "hono";
+import { demoOrganizationActions, demoUniverseActions } from "../access";
 import { modelDefaultsPutSchema } from "@lightspeed-ai/platform-shared";
 import type {
   GitHubApp,
   GitHubInstallation,
-  McpServer,
   ModelEndpointConfig,
   ModelListResponse,
   ModelProviderDiscovery,
-  ProfileDocument,
   SecretGrant,
   SecretProvider,
-  UniverseSetup,
 } from "@/api";
-import type { MethodGroup } from "@lightspeed-ai/sdk";
-import { base64ToText, universeApiKey, type DemoStore, type UniverseState } from "../store";
+import { mcpServer } from "../fixtures/builders";
+import { base64ToText, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, parseRequestHeaders, readBody, universeFor } from "./common";
 
 const MODEL_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -26,12 +24,6 @@ const ENVIRONMENT_SECRET_PROVIDER_ID = "environment-secret";
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 /// `claude setup-token` mints one-year tokens.
 const CLAUDE_CODE_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;
-const CONFIGURATOR_VERSION = 4;
-const CONFIGURATOR_SERVER_ID = "lightspeed-configurator";
-const CONFIGURATOR_PROFILE_ID = "lightspeed-configurator";
-const CONFIGURATOR_MCP_URL = "https://configurator.lightspeed.demo/mcp";
-const INSTALL_DELAY_MS = 2_000;
-
 /// Installations GitHub would report for any registered App.
 /// Installations come from the universe's own GitHub App grants (what the
 /// fixtures and the grant route record), plus one ungranted sibling per
@@ -108,7 +100,7 @@ interface GrantInit {
   metadata?: Record<string, unknown>;
 }
 
-/// `auth/grants/import`: the token is dropped on the floor, the metadata
+/// `credentials/grants/import`: the token is dropped on the floor, the metadata
 /// row is what every read returns.
 function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): SecretGrant {
   const now = Date.now();
@@ -317,126 +309,6 @@ function modelDiscovery(universe: UniverseState): ModelListResponse {
   };
 }
 
-function configuratorSetup(universe: UniverseState): UniverseSetup {
-  let setup = universe.setups.find((candidate) => candidate.id === "configurator");
-  if (!setup) {
-    setup = {
-      id: "configurator",
-      name: "Configurator",
-      description:
-        "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe. " +
-        "The server offers only the tools its key may call, and anyone who can attach it acts with that key.",
-      version: CONFIGURATOR_VERSION,
-      available: true,
-      status: "available",
-    };
-    universe.setups.push(setup);
-  }
-  return setup;
-}
-
-type KeyChoice =
-  | { kind: "new"; groups: MethodGroup[] }
-  | { kind: "existing"; keyPrefix: string; secret: string }
-  | { kind: "current" };
-
-/// What the real install leaves behind — the chosen key's bearer grant, the
-/// MCP server, and the profile — so the other pages show the result. A new
-/// key replaces (and revokes) only a key the setup minted; an existing key
-/// is taken on the admin's word, since the demo keeps no secrets.
-function finishConfiguratorInstall(
-  store: DemoStore,
-  universe: UniverseState,
-  setup: UniverseSetup,
-  choice: Exclude<KeyChoice, { kind: "current" }> | null,
-): void {
-  const now = Date.now();
-  const previousKey = universe.apiKeys.find((key) =>
-    key.keyPrefix === setup.resources?.keyPrefix && key.revokedAtMs == null);
-  const previousGrant = universe.secrets.grants.find((grant) =>
-    grant.grantId === setup.resources?.grantId && grant.status !== "revoked");
-  let key = previousKey;
-  let grant = previousGrant;
-  let keySource = setup.resources?.keySource;
-  if (choice) {
-    if (previousKey && keySource !== "existing" && previousKey.keyPrefix !== (choice.kind === "existing" ? choice.keyPrefix : "")) {
-      previousKey.revokedAtMs = now;
-    }
-    if (previousGrant) revokeGrant(previousGrant);
-    if (choice.kind === "new") {
-      key = universeApiKey(universe, {
-        keyPrefix: `lsk_${hex().slice(0, 8)}`,
-        displayName: "Lightspeed Configurator service credential",
-        groups: choice.groups,
-        createdAtMs: now,
-        createdBy: store.currentUser.id,
-      });
-      universe.apiKeys.push(key);
-      keySource = "minted";
-    } else {
-      key = universe.apiKeys.find((candidate) => candidate.keyPrefix === choice.keyPrefix);
-      keySource = "existing";
-    }
-    grant = undefined;
-  }
-  if (!key) return;
-  // Seeded installations predate their grant; a repair gives them one.
-  grant ??= mintGrant(store, universe, {
-    grantId: `authgrant_lightspeed_configurator_${hex()}`,
-    providerId: "lightspeed-configurator",
-    providerKind: "staticToken",
-    displayName: "Lightspeed Configurator setup",
-    audience: CONFIGURATOR_MCP_URL,
-  });
-  const existingServer = universe.mcpServers.get(CONFIGURATOR_SERVER_ID);
-  const server: McpServer = {
-    serverId: CONFIGURATOR_SERVER_ID,
-    displayName: "Lightspeed Configurator",
-    serverUrl: CONFIGURATOR_MCP_URL,
-    defaultServerLabel: "configurator",
-    description: "Configure and operate this Lightspeed universe through its generated API.",
-    allowedTools: null,
-    execution: "runtime",
-    exposure: "search",
-    approval: "never",
-    deferLoading: null,
-    allowPrivateNetwork: false,
-    authPolicy: { type: "requiredBearer" },
-    credential: { type: "authGrant", grantId: grant.grantId },
-    status: "active",
-    revision: (existingServer?.revision ?? 0) + 1,
-    createdAtMs: existingServer?.createdAtMs ?? now,
-    updatedAtMs: now,
-  };
-  universe.mcpServers.set(server.serverId, server);
-  const existingProfile = universe.profiles.get(CONFIGURATOR_PROFILE_ID);
-  const profile: ProfileDocument = {
-    profileId: CONFIGURATOR_PROFILE_ID,
-    displayName: "Universe Configurator",
-    description: "A ready-to-use agent profile for configuring and operating this universe.",
-    instructions: {
-      type: "text",
-      text:
-        "Configure and operate the current Lightspeed universe. Read revisioned resources before replacing them, make only the requested changes, and report the resulting resource identifiers.",
-    },
-    config: { features: { mcp: { servers: [{ serverId: CONFIGURATOR_SERVER_ID }] } } },
-    revision: (existingProfile?.revision ?? 0) + 1,
-    createdAtMs: existingProfile?.createdAtMs ?? now,
-    updatedAtMs: now,
-  };
-  universe.profiles.set(profile.profileId, profile);
-  setup.status = "ready";
-  setup.installedVersion = CONFIGURATOR_VERSION;
-  setup.resources = {
-    keyPrefix: key.keyPrefix,
-    keyGroups: key.groups,
-    keySource: keySource ?? "minted",
-    grantId: grant.grantId,
-    serverId: CONFIGURATOR_SERVER_ID,
-    profileId: CONFIGURATOR_PROFILE_ID,
-  };
-}
-
 export function secretRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
@@ -561,7 +433,7 @@ export function secretRoutes(store: DemoStore): Hono {
   });
 
   /// Active grants for MCP-server credential selection.
-  app.get("/:id/auth-grants", (c) => {
+  app.get("/:id/credential-grants", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     return c.json(universe.secrets.grants.filter((grant) => grant.status === "active"));
@@ -593,7 +465,7 @@ export function secretRoutes(store: DemoStore): Hono {
     }
     const providerId = optionalString(body.providerId) ?? `github-app:${appId}`;
     if (universe.githubApps.some((app) => app.providerId === providerId)) {
-      return conflict(c, `auth provider ${providerId} already exists`);
+      return conflict(c, `credential provider ${providerId} already exists`);
     }
     const now = Date.now();
     const app: GitHubApp = {
@@ -768,49 +640,12 @@ export function secretRoutes(store: DemoStore): Hono {
   app.put("/:id/models/defaults", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (store.currentUser.role !== "admin" && !["operator", "admin"].includes(universe.universe.role ?? "")) return c.json({ error: "operator role required" }, 403);
+    if (!demoUniverseActions(store, universe).has("configureResource")) return c.json({ error: "universe permission required: configureResource" }, 403);
     const body = modelDefaultsPutSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, body.error.issues[0]?.message ?? "Invalid defaults update");
     if (body.data.expectedRevision !== universe.modelDefaults.revision) return conflict(c, "Model defaults changed elsewhere.");
     universe.modelDefaults = { ...universe.modelDefaults, [body.data.slot]: body.data.model, revision: universe.modelDefaults.revision + 1 };
     return c.json(universe.modelDefaults);
-  });
-
-  /// Operators see the templates; installing stays with Admins.
-  app.get("/:id/setups", (c) => {
-    const universe = universeFor(store, c);
-    const role = universe?.universe.role;
-    if (!universe || (role !== "admin" && role !== "operator")) return notFound(c);
-    configuratorSetup(universe);
-    return c.json(universe.setups);
-  });
-
-  /// Accepted as `installing`; the page polls until the resources land.
-  app.post("/:id/setups/configurator/install", async (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    if (universe.universe.role !== "admin") return c.json({ error: "universe admin required" }, 403);
-    const setup = configuratorSetup(universe);
-    const choice = (await readBody<{ key?: KeyChoice }>(c)).key;
-    if (!choice) return badRequest(c, "validation failed — key: required");
-    if (choice.kind === "new" && !choice.groups?.length) return badRequest(c, "validation failed — groups: required");
-    if (choice.kind === "existing") {
-      const chosen = universe.apiKeys.find((key) => key.keyPrefix === choice.keyPrefix && key.revokedAtMs == null);
-      if (!chosen) return badRequest(c, "That key is not an active key of this universe");
-      if (!choice.secret?.startsWith("lsk_")) return badRequest(c, "The secret does not belong to the chosen key");
-    }
-    if (choice.kind === "current") {
-      const live = universe.apiKeys.some((key) => key.keyPrefix === setup.resources?.keyPrefix && key.revokedAtMs == null);
-      if (!live) return conflict(c, "The Configurator's key or credential is no longer active; choose a key");
-    }
-    if (!setup.available) return c.json({ error: "Configurator MCP URL is not configured" }, 501);
-    if (setup.status === "installing") {
-      return conflict(c, "Configurator setup installation is already running");
-    }
-    setup.status = "installing";
-    delete setup.error;
-    setTimeout(() => finishConfiguratorInstall(store, universe, setup, choice.kind === "current" ? null : choice), INSTALL_DELAY_MS);
-    return c.json(setup);
   });
 
   return app;

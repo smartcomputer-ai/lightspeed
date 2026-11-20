@@ -13,7 +13,7 @@ export function useSessionCompaction(universeId: string, sessionId: string, sess
   const request = requests.at(-1);
   const mutation = useMutation({
     mutationKey,
-    mutationFn: () => api("POST", `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}/context/compact`),
+    mutationFn: () => api("POST", `/api/ui/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}/context/compact`),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["session", universeId, sessionId] }),
   });
   const state = session?.activeContext?.compaction;

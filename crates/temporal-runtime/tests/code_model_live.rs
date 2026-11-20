@@ -193,7 +193,12 @@ async fn run_model_scenario(
         );
     };
     let snapshot = client
-        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id.clone())
+        .get_workflow_handle::<CodeExecutionWorkflow>(
+            temporal_workflow::compose_workflow_tool_execution_id(
+                store.config().universe_id,
+                execution_id,
+            ),
+        )
         .query(
             CodeExecutionWorkflow::snapshot,
             (),
@@ -357,7 +362,12 @@ async fn run_media_model_scenario(
         );
     };
     let snapshot = client
-        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id.clone())
+        .get_workflow_handle::<CodeExecutionWorkflow>(
+            temporal_workflow::compose_workflow_tool_execution_id(
+                store.config().universe_id,
+                execution_id,
+            ),
+        )
         .query(
             CodeExecutionWorkflow::snapshot,
             (),

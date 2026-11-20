@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 use super::{
     document::{Document, LoadedDocument, SecretSource, source_field},
     resources::{
-        ApiKeys, Credentials, EnvironmentCredentials, EnvironmentProviders, Environments, Live,
-        McpServers, ModelDefaults, Profiles, Providers, RegistrationKeys, Resource, Target, Wanted,
+        Credentials, EnvironmentCredentials, EnvironmentProviders, Environments, Live, McpServers,
+        ModelDefaults, Profiles, Providers, RegistrationKeys, Resource, Target, Wanted,
     },
 };
 use crate::{api_client::HttpAgentApi, connection::ResolvedConnection};
@@ -38,12 +38,7 @@ pub(crate) fn universe_resources() -> Vec<Box<dyn Resource>> {
         Box::new(Environments),
         Box::new(EnvironmentCredentials),
         Box::new(Profiles),
-        Box::new(ApiKeys),
     ]
-}
-
-pub(crate) fn deployment_resources() -> Vec<Box<dyn Resource>> {
-    vec![Box::new(ApiKeys)]
 }
 
 /// One checked entry of a document.
@@ -91,7 +86,7 @@ impl Action {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Step {
-    /// `universe <handle>` or `deployment`.
+    /// `universe <handle>`.
     pub subject: String,
     pub section: &'static str,
     pub id: String,
@@ -108,18 +103,30 @@ pub(crate) struct Step {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub done: bool,
     #[serde(skip)]
-    work: Option<Work>,
+    pub(super) work: Option<Work>,
+}
+
+/// A universe to create, as the document and the command describe it.
+#[derive(Clone, Debug)]
+pub(super) struct Creation {
+    handle: String,
+    protected: bool,
+    metadata: Value,
+    initial_owner: Option<Value>,
+    name: String,
+    universe_id: uuid::Uuid,
+    /// The handle of the organization the document names, if any.
+    organization: Option<String>,
 }
 
 /// What a step needs to be carried out.
 #[derive(Clone, Debug)]
-enum Work {
+pub(super) enum Work {
+    Platform(super::platform::PlatformWork),
     ConfigureUniverse {
         configuration: Value,
     },
-    CreateUniverse {
-        handle: String,
-    },
+    CreateUniverse(Creation),
     Write {
         resource: usize,
         entry: Value,
@@ -133,7 +140,12 @@ enum Work {
 }
 
 impl Step {
-    fn new(subject: &str, section: &'static str, id: impl Into<String>, action: Action) -> Self {
+    pub(super) fn new(
+        subject: &str,
+        section: &'static str,
+        id: impl Into<String>,
+        action: Action,
+    ) -> Self {
         Self {
             subject: subject.to_owned(),
             section,
@@ -147,7 +159,7 @@ impl Step {
         }
     }
 
-    fn with_message(mut self, message: impl Into<String>) -> Self {
+    pub(super) fn with_message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
         self
     }
@@ -212,33 +224,47 @@ pub(crate) fn check_universe(document: &super::document::UniverseDocument) -> Re
 }
 
 /// Phases 1 to 3 for one document.
-pub(crate) async fn plan(
+pub(crate) async fn plan_with_owner(
     base: &ResolvedConnection,
     loaded: &LoadedDocument,
+    initial_owner: Option<Value>,
+    requested_universe_id: Option<uuid::Uuid>,
+    declared: &super::platform::Declared,
 ) -> Result<DocumentPlan> {
     let subject = loaded.subject();
-    let (resources, sections, handle) = match &loaded.document {
-        Document::Universe(document) => (
-            universe_resources(),
-            universe_sections(document)?,
-            Some(document.handle.clone()),
-        ),
-        Document::Deployment(document) => {
-            let mut sections = BTreeMap::new();
-            if let Some(keys) = &document.api_keys {
-                sections.insert("apiKeys", keys.clone());
-            }
-            (deployment_resources(), sections, None)
+    let document = match &loaded.document {
+        Document::Organization(organization) => {
+            let target = connect(base, None).await?;
+            let steps = super::platform::plan_organization(
+                base,
+                &target,
+                &subject,
+                organization,
+                loaded.directory(),
+            )
+            .await?;
+            return Ok(DocumentPlan {
+                subject,
+                steps,
+                target,
+                resources: Vec::new(),
+            });
         }
+        Document::Universe(document) => document,
     };
+    if document.organization.is_some() || document.access.is_some() {
+        super::platform::require_platform(base, &format!("{subject}: organization and access"))?;
+    }
+    let (resources, sections, handle) = (
+        universe_resources(),
+        universe_sections(document)?,
+        Some(document.handle.clone()),
+    );
 
-    let configuration = match &loaded.document {
-        Document::Universe(document) => {
-            let configuration = document.configuration();
-            configuration.validate().map_err(anyhow::Error::msg)?;
-            serde_json::to_value(configuration)?
-        }
-        _ => json!({}),
+    let configuration = {
+        let configuration = document.configuration();
+        configuration.validate().map_err(anyhow::Error::msg)?;
+        serde_json::to_value(configuration)?
     };
     // Phase 1: every entry is checked before anything is read or written.
     let mut entries: BTreeMap<&'static str, Vec<Entry>> = BTreeMap::new();
@@ -282,28 +308,84 @@ pub(crate) async fn plan(
     }
 
     let target = connect(base, handle.as_deref()).await?;
+    if let (Some(requested), Some(existing)) =
+        (requested_universe_id, target.universe_id.as_deref())
+    {
+        anyhow::ensure!(
+            requested.to_string() == existing,
+            "--universe-id differs from the existing universe UUID"
+        );
+    }
     let mut steps = Vec::new();
     if let Some(handle) = &handle
         && target.universe_id.is_none()
     {
-        let mut step = Step::new(&subject, "universe", handle, Action::Create);
-        step.work = Some(Work::CreateUniverse {
+        if base.is_platform() {
+            anyhow::ensure!(
+                document.organization.is_some() || base.selected_organization().is_some(),
+                "Platform creation requires the document's organization, --organization ID or platform organization use ID"
+            );
+        } else {
+            anyhow::ensure!(
+                initial_owner.is_none(),
+                "initial Owner applies only to Platform provisioning"
+            );
+        }
+        let universe_id = requested_universe_id.unwrap_or_else(uuid::Uuid::new_v4);
+        let mut step = Step::new(&subject, "universe", handle, Action::Create).with_message(
+            format!("universeId {universe_id}; retry with --universe-id {universe_id}"),
+        );
+        step.work = Some(Work::CreateUniverse(Creation {
             handle: handle.clone(),
-        });
+            initial_owner,
+            universe_id,
+            name: configuration["displayName"]
+                .as_str()
+                .unwrap_or(handle)
+                .to_owned(),
+            protected: configuration["protected"].as_bool().unwrap_or(true),
+            metadata: configuration
+                .get("metadata")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            organization: document.organization.clone(),
+        }));
         steps.push(step);
     }
+    let home =
+        if base.is_platform() && (document.organization.is_some() || document.access.is_some()) {
+            let (home, conflict) = super::platform::check_home(
+                &target,
+                &subject,
+                document.organization.as_deref(),
+                declared,
+            )
+            .await?;
+            steps.extend(conflict);
+            home
+        } else {
+            None
+        };
 
     if configuration
         .as_object()
         .is_some_and(|fields| !fields.is_empty())
+        && (target.exists() || (!base.is_platform() && configuration.get("displayName").is_some()))
     {
         let current = if target.exists() {
             target
-                .call("deployment/universes/read", json!({"universe": handle}))
+                .call(
+                    "deployment/universes/read",
+                    json!({"universe": target.universe_id}),
+                )
                 .await?["universe"]
                 .clone()
         } else {
-            json!({})
+            // Creation already applies metadata and protection. Only the
+            // direct runtime needs a separate display-name update.
+            let mut created = configuration.clone();
+            created.as_object_mut().unwrap().remove("displayName");
+            created
         };
         let fields: Vec<String> = configuration
             .as_object()
@@ -323,8 +405,14 @@ pub(crate) async fn plan(
             },
         );
         if !fields.is_empty() {
+            let changed = fields
+                .iter()
+                .map(|field| (field.clone(), configuration[field].clone()))
+                .collect::<serde_json::Map<_, _>>();
             step.fields = fields;
-            step.work = Some(Work::ConfigureUniverse { configuration });
+            step.work = Some(Work::ConfigureUniverse {
+                configuration: Value::Object(changed),
+            });
         }
         steps.push(step);
     }
@@ -387,6 +475,37 @@ pub(crate) async fn plan(
             }
         }
     }
+    if base.is_platform()
+        && !base
+            .principal
+            .as_ref()
+            .is_some_and(|principal| principal.platform_admin)
+    {
+        for step in &mut steps {
+            if step.section == "environmentProviders" && step.action.changes() {
+                step.action = Action::Conflict;
+                step.work = None;
+                step.message = Some(
+                    "changing deployment provider admission requires Platform Admin; have an administrator manage this binding, or omit environmentProviders from this document"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    if let Some(access) = &document.access {
+        steps.extend(
+            super::platform::plan_access(
+                &target,
+                &subject,
+                &document.handle,
+                access,
+                home.as_ref(),
+                declared,
+            )
+            .await
+            .with_context(|| format!("{subject}: read access"))?,
+        );
+    }
     Ok(DocumentPlan {
         subject,
         steps,
@@ -409,6 +528,7 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
             continue;
         };
         let result = match work {
+            Work::Platform(work) => super::platform::run(&plan.target, work).await,
             Work::ConfigureUniverse { mut configuration } => {
                 configuration["universe"] = json!(plan.target.universe_id);
                 plan.target
@@ -416,7 +536,7 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
                     .await
                     .map(drop)
             }
-            Work::CreateUniverse { handle } => create_universe(&mut plan.target, &handle).await,
+            Work::CreateUniverse(creation) => create_universe(&mut plan.target, creation).await,
             Work::Write {
                 resource,
                 entry,
@@ -452,24 +572,59 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
     Ok(())
 }
 
-async fn create_universe(target: &mut Target, handle: &str) -> Result<()> {
-    let response = target
-        .call(
-            "deployment/universes/create",
-            json!({ "universeId": uuid::Uuid::new_v4().to_string(), "handle": handle }),
-        )
-        .await?;
-    target.universe_id = response["universe"]["universeId"]
-        .as_str()
-        .map(str::to_owned);
-    if target.universe_id.is_none() {
-        bail!("the runtime did not return the created universe");
-    }
+async fn create_universe(target: &mut Target, creation: Creation) -> Result<()> {
+    let Creation {
+        handle,
+        protected,
+        metadata,
+        initial_owner,
+        name,
+        universe_id,
+        organization,
+    } = creation;
+    let handle = handle.as_str();
+    let platform = target.api.connection().is_platform();
+    eprintln!(
+        "Provisioning universe {handle}: {universe_id}. Retry this document with --universe-id {universe_id} if interrupted."
+    );
+    let mut params = json!({ "universeId": universe_id.to_string(), "handle": handle, "protected":protected,"metadata":metadata });
+    let response = if platform {
+        params["organizationId"] = json!(match &organization {
+            Some(handle) => super::platform::organization_id(target, handle).await?,
+            None => target
+                .api
+                .connection()
+                .selected_organization()
+                .context("Platform creation needs an organization")?
+                .to_owned(),
+        });
+        params["name"] = json!(name);
+        if let Some(owner) = initial_owner {
+            params["initialOwner"] = owner;
+        }
+        target
+            .api
+            .call_platform("platform/universes/create", params)
+            .await?
+    } else {
+        target.call("deployment/universes/create", params).await?
+    };
+    let created_id = response["universe"][if platform {
+        "lightspeedUniverseId"
+    } else {
+        "universeId"
+    }]
+    .as_str()
+    .context("server did not return the created universe")?;
+    anyhow::ensure!(
+        created_id == universe_id.to_string(),
+        "server returned a different universe UUID than requested"
+    );
+    target.select_universe(created_id.to_owned());
     Ok(())
 }
 
-/// A client for the document's universe, addressed by its handle, and the
-/// universe's UUID when it exists.
+/// Resolve the document's handle and pin the client to the universe's UUID.
 pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> Result<Target> {
     let Some(handle) = handle else {
         return Ok(Target {
@@ -486,20 +641,29 @@ pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> 
         .request::<Value, Value>("deployment/universes/read", json!({ "universe": handle }))
         .await;
     let universe_id = match read {
-        Ok(outcome) => outcome.result["universe"]["universeId"]
-            .as_str()
-            .map(str::to_owned),
-        Err(error) if error.kind == api::AgentApiErrorKind::NotFound => None,
-        Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => bail!(
-            "universe {handle}: {error}. Configuration commands need a deployment key that may read universes"
+        Ok(outcome) => Some(
+            outcome["universe"]["universeId"]
+                .as_str()
+                .context("server did not return the existing universe UUID")?
+                .to_owned(),
         ),
+        Err(error) if error.kind == api::AgentApiErrorKind::NotFound => None,
+        Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => {
+            bail!(
+                "universe {handle}: {error}. Configuration commands need permission to access this universe"
+            )
+        }
         Err(error) => bail!("universe {handle}: {error}"),
     };
-    Ok(Target {
+    let mut target = Target {
         api,
-        universe_id,
+        universe_id: None,
         deployment: false,
-    })
+    };
+    if let Some(universe_id) = universe_id {
+        target.select_universe(universe_id);
+    }
+    Ok(target)
 }
 
 /// The raw entries of each section. Model defaults become one entry per
@@ -520,7 +684,6 @@ fn universe_sections(
     put("registrationKeys", &document.registration_keys);
     put("environments", &document.environments);
     put("profiles", &document.profiles);
-    put("apiKeys", &document.api_keys);
     if let Some(defaults) = &document.model_defaults {
         sections.insert(
             "modelDefaults",
@@ -1067,92 +1230,10 @@ mod tests {
     /// deployment. Nothing is sent.
     fn target(deployment: bool) -> Target {
         Target {
-            api: HttpAgentApi::new(""),
+            api: HttpAgentApi::with_connection(Default::default()),
             universe_id: (!deployment).then(|| uuid::Uuid::nil().to_string()),
             deployment,
         }
-    }
-
-    fn key_view(groups: Value) -> Value {
-        json!({ "keyId": "release-bot", "displayName": "Release bot", "groups": groups, "assertActor": false })
-    }
-
-    #[test]
-    fn a_key_without_groups_is_refused_before_anything_is_read() {
-        let error = format!(
-            "{:#}",
-            entries(
-                &ApiKeys,
-                json!([{ "keyId": "release-bot", "displayName": "Release bot", "secretFrom": { "env": "K" } }]),
-            )
-            .err()
-            .expect("groups are required")
-        );
-        assert!(error.contains("apiKeys/release-bot"), "{error}");
-        assert!(error.contains("`groups` is missing"), "{error}");
-    }
-
-    #[test]
-    fn a_key_declared_with_all_is_compared_with_the_groups_its_scope_allows() {
-        let declared = |groups: Value| {
-            entries(
-                &ApiKeys,
-                json!([{ "keyId": "release-bot", "displayName": "Release bot", "groups": groups, "secretFrom": { "env": "K" } }]),
-            )
-            .unwrap()
-            .remove(0)
-            .body
-        };
-        let all = declared(json!("all"));
-        for deployment in [false, true] {
-            let target = target(deployment);
-            let scope = if deployment {
-                api::AccessScope::Deployment
-            } else {
-                api::AccessScope::Universe {
-                    universe_id: uuid::Uuid::nil(),
-                }
-            };
-            let allowed: Vec<api::MethodGroup> =
-                api::MethodGroup::allowed_in(scope).into_iter().collect();
-
-            // The stored key holds everything its scope allows: as declared.
-            let current = key_view(json!(allowed));
-            assert!(
-                changed_fields(&ApiKeys, &ApiKeys.in_target(&target, &all), &current).is_empty()
-            );
-
-            // A key stored before a group existed lacks it, which shows as a
-            // change to make and is never taken as already granted.
-            let earlier = key_view(json!(allowed[..allowed.len() - 1]));
-            assert_eq!(
-                changed_fields(&ApiKeys, &ApiKeys.in_target(&target, &all), &earlier),
-                ["groups"]
-            );
-        }
-
-        // A list is compared as written, whatever order it was written in.
-        let listed = declared(json!(["profiles", "session"]));
-        let target = target(false);
-        assert!(
-            changed_fields(
-                &ApiKeys,
-                &ApiKeys.in_target(&target, &listed),
-                &key_view(json!(["session", "profiles"]))
-            )
-            .is_empty()
-        );
-        assert_eq!(
-            changed_fields(
-                &ApiKeys,
-                &ApiKeys.in_target(&target, &listed),
-                &key_view(json!(["session", "profiles", "models"]))
-            ),
-            ["groups"]
-        );
-        // What is written is the declaration itself, so the runtime decides
-        // what `all` holds.
-        assert_eq!(all["groups"], "all");
     }
 
     #[test]
@@ -1232,22 +1313,6 @@ mod tests {
             references("environments.credentials", &bindings[0].body),
             [("credentials", "tracker-token".to_owned())]
         );
-    }
-
-    #[test]
-    fn a_step_reads_as_one_line() {
-        let mut step = Step::new("universe research", "mcpServers", "tracker", Action::Update);
-        step.fields = vec!["serverUrl".to_owned()];
-        step.secret_replaced = true;
-        assert_eq!(
-            step.line(),
-            "  update      mcpServers/tracker (serverUrl, secret)"
-        );
-        step.done = true;
-        assert!(step.line().starts_with("  updated "));
-        let conflict = Step::new("universe research", "apiKeys", "bot", Action::Conflict)
-            .with_message("is revoked");
-        assert_eq!(conflict.line(), "  conflict    apiKeys/bot: is revoked");
     }
 
     fn checked(
@@ -1466,5 +1531,20 @@ mod tests {
         let message = step.message.expect("the conflict says why");
         assert!(message.contains("stored as `retrievable`"), "{message}");
         assert!(message.contains("state that value"), "{message}");
+    }
+    #[test]
+    fn a_step_reads_as_one_line() {
+        let mut step = Step::new("universe research", "mcpServers", "tracker", Action::Update);
+        step.fields = vec!["serverUrl".to_owned()];
+        step.secret_replaced = true;
+        assert_eq!(
+            step.line(),
+            "  update      mcpServers/tracker (serverUrl, secret)"
+        );
+        step.done = true;
+        assert!(step.line().starts_with("  updated "));
+        let conflict = Step::new("universe research", "profiles", "bot", Action::Conflict)
+            .with_message("is revoked");
+        assert_eq!(conflict.line(), "  conflict    profiles/bot: is revoked");
     }
 }

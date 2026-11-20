@@ -1,33 +1,34 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AuthClientCreateParams,
-    AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
-    AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
-    AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
-    AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
-    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantListParams,
-    AuthGrantListResponse, AuthGrantReadParams, AuthGrantReadResponse, AuthGrantRevokeParams,
-    AuthGrantRevokeResponse, AuthProviderCreateParams, AuthProviderCreateResponse,
-    AuthProviderDeleteParams, AuthProviderDeleteResponse, AuthProviderListParams,
-    AuthProviderListResponse, AuthProviderReadParams, AuthProviderReadResponse, BlobHasParams,
-    BlobHasResponse, BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse,
-    EnvironmentCloseParams, EnvironmentCloseResponse, EnvironmentCredentialBindParams,
-    EnvironmentCredentialBindResponse, EnvironmentCredentialListParams,
-    EnvironmentCredentialListResponse, EnvironmentCredentialUnbindParams,
-    EnvironmentCredentialUnbindResponse, EnvironmentListParams, EnvironmentListResponse,
-    EnvironmentPowerPutParams, EnvironmentPowerPutResponse, EnvironmentProviderBindingListParams,
-    EnvironmentProviderBindingListResponse, EnvironmentReadParams, EnvironmentReadResponse,
-    JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
-    METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_READ,
-    METHOD_AUTH_FLOWS_START, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
-    METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ,
-    METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE, METHOD_AUTH_PROVIDERS_DELETE,
-    METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
-    METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_CLOSE, METHOD_ENVIRONMENTS_CREDENTIALS_BIND,
-    METHOD_ENVIRONMENTS_CREDENTIALS_LIST, METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND,
-    METHOD_ENVIRONMENTS_LIST, METHOD_ENVIRONMENTS_POWER_PUT,
-    METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, METHOD_ENVIRONMENTS_READ,
+    AgentApiError, AgentApiErrorKind, AvailableEnvironmentProviderListParams,
+    AvailableEnvironmentProviderListResponse, BlobHasParams, BlobHasResponse, BlobPutParams,
+    BlobPutResponse, BlobReadParams, CredentialClientCreateParams, CredentialClientCreateResponse,
+    CredentialClientDeleteParams, CredentialClientDeleteResponse, CredentialClientListParams,
+    CredentialClientListResponse, CredentialClientReadParams, CredentialClientReadResponse,
+    CredentialFlowStartParams, CredentialFlowStartResponse, CredentialFlowStatusParams,
+    CredentialFlowStatusResponse, CredentialGitHubInstallationGrantParams,
+    CredentialGitHubInstallationGrantResponse, CredentialGitHubInstallationListParams,
+    CredentialGitHubInstallationListResponse, CredentialGrantListParams,
+    CredentialGrantListResponse, CredentialGrantReadParams, CredentialGrantReadResponse,
+    CredentialGrantRevokeParams, CredentialGrantRevokeResponse, CredentialProviderCreateParams,
+    CredentialProviderCreateResponse, CredentialProviderDeleteParams,
+    CredentialProviderDeleteResponse, CredentialProviderListParams, CredentialProviderListResponse,
+    CredentialProviderReadParams, CredentialProviderReadResponse, EnvironmentCloseParams,
+    EnvironmentCloseResponse, EnvironmentCredentialBindParams, EnvironmentCredentialBindResponse,
+    EnvironmentCredentialListParams, EnvironmentCredentialListResponse,
+    EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse, EnvironmentListParams,
+    EnvironmentListResponse, EnvironmentPowerPutParams, EnvironmentPowerPutResponse,
+    EnvironmentReadParams, EnvironmentReadResponse, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
+    METHOD_BLOBS_READ, METHOD_CREDENTIALS_CLIENTS_CREATE, METHOD_CREDENTIALS_CLIENTS_DELETE,
+    METHOD_CREDENTIALS_CLIENTS_LIST, METHOD_CREDENTIALS_CLIENTS_READ,
+    METHOD_CREDENTIALS_FLOWS_READ, METHOD_CREDENTIALS_FLOWS_START,
+    METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST,
+    METHOD_CREDENTIALS_GRANTS_LIST, METHOD_CREDENTIALS_GRANTS_READ,
+    METHOD_CREDENTIALS_GRANTS_REVOKE, METHOD_CREDENTIALS_PROVIDERS_CREATE,
+    METHOD_CREDENTIALS_PROVIDERS_DELETE, METHOD_CREDENTIALS_PROVIDERS_LIST,
+    METHOD_CREDENTIALS_PROVIDERS_READ, METHOD_ENVIRONMENTS_CLOSE,
+    METHOD_ENVIRONMENTS_CREDENTIALS_BIND, METHOD_ENVIRONMENTS_CREDENTIALS_LIST,
+    METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND, METHOD_ENVIRONMENTS_LIST,
+    METHOD_ENVIRONMENTS_POWER_PUT, METHOD_ENVIRONMENTS_PROVIDERS_LIST, METHOD_ENVIRONMENTS_READ,
     METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_PUT,
     METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
     METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
@@ -41,7 +42,7 @@ use api::{
     McpServerPutParams, McpServerPutResponse, McpServerReadParams, McpServerReadResponse,
     ModelListParams, ModelListResponse, ProfileApplyParams, ProfileApplyResponse,
     ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams, ProfileListResponse,
-    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse, RequestId,
+    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse,
     RunApprovalsDecideParams, RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse,
     RunReadParams, RunReadResponse, RunStartParams, RunStartResponse, RunSteerParams,
     RunSteerResponse, SessionConfigPutParams, SessionConfigPutResponse, SessionEventsReadParams,
@@ -56,41 +57,24 @@ use api::{
 use serde::{Serialize, de::DeserializeOwned};
 
 pub(crate) struct HttpAgentApi {
-    endpoint: String,
     client: reqwest::Client,
     connection: crate::connection::ResolvedConnection,
-    next_id: AtomicU64,
 }
 
 impl HttpAgentApi {
-    pub(crate) fn new(endpoint: impl Into<String>) -> Self {
-        let endpoint = endpoint.into();
-        let connection = crate::connection::ACTIVE.get().cloned().unwrap_or_else(|| {
-            crate::connection::ResolvedConnection {
-                name: None,
-                endpoint,
-                secret: std::env::var("LIGHTSPEED_API_KEY")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty()),
-                universe: std::env::var("LIGHTSPEED_UNIVERSE")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty()),
-                caller: None,
-            }
-        });
-        Self::with_connection(connection)
+    /// Build a command client from the connection already resolved by the CLI.
+    pub(crate) fn from_active() -> Self {
+        Self::with_connection(crate::connection::active().clone())
     }
 
     pub(crate) fn with_connection(connection: crate::connection::ResolvedConnection) -> Self {
         Self {
-            endpoint: connection.endpoint.clone(),
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .expect("HTTP client"),
             connection,
-            next_id: AtomicU64::new(1),
         }
     }
 
@@ -102,7 +86,7 @@ impl HttpAgentApi {
     pub(crate) async fn open_or_start_session(
         &self,
         params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+    ) -> Result<SessionStartResponse, AgentApiError> {
         match self.start_session(params.clone()).await {
             Ok(outcome) => Ok(outcome),
             Err(error)
@@ -114,20 +98,15 @@ impl HttpAgentApi {
                     run_limit: None,
                 })
                 .await
-                .map(|outcome| {
-                    AgentApiOutcome::with_notifications(
-                        SessionStartResponse {
-                            session: api::SessionMutationView {
-                                id: outcome.result.session.id,
-                                lifecycle_status: outcome.result.session.lifecycle_status,
-                                activity: outcome.result.session.activity,
-                                head_cursor: None,
-                                config_revision: outcome.result.session.config_revision,
-                                context_revision: outcome.result.session.active_context.revision,
-                            },
-                        },
-                        outcome.notifications,
-                    )
+                .map(|response| SessionStartResponse {
+                    session: api::SessionMutationView {
+                        id: response.session.id,
+                        lifecycle_status: response.session.lifecycle_status,
+                        activity: response.session.activity,
+                        head_cursor: None,
+                        config_revision: response.session.config_revision,
+                        context_revision: response.session.active_context.revision,
+                    },
                 })
             }
             Err(error) => Err(error),
@@ -137,56 +116,56 @@ impl HttpAgentApi {
     pub(crate) async fn start_session(
         &self,
         params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+    ) -> Result<SessionStartResponse, AgentApiError> {
         self.request(METHOD_SESSION_START, params).await
     }
 
     pub(crate) async fn read_profile(
         &self,
         params: ProfileReadParams,
-    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+    ) -> Result<ProfileReadResponse, AgentApiError> {
         self.request(METHOD_PROFILES_READ, params).await
     }
 
     pub(crate) async fn list_profiles(
         &self,
         params: ProfileListParams,
-    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+    ) -> Result<ProfileListResponse, AgentApiError> {
         self.request(METHOD_PROFILES_LIST, params).await
     }
 
     pub(crate) async fn put_profile(
         &self,
         params: ProfilePutParams,
-    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+    ) -> Result<ProfilePutResponse, AgentApiError> {
         self.request(METHOD_PROFILES_PUT, params).await
     }
 
     pub(crate) async fn delete_profile(
         &self,
         params: ProfileDeleteParams,
-    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+    ) -> Result<ProfileDeleteResponse, AgentApiError> {
         self.request(METHOD_PROFILES_DELETE, params).await
     }
 
     pub(crate) async fn apply_profile(
         &self,
         params: ProfileApplyParams,
-    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+    ) -> Result<ProfileApplyResponse, AgentApiError> {
         self.request(METHOD_SESSION_PROFILES_APPLY, params).await
     }
 
     pub(crate) async fn read_session(
         &self,
         params: SessionReadParams,
-    ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
+    ) -> Result<SessionReadResponse, AgentApiError> {
         self.request(METHOD_SESSION_READ, params).await
     }
 
     pub(crate) async fn replace_context(
         &self,
         params: api::ContextReplaceParams,
-    ) -> Result<AgentApiOutcome<api::ContextReplaceResponse>, AgentApiError> {
+    ) -> Result<api::ContextReplaceResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_CONTEXT_REPLACE, params)
             .await
     }
@@ -194,28 +173,28 @@ impl HttpAgentApi {
     pub(crate) async fn read_run(
         &self,
         params: RunReadParams,
-    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
+    ) -> Result<RunReadResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_READ, params).await
     }
 
     pub(crate) async fn list_sessions(
         &self,
         params: SessionListParams,
-    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+    ) -> Result<SessionListResponse, AgentApiError> {
         self.request(METHOD_SESSION_LIST, params).await
     }
 
     pub(crate) async fn put_session_metadata(
         &self,
         params: api::SessionMetadataPutParams,
-    ) -> Result<AgentApiOutcome<api::SessionMetadataPutResponse>, AgentApiError> {
+    ) -> Result<api::SessionMetadataPutResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_METADATA_PUT, params).await
     }
 
     pub(crate) async fn put_session_retention(
         &self,
         params: api::SessionRetentionPutParams,
-    ) -> Result<AgentApiOutcome<api::SessionRetentionPutResponse>, AgentApiError> {
+    ) -> Result<api::SessionRetentionPutResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_RETENTION_PUT, params)
             .await
     }
@@ -223,49 +202,49 @@ impl HttpAgentApi {
     pub(crate) async fn restart_session(
         &self,
         params: api::SessionRestartParams,
-    ) -> Result<AgentApiOutcome<api::SessionRestartResponse>, AgentApiError> {
+    ) -> Result<api::SessionRestartResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_RESTART, params).await
     }
 
     pub(crate) async fn close_session(
         &self,
         params: api::SessionCloseParams,
-    ) -> Result<AgentApiOutcome<api::SessionCloseResponse>, AgentApiError> {
+    ) -> Result<api::SessionCloseResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_CLOSE, params).await
     }
 
     pub(crate) async fn delete_session(
         &self,
         params: api::SessionDeleteParams,
-    ) -> Result<AgentApiOutcome<api::SessionDeleteResponse>, AgentApiError> {
+    ) -> Result<api::SessionDeleteResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_DELETE, params).await
     }
 
     pub(crate) async fn read_session_events(
         &self,
         params: SessionEventsReadParams,
-    ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
+    ) -> Result<SessionEventsReadResponse, AgentApiError> {
         self.request(METHOD_SESSION_EVENTS_READ, params).await
     }
 
     pub(crate) async fn start_run(
         &self,
         params: RunStartParams,
-    ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+    ) -> Result<RunStartResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_START, params).await
     }
 
     pub(crate) async fn cancel_run(
         &self,
         params: RunCancelParams,
-    ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
+    ) -> Result<RunCancelResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_CANCEL, params).await
     }
 
     pub(crate) async fn decide_run_approvals(
         &self,
         params: RunApprovalsDecideParams,
-    ) -> Result<AgentApiOutcome<RunApprovalsDecideResponse>, AgentApiError> {
+    ) -> Result<RunApprovalsDecideResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_APPROVALS_DECIDE, params)
             .await
     }
@@ -273,247 +252,266 @@ impl HttpAgentApi {
     pub(crate) async fn steer_run(
         &self,
         params: RunSteerParams,
-    ) -> Result<AgentApiOutcome<RunSteerResponse>, AgentApiError> {
+    ) -> Result<RunSteerResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_STEER, params).await
     }
 
     pub(crate) async fn list_skills(
         &self,
         params: SkillListParams,
-    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+    ) -> Result<SkillListResponse, AgentApiError> {
         self.request(METHOD_SESSION_SKILLS_LIST, params).await
     }
 
     pub(crate) async fn list_models(
         &self,
         params: ModelListParams,
-    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+    ) -> Result<ModelListResponse, AgentApiError> {
         self.request(METHOD_MODELS_LIST, params).await
     }
 
     pub(crate) async fn put_blobs(
         &self,
         params: BlobPutParams,
-    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+    ) -> Result<BlobPutResponse, AgentApiError> {
         self.request(METHOD_BLOBS_PUT, params).await
     }
 
     pub(crate) async fn has_blobs(
         &self,
         params: BlobHasParams,
-    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+    ) -> Result<BlobHasResponse, AgentApiError> {
         self.request(METHOD_BLOBS_HAS, params).await
     }
 
-    pub(crate) async fn read_blob(
-        &self,
-        params: BlobReadParams,
-    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
-        self.request(METHOD_BLOBS_READ, params).await
+    pub(crate) async fn read_blob(&self, params: BlobReadParams) -> Result<Vec<u8>, AgentApiError> {
+        let response = self
+            .send(
+                METHOD_BLOBS_READ,
+                serde_json::to_value(params)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+            )
+            .await
+            .map_err(|error| match error.downcast::<AgentApiError>() {
+                Ok(error) => error,
+                Err(error) => AgentApiError::internal(error.to_string()),
+            })?;
+        response
+            .bytes()
+            .await
+            .map(|bytes| bytes.to_vec())
+            .map_err(|error| AgentApiError::internal(error.to_string()))
     }
 
     pub(crate) async fn commit_vfs_snapshot(
         &self,
         params: VfsSnapshotCommitParams,
-    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+    ) -> Result<VfsSnapshotCommitResponse, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOTS_COMMIT, params).await
     }
 
     pub(crate) async fn read_vfs_snapshot(
         &self,
         params: VfsSnapshotReadParams,
-    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+    ) -> Result<VfsSnapshotReadResponse, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOTS_READ, params).await
     }
 
     pub(crate) async fn create_vfs_workspace(
         &self,
         params: VfsWorkspaceCreateParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceCreateResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_CREATE, params).await
     }
 
     pub(crate) async fn read_vfs_workspace(
         &self,
         params: VfsWorkspaceReadParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceReadResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_READ, params).await
     }
 
     pub(crate) async fn list_vfs_workspaces(
         &self,
         params: VfsWorkspaceListParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceListResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_LIST, params).await
     }
 
     pub(crate) async fn update_vfs_workspace(
         &self,
         params: VfsWorkspaceUpdateParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceUpdateResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_UPDATE, params).await
     }
 
     pub(crate) async fn delete_vfs_workspace(
         &self,
         params: VfsWorkspaceDeleteParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceDeleteResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_DELETE, params).await
     }
 
     pub(crate) async fn put_mcp_server(
         &self,
         params: McpServerPutParams,
-    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError> {
+    ) -> Result<McpServerPutResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_PUT, params).await
     }
 
     pub(crate) async fn list_mcp_servers(
         &self,
         params: McpServerListParams,
-    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+    ) -> Result<McpServerListResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_LIST, params).await
     }
 
     pub(crate) async fn read_mcp_server(
         &self,
         params: McpServerReadParams,
-    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+    ) -> Result<McpServerReadResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_READ, params).await
     }
 
     pub(crate) async fn delete_mcp_server(
         &self,
         params: McpServerDeleteParams,
-    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+    ) -> Result<McpServerDeleteResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_DELETE, params).await
     }
 
-    pub(crate) async fn list_auth_grants(
+    pub(crate) async fn list_credential_grants(
         &self,
-        params: AuthGrantListParams,
-    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_LIST, params).await
+        params: CredentialGrantListParams,
+    ) -> Result<CredentialGrantListResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GRANTS_LIST, params).await
     }
 
-    pub(crate) async fn read_auth_grant(
+    pub(crate) async fn read_credential_grant(
         &self,
-        params: AuthGrantReadParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_READ, params).await
+        params: CredentialGrantReadParams,
+    ) -> Result<CredentialGrantReadResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GRANTS_READ, params).await
     }
 
-    pub(crate) async fn put_auth_grant(
+    pub(crate) async fn put_credential_grant(
         &self,
-        params: api::AuthGrantPutParams,
-    ) -> Result<AgentApiOutcome<api::AuthGrantPutResponse>, AgentApiError> {
-        self.request(api::METHOD_AUTH_GRANTS_PUT, params).await
+        params: api::CredentialGrantPutParams,
+    ) -> Result<api::CredentialGrantPutResponse, AgentApiError> {
+        self.request(api::METHOD_CREDENTIALS_GRANTS_PUT, params)
+            .await
     }
 
-    pub(crate) async fn revoke_auth_grant(
+    pub(crate) async fn revoke_credential_grant(
         &self,
-        params: AuthGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_REVOKE, params).await
+        params: CredentialGrantRevokeParams,
+    ) -> Result<CredentialGrantRevokeResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GRANTS_REVOKE, params).await
     }
 
-    pub(crate) async fn create_auth_client(
+    pub(crate) async fn create_credential_client(
         &self,
-        params: AuthClientCreateParams,
-    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_CREATE, params).await
+        params: CredentialClientCreateParams,
+    ) -> Result<CredentialClientCreateResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_CREATE, params)
+            .await
     }
 
-    pub(crate) async fn list_auth_clients(
+    pub(crate) async fn list_credential_clients(
         &self,
-        params: AuthClientListParams,
-    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_LIST, params).await
+        params: CredentialClientListParams,
+    ) -> Result<CredentialClientListResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_LIST, params).await
     }
 
-    pub(crate) async fn read_auth_client(
+    pub(crate) async fn read_credential_client(
         &self,
-        params: AuthClientReadParams,
-    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_READ, params).await
+        params: CredentialClientReadParams,
+    ) -> Result<CredentialClientReadResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_READ, params).await
     }
 
-    pub(crate) async fn delete_auth_client(
+    pub(crate) async fn delete_credential_client(
         &self,
-        params: AuthClientDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_DELETE, params).await
+        params: CredentialClientDeleteParams,
+    ) -> Result<CredentialClientDeleteResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_DELETE, params)
+            .await
     }
 
-    pub(crate) async fn start_auth_flow(
+    pub(crate) async fn start_credential_flow(
         &self,
-        params: AuthFlowStartParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_FLOWS_START, params).await
+        params: CredentialFlowStartParams,
+    ) -> Result<CredentialFlowStartResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_FLOWS_START, params).await
     }
 
-    pub(crate) async fn read_auth_flow_status(
+    pub(crate) async fn read_credential_flow_status(
         &self,
-        params: AuthFlowStatusParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_FLOWS_READ, params).await
+        params: CredentialFlowStatusParams,
+    ) -> Result<CredentialFlowStatusResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_FLOWS_READ, params).await
     }
 
-    pub(crate) async fn create_auth_provider(
+    pub(crate) async fn create_credential_provider(
         &self,
-        params: AuthProviderCreateParams,
-    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_CREATE, params).await
+        params: CredentialProviderCreateParams,
+    ) -> Result<CredentialProviderCreateResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_CREATE, params)
+            .await
     }
 
-    pub(crate) async fn list_auth_providers(
+    pub(crate) async fn list_credential_providers(
         &self,
-        params: AuthProviderListParams,
-    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_LIST, params).await
+        params: CredentialProviderListParams,
+    ) -> Result<CredentialProviderListResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_LIST, params)
+            .await
     }
 
-    pub(crate) async fn read_auth_provider(
+    pub(crate) async fn read_credential_provider(
         &self,
-        params: AuthProviderReadParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_READ, params).await
+        params: CredentialProviderReadParams,
+    ) -> Result<CredentialProviderReadResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_READ, params)
+            .await
     }
 
-    pub(crate) async fn delete_auth_provider(
+    pub(crate) async fn delete_credential_provider(
         &self,
-        params: AuthProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_DELETE, params).await
+        params: CredentialProviderDeleteParams,
+    ) -> Result<CredentialProviderDeleteResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_DELETE, params)
+            .await
     }
 
     pub(crate) async fn list_github_installations(
         &self,
-        params: AuthGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, params)
+        params: CredentialGitHubInstallationListParams,
+    ) -> Result<CredentialGitHubInstallationListResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST, params)
             .await
     }
 
     pub(crate) async fn grant_github_installation(
         &self,
-        params: AuthGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, params)
+        params: CredentialGitHubInstallationGrantParams,
+    ) -> Result<CredentialGitHubInstallationGrantResponse, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, params)
             .await
     }
 
     pub(crate) async fn put_session_config(
         &self,
         params: SessionConfigPutParams,
-    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
+    ) -> Result<SessionConfigPutResponse, AgentApiError> {
         self.request(METHOD_SESSION_CONFIG_PUT, params).await
     }
 
     pub(crate) async fn bind_environment_credential(
         &self,
         params: EnvironmentCredentialBindParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialBindResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCredentialBindResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CREDENTIALS_BIND, params)
             .await
     }
@@ -521,7 +519,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_environment_credentials(
         &self,
         params: EnvironmentCredentialListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCredentialListResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CREDENTIALS_LIST, params)
             .await
     }
@@ -529,58 +527,58 @@ impl HttpAgentApi {
     pub(crate) async fn unbind_environment_credential(
         &self,
         params: EnvironmentCredentialUnbindParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialUnbindResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCredentialUnbindResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND, params)
             .await
     }
 
-    pub(crate) async fn list_environment_provider_bindings(
+    pub(crate) async fn list_available_environment_providers(
         &self,
-        params: EnvironmentProviderBindingListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
-        self.request(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, params)
+        params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
+        self.request(METHOD_ENVIRONMENTS_PROVIDERS_LIST, params)
             .await
     }
 
     pub(crate) async fn list_environments(
         &self,
         params: EnvironmentListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentListResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_LIST, params).await
     }
 
     pub(crate) async fn read_environment(
         &self,
         params: EnvironmentReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError> {
+    ) -> Result<EnvironmentReadResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_READ, params).await
     }
 
     pub(crate) async fn close_environment(
         &self,
         params: EnvironmentCloseParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCloseResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CLOSE, params).await
     }
 
     pub(crate) async fn put_environment_power(
         &self,
         params: EnvironmentPowerPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError> {
+    ) -> Result<EnvironmentPowerPutResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_POWER_PUT, params).await
     }
 
     pub(crate) async fn update_environment(
         &self,
         params: api::EnvironmentUpdateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentUpdateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentUpdateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_UPDATE, params).await
     }
 
     pub(crate) async fn create_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyCreateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyCreateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE, params)
             .await
     }
@@ -588,7 +586,7 @@ impl HttpAgentApi {
     pub(crate) async fn read_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyReadParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyReadResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyReadResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ, params)
             .await
     }
@@ -596,7 +594,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_environment_registration_keys(
         &self,
         params: api::EnvironmentRegistrationKeyListParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyListResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyListResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST, params)
             .await
     }
@@ -604,7 +602,7 @@ impl HttpAgentApi {
     pub(crate) async fn update_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyUpdateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyUpdateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyUpdateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE, params)
             .await
     }
@@ -612,7 +610,7 @@ impl HttpAgentApi {
     pub(crate) async fn put_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyPutParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyPutResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT, params)
             .await
     }
@@ -620,7 +618,7 @@ impl HttpAgentApi {
     pub(crate) async fn rotate_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyRotateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyRotateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyRotateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_ROTATE, params)
             .await
     }
@@ -628,16 +626,61 @@ impl HttpAgentApi {
     pub(crate) async fn revoke_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyRevokeResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyRevokeResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE, params)
             .await
     }
 
-    pub(crate) async fn request<P, R>(
+    /// Enrollment is the only Platform request that can precede connection discovery.
+    pub(crate) async fn enroll(
         &self,
-        method: &str,
+        params: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let parts =
+            crate::platform_api::request_parts("platform/organizations/enroll", params.clone())?;
+        let response = self
+            .send_parts(parts, self.connection.auth_headers()?)
+            .await?;
+        Ok(response.json().await?)
+    }
+
+    /// Native Platform routes are described by its generated catalog; authentication
+    /// and response handling share the resource HTTP transport.
+    pub(crate) async fn platform_request<P: Serialize, R: DeserializeOwned>(
+        &self,
+        operation: &str,
         params: P,
-    ) -> Result<AgentApiOutcome<R>, AgentApiError>
+    ) -> Result<R, AgentApiError> {
+        let result: anyhow::Result<R> = async {
+            if !self.connection.is_platform() {
+                anyhow::bail!("this command requires a Platform deployment");
+            }
+            let parts =
+                crate::platform_api::request_parts(operation, serde_json::to_value(params)?)?;
+            let response = self
+                .send_parts(parts, self.connection.auth_headers()?)
+                .await?;
+            response
+                .json::<R>()
+                .await
+                .map_err(|_| anyhow::anyhow!("invalid Platform API response"))
+        }
+        .await;
+        result.map_err(|error| match error.downcast::<AgentApiError>() {
+            Ok(error) => error,
+            Err(error) => AgentApiError::internal(error.to_string()),
+        })
+    }
+
+    pub(crate) async fn call_platform(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, AgentApiError> {
+        self.platform_request(operation, params).await
+    }
+
+    pub(crate) async fn request<P, R>(&self, method: &str, params: P) -> Result<R, AgentApiError>
     where
         P: Serialize,
         R: DeserializeOwned,
@@ -656,67 +699,91 @@ impl HttpAgentApi {
         &self,
         method: &str,
         params: P,
-    ) -> anyhow::Result<AgentApiOutcome<R>> {
-        let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let request = JsonRpcRequest {
-            id,
-            method: method.to_owned(),
-            params: Some(serde_json::to_value(params).map_err(|error| {
-                AgentApiError::invalid_request(format!("failed to encode API params: {error}"))
-            })?),
-        };
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .headers(
-                self.connection
-                    .headers(method)
-                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
-            )
-            .json(&request)
-            .send()
+    ) -> anyhow::Result<R> {
+        let response = self.send(method, serde_json::to_value(params)?).await?;
+        response
+            .json::<R>()
             .await
-            .map_err(|error| {
-                if error.is_connect() || error.is_timeout() {
-                    anyhow::Error::new(StartupUnavailable)
-                } else {
-                    anyhow::Error::new(AgentApiError::internal(format!(
-                        "runtime unavailable: {error}"
-                    )))
-                }
-            })?;
+            .map_err(|_| AgentApiError::internal("invalid API response").into())
+    }
+
+    async fn send(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<reqwest::Response> {
+        let parts = api::http_request(operation, self.connection.universe.as_deref(), params)?;
+        self.send_parts(parts, self.connection.headers(operation)?)
+            .await
+    }
+
+    async fn send_parts(
+        &self,
+        parts: api::HttpRequestParts,
+        headers: reqwest::header::HeaderMap,
+    ) -> anyhow::Result<reqwest::Response> {
+        let endpoint = crate::connection::endpoint_with_policy(
+            &self.connection.endpoint,
+            self.connection.allow_insecure_http,
+        )?;
+        let base = endpoint.trim_end_matches('/');
+        let suffix = parts
+            .path
+            .strip_prefix("/api/v1")
+            .ok_or_else(|| AgentApiError::internal("invalid catalog path"))?;
+        let sent_token = headers.get(reqwest::header::AUTHORIZATION).cloned();
+        let mut request = self
+            .client
+            .request(
+                reqwest::Method::from_bytes(parts.method.as_str().as_bytes())?,
+                format!("{base}{suffix}"),
+            )
+            .headers(headers);
+        if let Some(body) = parts.body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.map_err(|error| {
+            if error.is_connect() || error.is_timeout() {
+                anyhow::Error::new(StartupUnavailable)
+            } else {
+                anyhow::Error::new(AgentApiError::internal(format!(
+                    "deployment unavailable: {error}"
+                )))
+            }
+        })?;
+        if !response.status().is_redirection() {
+            self.connection
+                .accept_session_rotation(response.headers())?;
+        }
+        if response.status().is_success() {
+            return Ok(response);
+        }
         let status = response.status();
+        let body = response.bytes().await?;
+        if let Ok(problem) = serde_json::from_slice::<api::HttpProblem>(&body) {
+            let mut detail = self.connection.redact_error(problem.detail);
+            if let Some(token) = sent_token
+                .as_ref()
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.strip_prefix("Bearer "))
+            {
+                detail = detail.replace(token, "[credential redacted]");
+            }
+            let mut error = AgentApiError::new(problem.kind, detail);
+            error.model_default_slot = problem.model_default_slot;
+            error.submission_id = problem.submission_id;
+            error.deleted_universe = problem.deleted_universe;
+            return Err(error.into());
+        }
         if matches!(status.as_u16(), 502..=504) {
             return Err(StartupUnavailable.into());
         }
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(AgentApiError::new(
-                AgentApiErrorKind::Unauthenticated,
-                "runtime rejected the API key; verify the connection or replace a revoked key",
-            )
-            .into());
-        }
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AgentApiError::new(
-                AgentApiErrorKind::Forbidden,
-                "key scope or method groups do not permit this operation",
-            )
-            .into());
-        }
-        let response = response
-            .error_for_status()
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
-            .json::<JsonRpcResponse>()
-            .await
-            .map_err(|error| AgentApiError::internal(format!("invalid API response: {error}")))?;
-        if let Some(error) = response.error {
-            return Err(agent_error_from_json_rpc(error).into());
-        }
-        let value = response
-            .result
-            .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
-        serde_json::from_value::<AgentApiOutcome<R>>(value)
-            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")).into())
+        let kind = match status.as_u16() {
+            401 => AgentApiErrorKind::Unauthenticated,
+            403 => AgentApiErrorKind::Forbidden,
+            _ => AgentApiErrorKind::Internal,
+        };
+        Err(AgentApiError::new(kind, format!("API request failed: HTTP {status}")).into())
     }
 }
 
@@ -724,26 +791,109 @@ pub(crate) fn api_error(error: api::AgentApiError) -> anyhow::Error {
     anyhow::anyhow!("{error}")
 }
 
-fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
-    if let Some(error) = error.data {
-        return error;
-    }
-    let kind = match error.code {
-        -32602 => AgentApiErrorKind::InvalidRequest,
-        -32004 => AgentApiErrorKind::NotFound,
-        -32009 => AgentApiErrorKind::Conflict,
-        -32010 => AgentApiErrorKind::Rejected,
-        -32015 => AgentApiErrorKind::OperationPending,
-        _ => AgentApiErrorKind::Internal,
-    };
-    AgentApiError::new(kind, error.message)
-}
-
 #[derive(Debug)]
 pub(crate) struct StartupUnavailable;
 impl std::fmt::Display for StartupUnavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Runtime connection is temporarily unavailable")
+        f.write_str("Deployment connection is temporarily unavailable")
     }
 }
 impl std::error::Error for StartupUnavailable {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    async fn fixture(
+        status: u16,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> (HttpAgentApi, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/api/v1", listener.local_addr().unwrap());
+        let content_type = content_type.to_owned();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut headers = String::new();
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                headers.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status} Response\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .get_mut()
+                .write_all(response.as_bytes())
+                .await
+                .unwrap();
+            stream.get_mut().write_all(&body).await.unwrap();
+            headers
+        });
+        (
+            HttpAgentApi::with_connection(crate::connection::ResolvedConnection {
+                name: None,
+                endpoint,
+                secret: Some("fixture-token".into()),
+                universe: Some("team space".into()),
+                caller: None,
+                ..Default::default()
+            }),
+            task,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resources_use_encoded_paths_and_direct_results() {
+        let (client, task) = fixture(200, "application/json", br#"{"profiles":[]}"#.to_vec()).await;
+        let response: serde_json::Value = client.request("profiles/list", json!({})).await.unwrap();
+        assert_eq!(response, json!({"profiles":[]}));
+        let headers = task.await.unwrap();
+        assert!(headers.starts_with("GET /api/v1/universes/team%20space/profiles HTTP/1.1"));
+        assert!(headers.contains("authorization: Bearer fixture-token"));
+        assert!(!headers.contains("x-lightspeed-universe"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_problem_preserves_submission_and_is_not_startup_unavailability() {
+        let body = json!({"type":"about:blank","title":"Gateway Timeout","status":504,"detail":"pending","kind":"operationPending","submissionId":"submission-1"});
+        let (client, task) = fixture(
+            504,
+            "application/problem+json",
+            serde_json::to_vec(&body).unwrap(),
+        )
+        .await;
+        let error = client
+            .request_connection::<_, serde_json::Value>("profiles/list", json!({}))
+            .await
+            .unwrap_err();
+        let error = error.downcast::<AgentApiError>().unwrap();
+        assert_eq!(error.kind, AgentApiErrorKind::OperationPending);
+        assert_eq!(error.submission_id.as_deref(), Some("submission-1"));
+        task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blob_download_returns_unmodified_binary_bytes() {
+        let bytes = vec![0, 255, 128, 1, 10];
+        let (client, task) = fixture(200, "application/octet-stream", bytes.clone()).await;
+        assert_eq!(
+            client
+                .read_blob(BlobReadParams {
+                    blob_ref: "sha256:test".into()
+                })
+                .await
+                .unwrap(),
+            bytes
+        );
+        assert!(task.await.unwrap().contains("/blobs/sha256%3Atest/content"));
+    }
+}

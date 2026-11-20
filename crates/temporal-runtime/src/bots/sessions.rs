@@ -3,12 +3,12 @@
 //! sessions and count descendants, read tool invocations and blobs.
 //!
 //! Everything goes through the universe's in-process `GatewayAgentApi` at
-//! the same boundaries the JSON-RPC methods expose (`session/start`,
+//! the same boundaries the public operations expose (`session/start`,
 //! `session/runs/start`, `session/context/append`, ...), so a bot session is
 //! an ordinary integrated session whose lifecycle controller — and the receiver
 //! of every pushed `bot_*` invocation — is the bot controller workflow.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiService as _, AgentProfile, ContextAppendEntry,
@@ -23,7 +23,7 @@ use api::{
 use bots::{
     ids::{appended_event_context_key, delivery_submission_id},
     tools::{
-        BOT_TOOL_DESCRIPTION_NAMES, BOT_TOOL_NAMES, BOT_TOOL_SCHEMA_NAMES, BotSessionInstructions,
+        BOT_TOOL_DESCRIPTION_NAMES, BOT_TOOL_SCHEMA_NAMES, BotSessionInstructions,
         bot_instructions, bot_tool_description, bot_tool_schema, bot_workflow_tool_declarations,
         compose_instructions,
     },
@@ -79,6 +79,7 @@ pub(crate) fn activity_error(context: &str, error: AgentApiError) -> ActivityErr
         error.kind,
         AgentApiErrorKind::InvalidRequest
             | AgentApiErrorKind::NotFound
+            | AgentApiErrorKind::Gone
             | AgentApiErrorKind::Forbidden
             | AgentApiErrorKind::SessionExecutionStopped
     ) {
@@ -115,7 +116,6 @@ async fn read_session_view(
             run_limit: None,
         })
         .await?
-        .result
         .session)
 }
 
@@ -202,6 +202,7 @@ fn start_run_failure(error: AgentApiError) -> Result<BotStartRunResult, Activity
     match error.kind {
         AgentApiErrorKind::InvalidRequest
         | AgentApiErrorKind::NotFound
+        | AgentApiErrorKind::Gone
         | AgentApiErrorKind::Forbidden
         | AgentApiErrorKind::Unauthenticated
         | AgentApiErrorKind::ModelDefaultUnset
@@ -274,8 +275,7 @@ async fn list_descendants(
                 ..Default::default()
             })
             .await
-            .map_err(|error| activity_error("list descendant sessions", error))?
-            .result;
+            .map_err(|error| activity_error("list descendant sessions", error))?;
         sessions.extend(page.sessions);
         match page.next_cursor {
             Some(next) => cursor = Some(next),
@@ -408,36 +408,6 @@ async fn put_tool_assets(blobs: &dyn BlobStore) -> Result<ToolAssetRefs, Activit
     Ok(refs)
 }
 
-/// Carried declarations are opaque data authored by the admitting source
-/// (a chat conversation's `message_*` tools). The only checks here are the
-/// ones that would otherwise fail inside the core with a worse message: a
-/// name collision with `bot_*` or among themselves.
-fn validate_carried_declarations(
-    declarations: &[WorkflowToolDeclarationInput],
-) -> Result<(), String> {
-    let mut seen = BTreeSet::new();
-    for declaration in declarations {
-        let name = declaration.definition.tool.name.as_str();
-        if BOT_TOOL_NAMES.contains(&name) || !seen.insert(name) {
-            return Err(format!("carried tool {name} collides with a declared tool"));
-        }
-    }
-    Ok(())
-}
-
-async fn read_carried_declarations(
-    blobs: &dyn BlobStore,
-    tools_ref: &str,
-) -> Result<Vec<WorkflowToolDeclarationInput>, ActivityError> {
-    let bytes = read_blob(blobs, tools_ref).await?;
-    let declarations: Vec<WorkflowToolDeclarationInput> =
-        serde_json::from_slice(&bytes).map_err(|error| {
-            non_retryable(format!("carried tool declarations are malformed: {error}"))
-        })?;
-    validate_carried_declarations(&declarations).map_err(non_retryable)?;
-    Ok(declarations)
-}
-
 fn bot_session_start_params(
     request: &BotEnsureSessionRequest,
     profile: InlineAgentProfile,
@@ -499,7 +469,7 @@ pub async fn ensure_session(
         workflow_kind: request.controller.workflow_kind.clone(),
     };
     let assets = put_tool_assets(blobs).await?;
-    let mut tools = bot_workflow_tool_declarations(
+    let tools = bot_workflow_tool_declarations(
         controller.clone(),
         &assets.schemas,
         &assets.descriptions,
@@ -507,16 +477,6 @@ pub async fn ensure_session(
         request.emit,
     )
     .map_err(non_retryable)?;
-    let carried = match request.tools_ref.as_deref() {
-        Some(tools_ref) => read_carried_declarations(blobs, tools_ref).await?,
-        None => Vec::new(),
-    };
-    let carried_tool_ids: Vec<String> = carried
-        .iter()
-        .map(|declaration| declaration.definition.workflow_tool_id.clone())
-        .collect();
-    tools.extend(carried);
-
     // The display name rides on creation only: an existing session keeps
     // its label (renames are a separate, label-only operation).
     let started = api
@@ -530,7 +490,7 @@ pub async fn ensure_session(
     if let Some(dead) = started
         .as_ref()
         .ok()
-        .and_then(|outcome| closed_session_dead(&outcome.result.session))
+        .and_then(|outcome| closed_session_dead(&outcome.session))
     {
         return Ok(dead);
     }
@@ -603,7 +563,6 @@ pub async fn ensure_session(
 
     Ok(BotEnsureSessionResult::Ready {
         profile_revision: profile.revision,
-        carried_tool_ids,
     })
 }
 
@@ -660,7 +619,7 @@ pub async fn read_dead_sessions(
                     run_limit: Some(1),
                 })
                 .await
-                .map(|outcome| outcome.result.session);
+                .map(|outcome| outcome.session);
             if let Err(error) = &read
                 && error.kind != AgentApiErrorKind::NotFound
             {
@@ -730,8 +689,8 @@ pub async fn start_run(
         .await
     {
         Ok(response) => Ok(BotStartRunResult::Started {
-            finished: finished_status(response.result.run.status),
-            run_id: response.result.run.id,
+            finished: finished_status(response.run.status),
+            run_id: response.run.id,
         }),
         Err(error) => start_run_failure(error),
     }
@@ -799,7 +758,7 @@ pub async fn append_context(
             })
             .await
             .map_err(|error| activity_error("append event context", error))?;
-        check_context_append(&response.result)?;
+        check_context_append(&response)?;
     }
     Ok(())
 }
@@ -943,8 +902,7 @@ pub async fn read_tool_invocations(
                 wait_ms: None,
             })
             .await
-            .map_err(|error| activity_error("read session events", error))?
-            .result;
+            .map_err(|error| activity_error("read session events", error))?;
         for event in &page.events {
             cursor = cursor.max(event.cursor.seq);
             invocations.extend(tool_invocation(event));
@@ -978,11 +936,7 @@ pub async fn read_json_blob(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::{
-        BoundWorkflowToolDispatchInput, EventJoinsView, RunSummarySourceView, ToolParallelismView,
-        WorkflowToolCompletionInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
-        WorkflowToolSpecInput, WorkflowToolTargetInput,
-    };
+    use api::{EventJoinsView, RunSummarySourceView};
 
     /// An open or new session at rest, or closed.
     fn session_view(
@@ -1052,35 +1006,6 @@ mod tests {
             usage: None,
             pending_approvals: Vec::new(),
             failure: None,
-        }
-    }
-
-    fn declaration(name: &str, tool_id: &str) -> WorkflowToolDeclarationInput {
-        WorkflowToolDeclarationInput {
-            definition: WorkflowToolDefinitionInput {
-                workflow_tool_id: tool_id.to_owned(),
-                schema_revision: 1,
-                semantic_type: tool_id.to_owned(),
-                tool: WorkflowToolSpecInput {
-                    name: name.to_owned(),
-                    kind: WorkflowToolKindInput::Function {
-                        description_ref: None,
-                        input_schema_ref: "sha256:00".to_owned(),
-                        output_schema_ref: None,
-                        strict: None,
-                        provider_options_ref: None,
-                    },
-                    parallelism: ToolParallelismView::Exclusive,
-                },
-            },
-            target: WorkflowToolTargetInput::Bound {
-                receiver: WorkflowEndpointInput {
-                    workflow_id: "wf".to_owned(),
-                    workflow_kind: "ChannelConversationWorkflow".to_owned(),
-                },
-                dispatch: BoundWorkflowToolDispatchInput::Push,
-            },
-            completion: WorkflowToolCompletionInput::Accepted,
         }
     }
 
@@ -1394,33 +1319,6 @@ mod tests {
     }
 
     #[test]
-    fn carried_declarations_reject_collisions() {
-        assert!(validate_carried_declarations(&[]).is_ok());
-        assert!(
-            validate_carried_declarations(&[
-                declaration("message_send", "lightspeed.channels.message.send.v1"),
-                declaration("message_edit", "lightspeed.channels.message.edit.v1"),
-            ])
-            .is_ok()
-        );
-        let collides_with_bot_tool = validate_carried_declarations(&[declaration(
-            "bot_emit",
-            "lightspeed.channels.something.v1",
-        )])
-        .unwrap_err();
-        assert!(
-            collides_with_bot_tool.contains("bot_emit"),
-            "{collides_with_bot_tool}"
-        );
-        let duplicate = validate_carried_declarations(&[
-            declaration("message_send", "a"),
-            declaration("message_send", "b"),
-        ])
-        .unwrap_err();
-        assert!(duplicate.contains("message_send"), "{duplicate}");
-    }
-
-    #[test]
     fn tool_assets_cover_every_declared_name() {
         let (schemas, descriptions) = tool_asset_bytes().expect("assets");
         assert_eq!(schemas.len(), BOT_TOOL_SCHEMA_NAMES.len());
@@ -1453,7 +1351,7 @@ mod tests {
             true,
         )
         .expect("declarations");
-        assert_eq!(declarations.len(), BOT_TOOL_NAMES.len());
+        assert_eq!(declarations.len(), bots::tools::BOT_TOOL_NAMES.len());
     }
 
     #[test]
@@ -1534,7 +1432,6 @@ mod tests {
                 workflow_id: "u/bot-triage".to_owned(),
                 workflow_kind: "BotControllerWorkflow".to_owned(),
             },
-            tools_ref: None,
         };
         let controller = WorkflowEndpointInput {
             workflow_id: "u/bot-triage".to_owned(),

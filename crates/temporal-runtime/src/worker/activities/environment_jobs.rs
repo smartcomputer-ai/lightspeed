@@ -761,7 +761,12 @@ async fn usable_instance(
             | EnvironmentResolveError::Store(environments::EnvironmentRegistryError::Store {
                 ..
             }) => activity_error(error),
-            other => non_retryable_activity_error(other),
+            other => ActivityError::application(
+                ApplicationFailure::builder(anyhow::anyhow!("{other}"))
+                    .type_name(temporal_workflow::ENVIRONMENT_GONE_ERROR_TYPE.to_owned())
+                    .non_retryable(true)
+                    .build(),
+            ),
         })
 }
 

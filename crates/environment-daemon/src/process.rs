@@ -728,13 +728,75 @@ mod tests {
             cwd: root.to_owned(),
             confinement: Arc::new(confinement),
             state_dir: state_dir.to_owned(),
-            scrubbed_env: Vec::new(),
+            scrubbed_env: crate::config::scrubbed_env_names(),
             instance_id: DaemonInstanceId::new(instance).unwrap(),
             limits,
             max_wait_ms: 60_000,
             pty_supported: true,
         })
         .expect("manager")
+    }
+
+    #[test]
+    fn runtime_tokens_are_not_inherited_by_commands() {
+        const CHILD: &str = "LIGHTSPEED_TEST_RPC_SCRUB_CHILD";
+        const TOKENS: [&str; 6] = [
+            "LIGHTSPEED_API_TOKEN",
+            "LIGHTSPEED_API_TOKEN_FILE",
+            "LIGHTSPEED_API_TOKEN_PLATFORM",
+            "LIGHTSPEED_API_TOKEN_OPERATOR_FILE",
+            "LIGHTSPEED_PLATFORM_API_TOKEN",
+            "LIGHTSPEED_PLATFORM_API_TOKEN_FILE",
+        ];
+        if std::env::var_os(CHILD).is_none() {
+            // Give an isolated test process the environment. Never mutate the
+            // concurrent test runner's process-wide environment.
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "process::tests::runtime_tokens_are_not_inherited_by_commands",
+                ])
+                .env(CHILD, "1")
+                .envs(TOKENS.map(|name| (name, "fixture-runtime-secret-never-inherited")))
+                .status()
+                .expect("start isolated environment fixture");
+            assert!(status.success(), "isolated environment fixture failed");
+            return;
+        }
+        for name in TOKENS {
+            assert!(
+                std::env::var_os(name).is_some(),
+                "fixture must contain {name}"
+            );
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let fixture = fixture();
+                #[cfg(unix)]
+                let check = TOKENS
+                    .map(|name| format!("test -z \"${{{name}+present}}\" || exit 1"))
+                    .join("; ");
+                #[cfg(windows)]
+                let check = TOKENS
+                    .map(|name| format!("if (Test-Path Env:{name}) {{ exit 1 }}"))
+                    .join("; ");
+                let params = shell("scrubbed", &check);
+                fixture.manager.start(&ctx(), params).await.unwrap();
+                let (_, response) = read_to_end(&fixture.manager, "scrubbed").await;
+                assert_eq!(response.exit, Some(ExitStatus::Code { code: 0 }));
+                #[cfg(unix)]
+                {
+                    let mut params = shell("scrubbed-pty", &check);
+                    params.pty =
+                        Some(environment_protocol::data::exec::PtySize { rows: 24, cols: 80 });
+                    fixture.manager.start(&ctx(), params).await.unwrap();
+                    let (_, response) = read_to_end(&fixture.manager, "scrubbed-pty").await;
+                    assert_eq!(response.exit, Some(ExitStatus::Code { code: 0 }));
+                }
+            });
     }
 
     fn ctx() -> RequestContext {

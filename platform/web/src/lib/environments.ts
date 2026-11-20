@@ -17,7 +17,7 @@ export function environmentPagePath(
   if (options.after) query.set("after", options.after);
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.toString();
-  return `/api/v1/universes/${universeId}/environments${suffix ? `?${suffix}` : ""}`;
+  return `/api/ui/universes/${universeId}/environments${suffix ? `?${suffix}` : ""}`;
 }
 
 /// Every non-closed environment of the universe, read page by page. Pickers
@@ -49,7 +49,7 @@ export function environmentTemplatesQuery(universeId: string) {
   return {
     queryKey: ["environment-templates", universeId] as const,
     queryFn: () =>
-      api<EnvironmentTemplate[]>("GET", `/api/v1/universes/${universeId}/environment-templates`),
+      api<EnvironmentTemplate[]>("GET", `/api/ui/universes/${universeId}/environment-templates`),
   };
 }
 
@@ -82,6 +82,7 @@ const CLOSE_REASONS: Record<EnvironmentCloseReasonView, string> = {
   departed: "Closed when its ephemeral daemon said goodbye",
   offlineTimeout: "Closed after its daemon stayed offline past the key's limit",
   providerEnded: "Ended by the provider",
+  universeDeleted: "Closed when its universe was deleted",
 };
 
 export function closeReasonLabel(reason: EnvironmentCloseReasonView | null | undefined): string | null {

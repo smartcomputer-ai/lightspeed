@@ -1,0 +1,102 @@
+import { compactJws, MAX_WORKLOAD_TOKEN_LENGTH } from "./federation.js";
+import { resolveFederatedBinding } from "./federated-binding.js";
+import { eq } from "drizzle-orm";
+import { schema } from "@lightspeed-ai/platform-db";
+import { credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
+import { hasPlatformAdminRole, type AppContext } from "./context.js";
+import type { Session } from "./auth.js";
+import type { AuthContext } from "./auth-context.js";
+import { principalAllowed, sessionAllowed } from "./auth-access.js";
+import { SERVICE_USER_KEY_CONFIG, SERVICE_USER_KEY_PREFIX, PERSONAL_KEY_CONFIG, PERSONAL_KEY_PREFIX } from "./api-key-config.js";
+import { ensurePersonalOrganization } from "./personal-organizations.js";
+
+/** A valid credential exceeding its budget is retryable, not unauthenticated. */
+export class CredentialRateLimit extends Error {
+  constructor(readonly retryAfterSeconds?: number) { super("API credential rate limit exceeded"); }
+  response(): Response {
+    return new Response(JSON.stringify({ type: "about:blank", title: this.message, detail: this.message, status: 429, kind: "rejected" }), {
+      status: 429, headers: { "content-type": "application/problem+json", ...(this.retryAfterSeconds === undefined ? {} : { "retry-after": String(this.retryAfterSeconds) }) },
+    });
+  }
+}
+
+/** Authentication resolves once; organization/universe services apply current authority afterward. */
+export async function authenticateRequest(ctx: AppContext, request: Request): Promise<{ auth: AuthContext; session?: Session; renewedToken?: string } | null> {
+  const authorization = request.headers.get("authorization");
+  if (authorization !== null) {
+    // An explicitly supplied invalid credential must never fall back to a broader cookie.
+    const match = /^Bearer ([^\s,]+)$/i.exec(authorization);
+    if (!match) return null;
+    const secret = match[1]!;
+    if (ctx.env.federation && secret.length <= MAX_WORKLOAD_TOKEN_LENGTH && compactJws.test(secret)) {
+      const identity = await ctx.env.federation.verify(secret);
+      if (!identity) return null;
+      const binding = await ctx.db.transaction(tx => resolveFederatedBinding(tx, identity));
+      return binding?.auth ? { auth: binding.auth } : null;
+    }
+    if (secret.length > 4096) return null;
+    const configId = secret.startsWith(PERSONAL_KEY_PREFIX) ? PERSONAL_KEY_CONFIG : secret.startsWith(SERVICE_USER_KEY_PREFIX) ? SERVICE_USER_KEY_CONFIG : null;
+    if (!configId) {
+      // Ignore cookies completely when a bearer is explicit. Better Auth owns
+      // token decoding/signatures; only device-issued CLI sessions are accepted.
+      const headers = new Headers({ authorization });
+      const initial = await ctx.auth.api.getSession({ headers, query: { disableRefresh: true } });
+      if (!initial || initial.session.sessionKind !== "cli" || !sessionAllowed(initial, ctx.env) || !principalAllowed(initial.user, ctx.env)) return null;
+      const renewed = await ctx.auth.api.getSession({ headers, returnHeaders: true });
+      const session = renewed.response;
+      if (!session || session.session.sessionKind !== "cli" || !sessionAllowed(session, ctx.env)) return null;
+      const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, session.user.id));
+      if (!user || !principalAllowed(user, ctx.env) || !sessionAllowed({ user, session: session.session }, ctx.env)) return null;
+      return { auth: { principal: { kind: "user", id: user.id, user, platformAdmin: hasPlatformAdminRole(user) },
+        actorId: user.id, credential: { kind: "cliSession", id: session.session.id, restrictions: {} },
+        session: { id: session.session.id, createdAt: session.session.createdAt, expiresAt: effectiveSessionExpiry(session, ctx.env) } },
+        ...(renewed.headers.get("set-auth-token") ? { renewedToken: renewed.headers.get("set-auth-token")! } : {}) };
+    }
+    const verified = await ctx.auth.api.verifyApiKey({ body: { key: secret, configId } });
+    if (!verified.valid && ["RATE_LIMITED", "RATE_LIMIT_EXCEEDED", "USAGE_EXCEEDED"].includes(verified.error?.code ?? "")) {
+      const details = verified.error && "details" in verified.error ? verified.error.details : undefined;
+      const retryMs = details && typeof details === "object" && "tryAgainIn" in details ? details.tryAgainIn : undefined;
+      throw new CredentialRateLimit(typeof retryMs === "number" && Number.isFinite(retryMs) ? Math.max(1, Math.ceil(retryMs / 1000)) : undefined);
+    }
+    // The plugin refuses expired keys; a key without expiry was created as such on purpose.
+    if (!verified.valid || !verified.key || verified.key.configId !== configId) return null;
+    const key = verified.key;
+    const [binding] = await ctx.db.select().from(schema.credentialBindings).where(eq(schema.credentialBindings.keyId, key.id));
+    if (!binding) return null;
+    const limits = credentialRestrictionsSchema.safeParse(binding.restrictions);
+    if (!limits.success) return null;
+    if (configId === PERSONAL_KEY_CONFIG) {
+      if (!binding.userId || binding.serviceUserId || binding.userId !== key.referenceId) return null;
+      const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, binding.userId));
+      if (!user || !principalAllowed(user, ctx.env)) return null;
+      return { auth: {
+        principal: { kind: "user", id: user.id, user, platformAdmin: hasPlatformAdminRole(user) },
+        credential: { kind: "personalKey", id: key.id, restrictions: limits.data }, actorId: user.id,
+      } };
+    }
+    if (!binding.serviceUserId || binding.userId) return null;
+    const [row] = await ctx.db.select({ serviceUser: schema.serviceUsers, organization: schema.organization }).from(schema.serviceUsers)
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.serviceUsers.organizationId))
+      .where(eq(schema.serviceUsers.id, binding.serviceUserId));
+    if (!row?.serviceUser.enabled || row.organization.id !== key.referenceId) return null;
+    return { auth: {
+      principal: { kind: "serviceUser", id: row.serviceUser.id, serviceUser: row.serviceUser, organizationId: row.organization.id, platformAdmin: false },
+      credential: { kind: "serviceUserKey", id: key.id, restrictions: limits.data }, actorId: `serviceUser:${row.serviceUser.id}`,
+    } };
+  }
+  const session = await ctx.auth.api.getSession({ headers: request.headers });
+  if (!session || session.session.sessionKind !== "browser" || !sessionAllowed(session, ctx.env)) return null;
+  const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, session.user.id));
+  if (!user || !principalAllowed(user, ctx.env) || !sessionAllowed({ user, session: session.session }, ctx.env)) return null;
+  await ensurePersonalOrganization(ctx.db, ctx.env, user.id);
+  return { session, auth: {
+    principal: { kind: "user", id: user.id, user, platformAdmin: hasPlatformAdminRole(user) },
+    credential: { kind: "session", id: session.session.id, restrictions: {} }, actorId: user.id,
+    session: { id: session.session.id, createdAt: session.session.createdAt, expiresAt: effectiveSessionExpiry(session, ctx.env) },
+  } };
+}
+
+function effectiveSessionExpiry(session: Session, env: AppContext["env"]): Date {
+  const absolute = session.session.createdAt.getTime() + (env.oidc ? env.oidc.sessionMaxAgeSeconds * 1000 : (env.browserSessionMaxDays ?? 90) * 86400000);
+  return new Date(Math.min(session.session.expiresAt.getTime(), absolute));
+}

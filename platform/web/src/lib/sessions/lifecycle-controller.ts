@@ -10,7 +10,6 @@ export function controlledSessionOwnerLabel(
   integration: SessionIntegration | null | undefined,
 ): string {
   const kind = integration?.lifecycleController?.workflowKind;
-  if (kind === "channelConversationWorkflowV1") return "Channels";
   if (kind && BOT_CONTROLLER_KINDS.has(kind)) return "a bot";
   return kind || "an external workflow";
 }

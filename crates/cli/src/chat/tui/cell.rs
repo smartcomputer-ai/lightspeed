@@ -603,7 +603,6 @@ fn activity_style(group: ChatToolDisplayGroup) -> Style {
         ChatToolDisplayGroup::Mcp => Style::default().fg(Color::Magenta),
         ChatToolDisplayGroup::Agent => Style::default().fg(Color::LightMagenta),
         ChatToolDisplayGroup::Bot => Style::default().fg(Color::Green),
-        ChatToolDisplayGroup::Message => Style::default().fg(Color::LightGreen),
         ChatToolDisplayGroup::Other => Style::default().fg(Color::Gray),
     }
 }

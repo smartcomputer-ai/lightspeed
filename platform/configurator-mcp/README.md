@@ -1,22 +1,25 @@
 # Lightspeed Configurator MCP
 
 Streamable HTTP MCP facade over a configurable generated subset of the
-universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
+universe-scoped Lightspeed HTTP contract. Tools are generated from
 `crates/api/contract`; deployment-level `deployment/*` methods can never be
 exposed.
 
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),
-covers client setup, deployment authentication, and the management workflow.
+covers the service and its current availability.
+
+Clients connect with a Platform API key. `./dev.sh platform` and
+`./dev.sh full` start the facade with Platform as its upstream. Keep direct runtime credentials for
+trusted infrastructure: a runtime token has full deployment authority.
 
 `tool-filter.json` contains the exact universe methods and params omitted from
 generation. The default surface excludes the `integration` param of `session/start`,
 environment jobs, environment registration keys, and the redundant Lightspeed
-handshake.
+connection probe and binary upload operation.
 Edit that file and run `npm run generate` to tune the advertised surface.
-Each request then lists only the tools whose method group the caller's key
-holds, as reported by the runtime's `initialize` response; other tools are
-unknown to that caller.
-Tool descriptions come from the canonical Rust method manifest and focus on
+Clients see the generated tool set; the key's restrictions decide which
+calls succeed.
+Tool descriptions come from the canonical Rust operation catalog and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.
 
@@ -26,6 +29,7 @@ Build the TypeScript client and Configurator, then start the server:
 
 ```bash
 npm install
+npm run build --workspace @lightspeed-ai/sdk
 npm run build --workspace @lightspeed-ai/configurator-mcp
 LIGHTSPEED_AUTH_MODE=single node platform/configurator-mcp/dist/bin.js
 ```
@@ -34,7 +38,7 @@ The default endpoints are:
 
 - MCP: `http://127.0.0.1:18081/mcp`
 - health: `http://127.0.0.1:18081/health`
-- upstream JSON-RPC: `http://127.0.0.1:18080/rpc`
+- upstream HTTP API: `http://127.0.0.1:18080/api/v1`
 
 Configuration:
 
@@ -44,21 +48,25 @@ is kept here for service-local convenience.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `single` | `single` or `authenticated`; must match the upstream gateway |
+| `LIGHTSPEED_AUTH_MODE` | `single` | `authenticated` for Platform or an authenticated runtime, `single` for a private single-mode runtime |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST` | `127.0.0.1` | HTTP bind host |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | HTTP bind port |
-| `LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL` | `http://127.0.0.1:18080/rpc` | Lightspeed JSON-RPC endpoint |
+| `LIGHTSPEED_CONFIGURATOR_MCP_API_URL` | `http://127.0.0.1:18080/api/v1` | Lightspeed HTTP API base |
 | `LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_HOSTS` | loopback hosts | Comma-separated Host allow-list; required for non-loopback binds |
 | `LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_ORIGINS` | none | Comma-separated browser Origin allow-list |
 | `LIGHTSPEED_CONFIGURATOR_MCP_MAX_BODY_BYTES` | `67108864` | Maximum MCP JSON request size |
 | `LIGHTSPEED_CONFIGURATOR_MCP_UPSTREAM_TIMEOUT_MS` | `60000` | Per-probe and per-tool upstream timeout |
 | `LIGHTSPEED_CONFIGURATOR_MCP_SHUTDOWN_TIMEOUT_MS` | `10000` | Grace period before open HTTP connections are closed |
 
-Authenticated clients send `Authorization: Bearer lsk_...`. Configurator forwards
-the credential and optional universe/actor headers to the runtime, which
-validates scope and assertion authority. Headers alone never authenticate callers.
-The Platform setup creates a dedicated universe service credential. The former
-loopback trusted-header route is retired.
+With Platform, configure its `/api/v1` URL as the upstream and connect
+clients with Platform API keys.
+
+Authenticated requests send the upstream credential as a bearer token.
+Configurator verifies it through the upstream's `/connection` endpoint before
+handling each MCP request. Include `initialize` in any Platform key operation
+allowlist. Send the universe UUID as `x-lightspeed-universe` for tool calls
+when discovery hasn't returned a default. Configurator uses this UUID in
+the upstream resource path.
 
 The server uses the current per-request, sessionless Streamable HTTP lifecycle
 and negotiates the 2026 protocol through `server/discover`. It retains the

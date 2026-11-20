@@ -24,42 +24,38 @@ enum McpServerCommand {
     Delete(McpServerDeleteArgs),
     /// Bind or clear the universe credential for a configured server.
     #[command(name = "credential", visible_alias = "credentials")]
-    Auth(McpServerAuthArgs),
+    Credential(McpServerCredentialArgs),
     /// Run MCP OAuth login and bind the resulting grant to this server.
     Login(McpServerLoginArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct McpServerAuthArgs {
+struct McpServerCredentialArgs {
     #[command(subcommand)]
-    command: McpServerAuthCommand,
+    command: McpServerCredentialCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum McpServerAuthCommand {
-    /// Bind an existing universe auth grant.
-    Set(McpServerAuthSetArgs),
+enum McpServerCredentialCommand {
+    /// Bind an existing universe credential grant.
+    Set(McpServerCredentialSetArgs),
     /// Remove the server's current grant binding.
-    Clear(McpServerAuthClearArgs),
+    Clear(McpServerCredentialClearArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct McpServerAuthSetArgs {
-    #[arg(skip)]
-    api_url: String,
+struct McpServerCredentialSetArgs {
     #[arg(long)]
     json: bool,
     /// Configured MCP server id.
     server_id: String,
-    /// Existing universe auth grant id.
+    /// Existing universe credential grant id.
     #[arg(long = "grant")]
     grant_id: String,
 }
 
 #[derive(Args, Debug, Clone)]
-struct McpServerAuthClearArgs {
-    #[arg(skip)]
-    api_url: String,
+struct McpServerCredentialClearArgs {
     #[arg(long)]
     json: bool,
     /// Configured MCP server id.
@@ -68,8 +64,6 @@ struct McpServerAuthClearArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerLoginArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     /// Configured OAuth MCP server id.
@@ -84,9 +78,6 @@ struct McpServerLoginArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerPutArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the stored server as JSON.
     #[arg(long)]
     json: bool,
@@ -133,9 +124,9 @@ struct McpServerPutArgs {
     /// Auth requirement for this server.
     #[arg(long = "auth-policy", default_value_t = McpAuthPolicyArg::None)]
     auth_policy: McpAuthPolicyArg,
-    /// Universe auth grant bound to this configured server.
+    /// Universe credential grant bound to this configured server.
     #[arg(long = "auth-grant-id")]
-    auth_grant_id: Option<String>,
+    credential_grant_id: Option<String>,
     /// Canonical OAuth resource URL (RFC 8707). Defaults to the server URL.
     /// Only valid with an OAuth auth policy.
     #[arg(long = "oauth-resource")]
@@ -242,9 +233,6 @@ fn auth_policy_from_args(args: &McpServerPutArgs) -> Result<api::McpServerAuthPo
 
 #[derive(Args, Debug, Clone)]
 struct McpServerListArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit servers as JSON.
     #[arg(long)]
     json: bool,
@@ -255,9 +243,6 @@ struct McpServerListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerReadArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the server as JSON.
     #[arg(long)]
     json: bool,
@@ -267,9 +252,6 @@ struct McpServerReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerDeleteArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the deleted server as JSON.
     #[arg(long)]
     json: bool,
@@ -388,37 +370,34 @@ pub(crate) async fn handle(args: McpArgs) -> Result<()> {
         McpServerCommand::List(args) => server_list(args).await,
         McpServerCommand::Read(args) => server_read(args).await,
         McpServerCommand::Delete(args) => server_delete(args).await,
-        McpServerCommand::Auth(args) => server_auth(args).await,
+        McpServerCommand::Credential(args) => server_credential(args).await,
         McpServerCommand::Login(args) => server_login(args).await,
     }
 }
 
-async fn server_auth(args: McpServerAuthArgs) -> Result<()> {
+async fn server_credential(args: McpServerCredentialArgs) -> Result<()> {
     match args.command {
-        McpServerAuthCommand::Set(args) => {
-            replace_server_credential(args.api_url, args.server_id, Some(args.grant_id), args.json)
-                .await
+        McpServerCredentialCommand::Set(args) => {
+            replace_server_credential(args.server_id, Some(args.grant_id), args.json).await
         }
-        McpServerAuthCommand::Clear(args) => {
-            replace_server_credential(args.api_url, args.server_id, None, args.json).await
+        McpServerCredentialCommand::Clear(args) => {
+            replace_server_credential(args.server_id, None, args.json).await
         }
     }
 }
 
 async fn replace_server_credential(
-    api_url: String,
     server_id: String,
     grant_id: Option<String>,
     json: bool,
 ) -> Result<()> {
-    let api = HttpAgentApi::new(api_url);
+    let api = HttpAgentApi::from_active();
     let current = api
         .read_mcp_server(api::McpServerReadParams {
             server_id: server_id.clone(),
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .server;
     put_server_credential(&api, current, grant_id, json).await
 }
@@ -430,7 +409,8 @@ async fn put_server_credential(
     json: bool,
 ) -> Result<()> {
     let mut server = server_input_from_view(&current);
-    server.credential = grant_id.map(|grant_id| api::McpServerCredential::AuthGrant { grant_id });
+    server.credential =
+        grant_id.map(|grant_id| api::McpServerCredential::CredentialGrant { grant_id });
     let required = matches!(
         server.auth_policy,
         api::McpServerAuthPolicy::RequiredBearer | api::McpServerAuthPolicy::RequiredOAuth { .. }
@@ -446,8 +426,7 @@ async fn put_server_credential(
             expected_revision: Some(current.revision),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
@@ -477,14 +456,13 @@ fn server_input_from_view(server: &api::McpServerView) -> api::McpServerInput {
 }
 
 async fn server_login(args: McpServerLoginArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url.clone());
+    let api = HttpAgentApi::from_active();
     let current = api
         .read_mcp_server(api::McpServerReadParams {
             server_id: args.server_id.clone(),
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .server;
     if !matches!(
         &current.auth_policy,
@@ -494,15 +472,14 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
         anyhow::bail!("MCP server {} does not use OAuth", current.server_id);
     }
     let started = api
-        .start_auth_flow(api::AuthFlowStartParams {
-            exposure: api::AuthGrantExposure::Brokered,
+        .start_credential_flow(api::CredentialFlowStartParams {
+            exposure: api::CredentialGrantExposure::Brokered,
             client_id: format!("mcp:{}", args.server_id),
             scopes: (!args.scopes.is_empty()).then_some(args.scopes),
             audience: args.audience,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     eprintln!("Open this URL in your browser to authorize:");
     eprintln!("{}", started.authorize_url);
     eprintln!("flowId {}", started.flow_id);
@@ -510,26 +487,25 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let response = api
-            .read_auth_flow_status(api::AuthFlowStatusParams {
+            .read_credential_flow_status(api::CredentialFlowStatusParams {
                 flow_id: started.flow_id.clone(),
             })
             .await
-            .map_err(crate::api_client::api_error)?
-            .result;
+            .map_err(crate::api_client::api_error)?;
         match response.flow.status {
-            api::AuthFlowStatus::Pending => continue,
-            api::AuthFlowStatus::Completed => {
+            api::CredentialFlowStatus::Pending => continue,
+            api::CredentialFlowStatus::Completed => {
                 let grant_id = response
                     .flow
                     .grant_id
                     .ok_or_else(|| anyhow::anyhow!("completed MCP login returned no grant id"))?;
                 return put_server_credential(&api, current, Some(grant_id), args.json).await;
             }
-            api::AuthFlowStatus::Failed => anyhow::bail!(
+            api::CredentialFlowStatus::Failed => anyhow::bail!(
                 "authorization failed: {}",
                 response.flow.error.as_deref().unwrap_or("unknown error")
             ),
-            api::AuthFlowStatus::Expired => {
+            api::CredentialFlowStatus::Expired => {
                 anyhow::bail!("authorization flow expired before the callback completed")
             }
         }
@@ -544,10 +520,11 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
         api::McpServerAuthPolicy::RequiredBearer | api::McpServerAuthPolicy::RequiredOAuth { .. }
     );
     let mut status: api::McpServerStatus = args.status.into();
-    if required_auth && args.auth_grant_id.is_none() && status == api::McpServerStatus::Active {
+    if required_auth && args.credential_grant_id.is_none() && status == api::McpServerStatus::Active
+    {
         status = api::McpServerStatus::NeedsAuthConfig;
     }
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .put_mcp_server(api::McpServerPutParams {
             server: api::McpServerInput {
@@ -564,16 +541,15 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
                 allow_private_network: args.allow_private_network,
                 auth_policy,
                 credential: args
-                    .auth_grant_id
-                    .map(|grant_id| api::McpServerCredential::AuthGrant { grant_id }),
+                    .credential_grant_id
+                    .map(|grant_id| api::McpServerCredential::CredentialGrant { grant_id }),
                 headers,
                 status,
             },
             expected_revision: args.expected_revision,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -583,14 +559,13 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
 }
 
 async fn server_list(args: McpServerListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .list_mcp_servers(api::McpServerListParams {
             status: args.status.map(Into::into),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -609,14 +584,13 @@ async fn server_list(args: McpServerListArgs) -> Result<()> {
 }
 
 async fn server_read(args: McpServerReadArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .read_mcp_server(api::McpServerReadParams {
             server_id: args.server_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -626,14 +600,13 @@ async fn server_read(args: McpServerReadArgs) -> Result<()> {
 }
 
 async fn server_delete(args: McpServerDeleteArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .delete_mcp_server(api::McpServerDeleteParams {
             server_id: args.server_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -663,15 +636,14 @@ fn print_server(server: &api::McpServerView) {
 }
 
 async fn server_tools(args: McpServerReadArgs) -> Result<()> {
-    let response: api::McpServerToolsDiscoverResponse = HttpAgentApi::new(args.api_url)
+    let response: api::McpServerToolsDiscoverResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_MCP_SERVERS_TOOLS_DISCOVER,
             api::McpServerToolsDiscoverParams {
                 server_id: args.server_id,
             },
         )
-        .await?
-        .result;
+        .await?;
     match &response {
         api::McpServerToolsDiscoverResponse::Success { tools } => {
             if args.json {

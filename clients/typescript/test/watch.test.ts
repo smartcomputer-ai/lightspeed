@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LightspeedClient, LightspeedRpcError, LightspeedTransportError, readEventStream } from "../src/index.js";
+import { LightspeedClient, LightspeedApiError, LightspeedTransportError, readEventStream } from "../src/index.js";
 
 async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -9,7 +9,7 @@ async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
 
 const encode = (value: string) => new TextEncoder().encode(value);
 const reset = { method: "watch/reset", params: {} };
-const event = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+const event = (value: { method: string; params: unknown }) => `event: ${value.method}\ndata: ${JSON.stringify(value.params)}\n\n`;
 
 describe("watch transport", () => {
   it("decodes UTF-8 and CRLF split at every byte, comments and multiline data", async () => {
@@ -18,14 +18,14 @@ describe("watch transport", () => {
       for (const byte of bytes) c.enqueue(Uint8Array.of(byte));
       c.close();
     } });
-    expect(await collect(readEventStream(stream))).toEqual(["hé\n世界", ""]);
+    expect(await collect(readEventStream(stream))).toEqual([{ event: "message", data: "hé\n世界" }, { event: "message", data: "" }]);
     expect(stream.locked).toBe(false);
   });
 
   it("cancels and releases the body when iteration stops", async () => {
     const cancel = vi.fn();
     const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(encode(event(reset))); }, cancel });
-    for await (const data of readEventStream(stream)) { expect(JSON.parse(data)).toEqual(reset); break; }
+    for await (const data of readEventStream(stream)) { expect(JSON.parse(data.data)).toEqual(reset.params); break; }
     expect(cancel).toHaveBeenCalledOnce();
     expect(stream.locked).toBe(false);
   });
@@ -39,29 +39,28 @@ describe("watch transport", () => {
     await expect(readEventStream(huge).next()).rejects.toBeInstanceOf(LightspeedTransportError);
   });
 
-  it("uses POST authentication and yields workspace changes before the final response", async () => {
+  it("uses GET authentication and yields workspace changes before the final response", async () => {
     const changed = { method: "workspaces/removed", params: { workspaceId: "w" } };
     const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      expect(init?.method).toBe("POST");
+      expect(init?.method).toBe("GET");
       const headers = new Headers(init?.headers);
       expect(headers.get("accept")).toBe("text/event-stream");
       expect(headers.get("authorization")).toBe("Bearer secret");
-      expect(headers.get("x-lightspeed-universe")).toBe("u");
-      const call = JSON.parse(String(init?.body));
-      expect(call.params).toEqual({ kinds: ["workspace"] });
-      return new Response(event(reset) + event(changed) + event({ id: call.id, result: { result: {} } }), {
+      expect(headers.has("x-lightspeed-universe")).toBe(false);
+      expect(String(_url)).toBe("https://core/api/v1/universes/u/events?kinds=workspace");
+      return new Response(event(reset) + event(changed) + event({ method: "watch/end", params: {} }), {
         headers: { "content-type": "text/event-stream" },
       });
     });
-    const client = new LightspeedClient({ endpoint: "https://core/rpc", apiKey: "secret", universe: "u", fetch });
+    const client = new LightspeedClient({ endpoint: "https://core/api/v1", token: "secret", universe: "u", fetch });
     expect(await collect(client.watch({ kinds: ["workspace"] }, { reconnect: false }))).toEqual([reset, changed]);
     expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("does not reconnect an authorization refusal or malformed event", async () => {
-    const fetch = vi.fn(async () => Response.json({ error: { code: -32003, message: "forbidden" } }));
-    const client = new LightspeedClient({ endpoint: "https://core/rpc", fetch });
-    await expect(client.watch().next()).rejects.toBeInstanceOf(LightspeedRpcError);
+    const fetch = vi.fn(async () => Response.json({ type: "about:blank", title: "Forbidden", detail: "Forbidden", kind: "forbidden", status: 403 }, { status: 403 }));
+    const client = new LightspeedClient({ endpoint: "https://core/api/v1", universe: "u", fetch });
+    await expect(client.watch().next()).rejects.toBeInstanceOf(LightspeedApiError);
     expect(fetch).toHaveBeenCalledOnce();
     fetch.mockImplementation(async () => new Response("data: {broken}\n\n", { headers: { "content-type": "text/event-stream" } }));
     await expect(client.watch().next()).rejects.toBeInstanceOf(LightspeedTransportError);
@@ -69,7 +68,7 @@ describe("watch transport", () => {
 
   it("reconnects after completion and stops during backoff on abort", async () => {
     const fetch = vi.fn(async () => new Response(event(reset), { headers: { "content-type": "text/event-stream" } }));
-    const client = new LightspeedClient({ endpoint: "https://core/rpc", fetch });
+    const client = new LightspeedClient({ endpoint: "https://core/api/v1", universe: "u", fetch });
     const controller = new AbortController();
     const stream = client.watch({}, { signal: controller.signal });
     expect((await stream.next()).value).toEqual(reset);

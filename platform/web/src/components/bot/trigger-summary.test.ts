@@ -46,16 +46,6 @@ describe("triggerSummary", () => {
       "Messages from release-shepherd",
     );
   });
-  it("names the chat account from the universe's accounts", () => {
-    const chat = trigger({ kind: "chat", accountId: "acct-1", pairing: "code" });
-    expect(triggerSummary(chat)).toBe("a messaging account · all chats · pairing required");
-    expect(
-      triggerSummary(chat, [{ accountId: "acct-1", provider: "telegram", displayName: "Team bot" }]),
-    ).toBe("telegram · Team bot · all chats · pairing required");
-    expect(triggerSummary(trigger({ kind: "chat", accountId: "acct-1", pairing: "open" }))).toBe(
-      "a messaging account · all chats",
-    );
-  });
 });
 
 describe("deliverySentence", () => {
@@ -87,8 +77,7 @@ describe("deliverySentence", () => {
           closeMode: "forever",
           closeHours: "",
         },
-        true,
       ),
-    ).toBe("one thread per conversation · batches for up to 1.5s · steers a busy run · threads kept");
+    ).toBe("one thread per key · batches for up to 1.5s · steers a busy run · threads kept");
   });
 });

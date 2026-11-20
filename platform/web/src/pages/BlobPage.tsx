@@ -18,7 +18,7 @@ import { useDocumentTitle } from "@/lib/document-title";
 /// One stored blob, addressed by its digest within the universe: stored
 /// text, instructions, catalogs, and media the model was shown. Links carry
 /// a name, a type, and their source session or workspace as display hints.
-export function BlobPage({ admin: _admin }: { admin: boolean }) {
+export function BlobPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   const { digest } = useParams<{ digest: string }>();
@@ -43,7 +43,7 @@ function BlobDetail({ universeId, handle, digest }: { universeId: string; handle
   const blob = useQuery({
     queryKey: ["blob", universeId, digest],
     queryFn: () => api<{ bytesBase64: string; bytes: number }>(
-      "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(`sha256:${digest}`)}`,
+      "GET", `/api/ui/universes/${universeId}/blobs/${encodeURIComponent(`sha256:${digest}`)}`,
     ),
     staleTime: Infinity,
   });
@@ -87,7 +87,7 @@ function BlobDetail({ universeId, handle, digest }: { universeId: string; handle
 function LinkedFrom({ universeId, handle, sessionId }: { universeId: string; handle: string; sessionId: string }) {
   const source = useQuery({
     queryKey: ["session", universeId, sessionId],
-    queryFn: () => api<SessionView>("GET", `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`),
+    queryFn: () => api<SessionView>("GET", `/api/ui/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`),
     retry: false,
   });
   const label = source.data?.displayName?.trim() || `${sessionId.slice(0, 18)}${sessionId.length > 18 ? "…" : ""}`;
@@ -107,7 +107,7 @@ function LinkedFromWorkspace({ universeId, handle, workspaceId, path }: {
 }) {
   const source = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
-    queryFn: () => api<WorkspaceTree>("GET", `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/tree`),
+    queryFn: () => api<WorkspaceTree>("GET", `/api/ui/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/tree`),
     retry: false,
   });
   const label = source.data?.workspace.displayName?.trim() || workspaceId;

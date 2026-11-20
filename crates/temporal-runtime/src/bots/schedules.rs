@@ -134,10 +134,33 @@ impl GatewayAgentApi {
         bot: &BotRecord,
         trigger: &BotTriggerRecord,
     ) -> anyhow::Result<()> {
+        // Intake takes the exclusive lock before deleting schedules. A create
+        // already in flight finishes before intake; a later one sees the fence.
+        let mut guard = self.store().pool().begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))")
+            .bind(format!("universe-schedules/{}", self.universe_id()))
+            .execute(&mut *guard)
+            .await?;
+        let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NULL)")
+            .bind(self.universe_id())
+            .fetch_one(&mut *guard)
+            .await?;
+        if !active {
+            return self
+                .delete_bot_trigger_schedule(&bot.bot_id, &trigger.trigger_id)
+                .await;
+        }
         match desired_schedule(bot, trigger) {
             Some(desired) => {
                 self.upsert_bot_trigger_schedule(bot, trigger, desired)
-                    .await
+                    .await?;
+                let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NULL)")
+                    .bind(self.universe_id()).fetch_one(&mut *guard).await?;
+                if !active {
+                    self.delete_bot_trigger_schedule(&bot.bot_id, &trigger.trigger_id)
+                        .await?;
+                }
+                Ok(())
             }
             None => {
                 self.delete_bot_trigger_schedule(&bot.bot_id, &trigger.trigger_id)
@@ -262,13 +285,24 @@ impl GatewayAgentApi {
         bot_id: &BotId,
         trigger_id: &BotTriggerId,
     ) -> anyhow::Result<()> {
+        self.delete_bot_trigger_schedule_counted(bot_id, trigger_id)
+            .await
+            .map(|_| ())
+    }
+
+    /// Report whether this call removed a Schedule, excluding already absent ones.
+    pub(crate) async fn delete_bot_trigger_schedule_counted(
+        &self,
+        bot_id: &BotId,
+        trigger_id: &BotTriggerId,
+    ) -> anyhow::Result<bool> {
         let schedule_id = bot_schedule_id(self.universe_id(), bot_id, trigger_id);
         let handle = self
             .temporal_client()
             .get_schedule_handle(schedule_id.clone());
         match handle.delete(Default::default()).await {
-            Ok(()) => Ok(()),
-            Err(ScheduleError::Rpc(status)) if status.code() == tonic::Code::NotFound => Ok(()),
+            Ok(()) => Ok(true),
+            Err(ScheduleError::Rpc(status)) if status.code() == tonic::Code::NotFound => Ok(false),
             Err(error) => Err(anyhow::anyhow!("delete schedule {schedule_id}: {error}")),
         }
     }

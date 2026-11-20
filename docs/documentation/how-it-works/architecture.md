@@ -138,9 +138,6 @@ filesystem store.
 
 A bot adds continuing behavior around the session loop. It receives events,
 applies routing and admission policy, and creates or drives sessions for work.
-A channel conversation handles a chat's pairing, inbound messages, and
-outbound delivery. Neither responsibility has to become another branch inside
-the deterministic session harness.
 
 Controllers instead communicate through workflow starts and signals.
 Workflow-backed tools let a session ask another workflow to do work and receive
@@ -148,21 +145,18 @@ its result through an admitted protocol. Sub-agents use the same separation:
 a delegation workflow owns a child session's creation, result, and cleanup,
 while the parent sees a tool operation and its outcome.
 
-That arrangement is why a session can remain a general agent harness as bots,
-channels, and integrations evolve. The
+That arrangement is why a session can remain a general agent harness as bots and
+integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
-The Platform owns login, user accounts, universe membership, and the browser
-application. It checks each person's role and session visibility before
-calling the runtime with a service key and actor ID. The runtime checks the
-key's scope and method groups and records the actor for attribution.
-
-This separates a person's web access from a program's API access. A direct
-runtime key with the `session` group can reach private sessions in its
-universe. Once work is admitted, it runs for the universe; removing the
-requester's membership does not stop it. [Access and security](../access-and-security/overview.md)
-explains these policies and the separate checks on internal controllers.
+Platform owns sign-in, organizations, and access policy. It checks the
+requested action and session visibility before it calls the runtime with a
+deployment token and the requester's actor ID. The runtime authenticates the
+token, works in the requested universe, and records the actor for attribution.
+That token gives Platform the same authority as any trusted runtime client.
+Once work is admitted, the runtime carries it out for the universe, so it can
+continue after the requester leaves. See [How access works](../access-and-security/overview.md).
 
 ## Attach compute when the task needs it
 
@@ -203,14 +197,12 @@ separating them lets the deployment give different work different capacity.
 | `gateway` | Public API admission and reads, OAuth callbacks, and bot webhooks. |
 | `sessions` | Session, sub-agent, and environment-job workflows and their activities, plus session and blob maintenance. |
 | `bots` | Bot controllers, trigger workflows, and related activities. |
-| `channels` | Conversation workflows and core channel activities. |
+| `code` | Code Mode workflows and JavaScript execution activities. |
 | `environment-gateway` | Live outbound daemon connections, worker routes, and the reconciliation that creates and closes provisioned environments. |
 
-The session, bot, and channel roles poll their own task queues. Cross-subsystem
+The session, bot, and code roles poll their own task queues. Cross-subsystem
 work uses workflow starts and signals rather than relying on one role executing
-another role's activities. Connector hosts provide the provider-specific chat
-transport and activity workers; they have no database access or authority to
-choose which bot owns a conversation.
+another role's activities.
 
 Environment gateways share a PostgreSQL registry of leased process identities
 and daemon connection ownership. Sockets stay local to each process. The
@@ -220,6 +212,12 @@ acceptor. A data stream crosses at most two gateway processes. Ownership
 checks prevent a stale connection from modifying or serving its successor.
 Background environment loops each have one PostgreSQL advisory-lock leader.
 See [Operations](../deployment/operations.md) for scaling and shutdown behavior.
+
+Runtime traffic uses three listeners. The `gateway` role serves the private
+HTTP API on one listener and credential callbacks and bot webhooks on
+another. The `environment-gateway` role serves machine traffic on a third.
+The listeners stay separate when all roles run in one process. See
+[Configure the public edge](../deployment/self-hosting.md#configure-the-public-edge).
 
 A deployment can serve several universes over shared processes, database
 connections, and provider clients. Universe-bound queries, object references,

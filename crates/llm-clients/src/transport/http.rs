@@ -80,6 +80,11 @@ impl EndpointOverride {
         Ok(())
     }
 
+    /// The normalized base used for requests and credential audience checks.
+    pub fn base_url(&self) -> &Url {
+        &self.base_url
+    }
+
     /// Whether the endpoint sends a header of this name. Values stay private.
     pub fn has_header(&self, name: &str) -> bool {
         self.headers.contains_key(name)
@@ -196,7 +201,10 @@ impl HttpClient {
         config: HttpClientConfig,
         default_headers: HeaderMap,
     ) -> Result<Self, LlmApiError> {
+        // Provider credentials and custom headers are authorized for the selected
+        // endpoint. A redirect can leave that path, even on the same origin.
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
             .build()

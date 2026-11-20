@@ -91,7 +91,7 @@ export function BotActivity({
     queryFn: ({ pageParam }) =>
       api<BotEventListResponse>(
         "GET",
-        `/api/v1/universes/${universeId}/bots/${bot.botId}/events?limit=50${
+        `/api/ui/universes/${universeId}/bots/${bot.botId}/events?limit=50${
           pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""
         }`,
       ),
@@ -102,7 +102,7 @@ export function BotActivity({
   });
   const replay = useMutation({
     mutationFn: (seq: number) =>
-      api("POST", `/api/v1/universes/${universeId}/bots/${bot.botId}/events/replay`, { seq }),
+      api("POST", `/api/ui/universes/${universeId}/bots/${bot.botId}/events/replay`, { seq }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bot-state", universeId, bot.botId] }),

@@ -1,0 +1,374 @@
+{
+  "operations": [
+    {
+      "operationId": "platform/session/read",
+      "helper": {
+        "name": "readCurrentSession"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/session",
+      "params": "PlatformSessionReadParams",
+      "result": "PlatformSessionReadResult"
+    },
+    {
+      "operationId": "platform/session/revoke",
+      "helper": {
+        "name": "revokeCurrentSession"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/session",
+      "params": "PlatformSessionRevokeParams",
+      "result": "PlatformSessionRevokeResult"
+    },
+    {
+      "operationId": "platform/credentials/list",
+      "helper": {
+        "name": "listPersonalApiKeys"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/credentials",
+      "params": "PlatformCredentialsListParams",
+      "result": "PlatformCredentialsListResult"
+    },
+    {
+      "operationId": "platform/credentials/create",
+      "helper": {
+        "name": "createPersonalApiKey"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/credentials",
+      "params": "PlatformCredentialsCreateParams",
+      "result": "PlatformCredentialsCreateResult"
+    },
+    {
+      "operationId": "platform/credentials/replace",
+      "helper": {
+        "name": "replacePersonalApiKey"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/credentials/{keyId}/replace",
+      "params": "PlatformCredentialsReplaceParams",
+      "result": "PlatformCredentialsReplaceResult"
+    },
+    {
+      "operationId": "platform/credentials/revoke",
+      "helper": {
+        "name": "revokePersonalApiKey"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/credentials/{keyId}",
+      "params": "PlatformCredentialsRevokeParams",
+      "result": "PlatformCredentialsRevokeResult"
+    },
+    {
+      "operationId": "platform/organizations/credentials/list",
+      "helper": {
+        "name": "listOrganizationApiKeys"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/credentials",
+      "params": "PlatformOrganizationsCredentialsListParams",
+      "result": "PlatformOrganizationsCredentialsListResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/list",
+      "helper": {
+        "name": "listServiceUserApiKeys"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
+      "params": "PlatformServiceUsersCredentialsListParams",
+      "result": "PlatformServiceUsersCredentialsListResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/create",
+      "helper": {
+        "name": "createServiceUserApiKey"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
+      "params": "PlatformServiceUsersCredentialsCreateParams",
+      "result": "PlatformServiceUsersCredentialsCreateResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/replace",
+      "helper": {
+        "name": "replaceServiceUserApiKey"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}/replace",
+      "params": "PlatformServiceUsersCredentialsReplaceParams",
+      "result": "PlatformServiceUsersCredentialsReplaceResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/put",
+      "helper": {
+        "name": "putServiceUserApiKey"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
+      "params": "PlatformServiceUsersCredentialsPutParams",
+      "result": "PlatformServiceUsersCredentialsPutResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/revoke",
+      "helper": {
+        "name": "revokeServiceUserApiKey"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}",
+      "params": "PlatformServiceUsersCredentialsRevokeParams",
+      "result": "PlatformServiceUsersCredentialsRevokeResult"
+    },
+    {
+      "operationId": "platform/settings/list",
+      "helper": {
+        "name": "listPlatformSettings"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/settings",
+      "params": "PlatformSettingsListParams",
+      "result": "PlatformSettingsListResult"
+    },
+    {
+      "operationId": "platform/settings/put",
+      "helper": {
+        "name": "putPlatformSetting"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/settings/{key}",
+      "params": "PlatformSettingsPutParams",
+      "result": "PlatformSettingsPutResult"
+    },
+    {
+      "operationId": "platform/organizations/list",
+      "helper": {
+        "name": "listOrganizations"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations",
+      "params": "PlatformOrganizationsListParams",
+      "result": "PlatformOrganizationsListResult"
+    },
+    {
+      "operationId": "platform/organizations/enroll",
+      "helper": {
+        "name": "enrollOrganization"
+      },
+      "method": "POST",
+      "path": "/api/v1/organizations/enroll",
+      "params": "PlatformOrganizationsEnrollParams",
+      "result": "PlatformOrganizationsEnrollResult"
+    },
+    {
+      "operationId": "platform/organizations/create",
+      "helper": {
+        "name": "createOrganization"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations",
+      "params": "PlatformOrganizationsCreateParams",
+      "result": "PlatformOrganizationsCreateResult"
+    },
+    {
+      "operationId": "platform/organizations/read",
+      "helper": {
+        "name": "readOrganization"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}",
+      "params": "PlatformOrganizationsReadParams",
+      "result": "PlatformOrganizationsReadResult"
+    },
+    {
+      "operationId": "platform/organizations/update",
+      "helper": {
+        "name": "updateOrganization"
+      },
+      "method": "PATCH",
+      "path": "/api/v1/platform/organizations/{organizationId}",
+      "params": "PlatformOrganizationsUpdateParams",
+      "result": "PlatformOrganizationsUpdateResult"
+    },
+    {
+      "operationId": "platform/organizations/members/list",
+      "helper": {
+        "name": "listOrganizationMembers"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/members",
+      "params": "PlatformOrganizationsMembersListParams",
+      "result": "PlatformOrganizationsMembersListResult"
+    },
+    {
+      "operationId": "platform/organizations/members/put",
+      "helper": {
+        "name": "putOrganizationMember"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/organizations/{organizationId}/members/{userId}",
+      "params": "PlatformOrganizationsMembersPutParams",
+      "result": "PlatformOrganizationsMembersPutResult"
+    },
+    {
+      "operationId": "platform/organizations/members/delete",
+      "helper": {
+        "name": "removeOrganizationMember"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/organizations/{organizationId}/members/{userId}",
+      "params": "PlatformOrganizationsMembersDeleteParams",
+      "result": "PlatformOrganizationsMembersDeleteResult"
+    },
+    {
+      "operationId": "platform/organizations/service-users/list",
+      "helper": {
+        "name": "listServiceUsers"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users",
+      "params": "PlatformOrganizationsServiceUsersListParams",
+      "result": "PlatformOrganizationsServiceUsersListResult"
+    },
+    {
+      "operationId": "platform/organizations/service-users/create",
+      "helper": {
+        "name": "createServiceUser"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users",
+      "params": "PlatformOrganizationsServiceUsersCreateParams",
+      "result": "PlatformOrganizationsServiceUsersCreateResult"
+    },
+    {
+      "operationId": "platform/organizations/service-users/update",
+      "helper": {
+        "name": "updateServiceUser"
+      },
+      "method": "PATCH",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}",
+      "params": "PlatformOrganizationsServiceUsersUpdateParams",
+      "result": "PlatformOrganizationsServiceUsersUpdateResult"
+    },
+    {
+      "operationId": "platform/service-users/federated-credentials/list",
+      "helper": {
+        "name": "listFederatedCredentials"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials",
+      "params": "PlatformServiceUsersFederatedCredentialsListParams",
+      "result": "PlatformServiceUsersFederatedCredentialsListResult"
+    },
+    {
+      "operationId": "platform/service-users/federated-credentials/put",
+      "helper": {
+        "name": "putFederatedCredential"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials",
+      "params": "PlatformServiceUsersFederatedCredentialsPutParams",
+      "result": "PlatformServiceUsersFederatedCredentialsPutResult"
+    },
+    {
+      "operationId": "platform/service-users/federated-credentials/delete",
+      "helper": {
+        "name": "deleteFederatedCredential"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials/{credentialId}",
+      "params": "PlatformServiceUsersFederatedCredentialsDeleteParams",
+      "result": "PlatformServiceUsersFederatedCredentialsDeleteResult"
+    },
+    {
+      "operationId": "platform/universes/adopt",
+      "helper": {
+        "name": "adoptUniverse"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations/{organizationId}/universes/adopt",
+      "params": "PlatformUniversesAdoptParams",
+      "result": "PlatformUniversesAdoptResult"
+    },
+    {
+      "operationId": "platform/universes/create",
+      "helper": {
+        "name": "createUniverse"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations/{organizationId}/universes",
+      "params": "PlatformUniversesCreateParams",
+      "result": "PlatformUniversesCreateResult"
+    },
+    {
+      "operationId": "platform/universes/update",
+      "helper": {
+        "name": "updateUniverse"
+      },
+      "method": "PATCH",
+      "path": "/api/v1/platform/universes/{universe}",
+      "params": "PlatformUniversesUpdateParams",
+      "result": "PlatformUniversesUpdateResult"
+    },
+    {
+      "operationId": "platform/universes/grants/list",
+      "helper": {
+        "name": "listUniverseGrants"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/universes/{universe}/grants",
+      "params": "PlatformUniversesGrantsListParams",
+      "result": "PlatformUniversesGrantsListResult"
+    },
+    {
+      "operationId": "platform/universes/grants/put",
+      "helper": {
+        "name": "putUniverseGrant"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/universes/{universe}/grants",
+      "params": "PlatformUniversesGrantsPutParams",
+      "result": "PlatformUniversesGrantsPutResult"
+    },
+    {
+      "operationId": "platform/universes/grants/delete",
+      "helper": {
+        "name": "removeUniverseGrant"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/universes/{universe}/grants/{grantId}",
+      "params": "PlatformUniversesGrantsDeleteParams",
+      "result": "PlatformUniversesGrantsDeleteResult"
+    },
+    {
+      "operationId": "platform/universes/read",
+      "helper": {
+        "name": "readPlatformUniverse"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/universes/{universe}",
+      "params": "PlatformUniversesReadParams",
+      "result": "PlatformUniversesReadResult"
+    },
+    {
+      "operationId": "platform/universes/access-policy/read",
+      "helper": {
+        "name": "readUniverseAccessPolicy"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/universes/{universe}/access-policy",
+      "params": "PlatformUniversesAccessPolicyReadParams",
+      "result": "PlatformUniversesAccessPolicyReadResult"
+    },
+    {
+      "operationId": "platform/universes/access-policy/put",
+      "helper": {
+        "name": "putUniverseAccessPolicy"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/universes/{universe}/access-policy",
+      "params": "PlatformUniversesAccessPolicyPutParams",
+      "result": "PlatformUniversesAccessPolicyPutResult"
+    }
+  ]
+}

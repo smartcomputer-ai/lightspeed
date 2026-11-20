@@ -49,7 +49,7 @@ export function GitHubAppForm({
 
   const create = useMutation<GitHubApp, Error, void>({
     mutationFn: () =>
-      api<GitHubApp>("POST", `/api/v1/universes/${universeId}/integrations/github/apps`, {
+      api<GitHubApp>("POST", `/api/ui/universes/${universeId}/integrations/github/apps`, {
         appId: appId.trim(),
         privateKey,
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
@@ -212,14 +212,14 @@ export function GitHubAppDetails({
     queryFn: () =>
       api<GitHubInstallation[]>(
         "GET",
-        `/api/v1/universes/${universeId}/integrations/github/apps/${encodeURIComponent(app.providerId)}/installations`,
+        `/api/ui/universes/${universeId}/integrations/github/apps/${encodeURIComponent(app.providerId)}/installations`,
       ),
   });
   const grant = useMutation({
     mutationFn: (installation: GitHubInstallation) =>
       api<SecretGrant>(
         "POST",
-        `/api/v1/universes/${universeId}/integrations/github/apps/${encodeURIComponent(app.providerId)}/installations/${installation.installationId}/grant`,
+        `/api/ui/universes/${universeId}/integrations/github/apps/${encodeURIComponent(app.providerId)}/installations/${installation.installationId}/grant`,
         installation.accountLogin ? { displayName: `GitHub: ${installation.accountLogin}` } : {},
       ),
     onSuccess: onChanged,
@@ -228,7 +228,7 @@ export function GitHubAppDetails({
     mutationFn: () =>
       api<GitHubApp>(
         "DELETE",
-        `/api/v1/universes/${universeId}/integrations/github/apps/${encodeURIComponent(app.providerId)}`,
+        `/api/ui/universes/${universeId}/integrations/github/apps/${encodeURIComponent(app.providerId)}`,
       ),
     onSuccess: onRemoved,
   });

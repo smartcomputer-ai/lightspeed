@@ -26,9 +26,6 @@ enum SnapshotCommand {
 
 #[derive(Args, Debug, Clone)]
 struct SnapshotArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the snapshot summary as JSON.
     #[arg(long)]
     json: bool,
@@ -59,9 +56,6 @@ struct SnapshotArgs {
 
 #[derive(Args, Debug, Clone)]
 struct MaterializeArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the materialization summary as JSON.
     #[arg(long)]
     json: bool,
@@ -96,9 +90,6 @@ enum WorkspaceCommand {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceCreateArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
     json: bool,
@@ -115,9 +106,6 @@ struct WorkspaceCreateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceListArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the workspace list as JSON.
     #[arg(long)]
     json: bool,
@@ -125,9 +113,6 @@ struct WorkspaceListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceReadArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
     json: bool,
@@ -137,9 +122,6 @@ struct WorkspaceReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceUpdateArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
     json: bool,
@@ -157,9 +139,6 @@ struct WorkspaceUpdateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceDeleteArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the deleted workspace summary as JSON.
     #[arg(long)]
     json: bool,
@@ -184,7 +163,7 @@ impl From<WorkspaceAccessArg> for api::WorkspaceAccess {
 
 async fn snapshot(args: SnapshotArgs) -> Result<()> {
     let options = snapshot_options(&args);
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let summary = upload_snapshot_directory(&api, args.directory, options).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -222,7 +201,7 @@ pub(crate) async fn workspace(args: WorkspaceArgs) -> Result<()> {
 }
 
 async fn workspace_create(args: WorkspaceCreateArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams {
             workspace_id: args.workspace_id,
@@ -230,18 +209,16 @@ async fn workspace_create(args: WorkspaceCreateArgs) -> Result<()> {
             display_name: args.display_name,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     print_workspace(response.workspace, args.json)
 }
 
 async fn workspace_list(args: WorkspaceListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .list_vfs_workspaces(api::VfsWorkspaceListParams {})
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response.workspaces)?);
         return Ok(());
@@ -260,20 +237,19 @@ async fn workspace_list(args: WorkspaceListArgs) -> Result<()> {
 }
 
 async fn workspace_read(args: WorkspaceReadArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let workspace = api
         .read_vfs_workspace(api::VfsWorkspaceReadParams {
             workspace_id: args.workspace_id,
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace;
     print_workspace(workspace, args.json)
 }
 
 async fn workspace_update(args: WorkspaceUpdateArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let workspace = api
         .update_vfs_workspace(api::VfsWorkspaceUpdateParams {
             workspace_id: args.workspace_id,
@@ -283,20 +259,18 @@ async fn workspace_update(args: WorkspaceUpdateArgs) -> Result<()> {
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace;
     print_workspace(workspace, args.json)
 }
 
 async fn workspace_delete(args: WorkspaceDeleteArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let workspace = api
         .delete_vfs_workspace(api::VfsWorkspaceDeleteParams {
             workspace_id: args.workspace_id,
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace;
     if args.json {
         crate::output::show(true, &workspace)
@@ -322,7 +296,6 @@ pub(crate) async fn create_workspace_from_snapshot(
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace)
 }
 
@@ -360,7 +333,6 @@ async fn put_workspace_attachment(
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .session;
     let mut config = session
         .config
@@ -379,19 +351,17 @@ async fn put_workspace_attachment(
     vfs.workspaces
         .retain(|existing| existing.path != attachment.path);
     vfs.workspaces.push(attachment);
-    Ok(api
-        .put_session_config(api::SessionConfigPutParams {
-            session_id,
-            expected_config_revision: Some(session.config_revision),
-            config,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result)
+    api.put_session_config(api::SessionConfigPutParams {
+        session_id,
+        expected_config_revision: Some(session.config_revision),
+        config,
+    })
+    .await
+    .map_err(crate::api_client::api_error)
 }
 
 async fn materialize(args: MaterializeArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let summary = materialize_snapshot(&api, args.snapshot_ref, args.destination).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);

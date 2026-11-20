@@ -5,8 +5,8 @@ pub(super) fn put_mcp_server_record(
     now_ms: i64,
 ) -> Result<mcp::PutMcpServerRecord, AgentApiError> {
     let auth_grant_id = match server.credential {
-        Some(api::McpServerCredential::AuthGrant { grant_id }) => {
-            Some(parse_auth_grant_id(grant_id)?)
+        Some(api::McpServerCredential::CredentialGrant { grant_id }) => {
+            Some(parse_credential_grant_id(grant_id)?)
         }
         None => None,
     };
@@ -46,11 +46,11 @@ pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerVie
         defer_loading: record.defer_loading,
         allow_private_network: record.allow_private_network,
         auth_policy: api_auth_policy(record.auth_policy),
-        credential: record
-            .auth_grant_id
-            .map(|grant_id| api::McpServerCredential::AuthGrant {
+        credential: record.auth_grant_id.map(|grant_id| {
+            api::McpServerCredential::CredentialGrant {
                 grant_id: grant_id.as_str().to_owned(),
-            }),
+            }
+        }),
         headers: request_headers_view(record.headers),
         status: api_status(record.status),
         revision: record.revision,
@@ -112,7 +112,7 @@ pub(super) fn mcp_tool_discovery_failure(
 
 pub(super) fn validate_mcp_server_credential(
     record: &mcp::PutMcpServerRecord,
-    grant: Option<&auth::AuthGrantRecord>,
+    grant: Option<&credentials::CredentialGrantRecord>,
 ) -> Result<(), AgentApiError> {
     match (&record.auth_policy, grant) {
         (mcp::McpServerAuthPolicy::None, Some(_)) => Err(AgentApiError::invalid_request(
@@ -123,13 +123,13 @@ pub(super) fn validate_mcp_server_credential(
             if record.status != mcp::McpServerStatus::NeedsAuthConfig =>
         {
             Err(AgentApiError::rejected(format!(
-                "active MCP server requires an auth grant: {}",
+                "active MCP server requires a credential grant: {}",
                 record.server_id
             )))
         }
         (_, Some(grant)) => {
             let preview = record.clone().into_record();
-            auth_api::validate_mcp_grant_for_server(&preview, grant)
+            credentials_api::validate_mcp_grant_for_server(&preview, grant)
         }
         _ => Ok(()),
     }
@@ -142,7 +142,7 @@ pub(super) fn validate_mcp_server_credential(
 pub(super) fn mcp_tool_from_config_attachment(
     attachment: &harness::McpServerAttachment,
     record: &mcp::McpServerRecord,
-    grant: Option<&auth::AuthGrantRecord>,
+    grant: Option<&credentials::CredentialGrantRecord>,
 ) -> Result<harness::ToolSpec, AgentApiError> {
     match record.status {
         mcp::McpServerStatus::Disabled => {
@@ -285,7 +285,7 @@ impl super::session_preparation::SessionPreparationService {
                 self.store
                     .read_grant(grant_id)
                     .await
-                    .map_err(map_auth_error)?,
+                    .map_err(map_credential_error)?,
             ),
             None => None,
         };
@@ -532,7 +532,7 @@ pub(super) fn map_mcp_error(error: mcp::McpRegistryError) -> AgentApiError {
 fn default_mcp_tool_id(server_label: &str) -> Result<ToolId, AgentApiError> {
     let mut tool_id = String::from("mcp_");
     for ch in server_label.chars() {
-        if tool_id.len() >= 64 {
+        if tool_id.len() >= harness::TOOL_NAME_MAX_LEN {
             break;
         }
         tool_id.push(if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
@@ -551,17 +551,20 @@ fn parse_mcp_tool_id(tool_id: String) -> Result<ToolId, AgentApiError> {
 
 fn validate_server_auth(
     record: &mcp::McpServerRecord,
-    grant: Option<&auth::AuthGrantRecord>,
+    grant: Option<&credentials::CredentialGrantRecord>,
 ) -> Result<(), AgentApiError> {
     match (&record.auth_policy, grant) {
         (mcp::McpServerAuthPolicy::None, Some(_)) => Err(AgentApiError::invalid_request(
             "an MCP server credential is only valid with an auth policy",
         )),
         (mcp::McpServerAuthPolicy::RequiredBearer, None)
-        | (mcp::McpServerAuthPolicy::RequiredOAuth { .. }, None) => Err(AgentApiError::rejected(
-            format!("MCP server requires an auth grant: {}", record.server_id),
-        )),
-        (_, Some(grant)) => auth_api::validate_mcp_grant_for_server(record, grant),
+        | (mcp::McpServerAuthPolicy::RequiredOAuth { .. }, None) => {
+            Err(AgentApiError::rejected(format!(
+                "MCP server requires a credential grant: {}",
+                record.server_id
+            )))
+        }
+        (_, Some(grant)) => credentials_api::validate_mcp_grant_for_server(record, grant),
         (_, None) => Ok(()),
     }
 }
@@ -610,18 +613,18 @@ mod tests {
                     protected_resource_metadata_url: None,
                     authorization_server: None,
                 },
-                auth_grant_id: Some(auth::AuthGrantId::new("authgrant_1")),
+                auth_grant_id: Some(credentials::CredentialGrantId::new("authgrant_1")),
                 headers: Default::default(),
                 status: mcp::McpServerStatus::Active,
                 now_ms: 1,
             }
             .into_record()
         };
-        let grant = auth::CreateAuthGrantRecord {
-            grant_id: auth::AuthGrantId::new("authgrant_1"),
+        let grant = credentials::CreateCredentialGrantRecord {
+            grant_id: credentials::CredentialGrantId::new("authgrant_1"),
             provider_id: "oauth".to_owned(),
-            provider_kind: auth::AuthProviderKind::McpOAuth,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: credentials::CredentialProviderKind::McpOAuth,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -631,7 +634,7 @@ mod tests {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: auth::AuthGrantStatus::Active,
+            status: credentials::CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 1,
         }

@@ -3,7 +3,7 @@
 A contribution should make the changed behavior understandable, keep its
 contracts and documentation aligned, and provide evidence that it works. A
 release carries those changes as one coherent set of runtime, client,
-connector, and documentation artifacts.
+and documentation artifacts.
 
 Start with [Local development](local-development.md) to work from a checkout.
 This page covers preparing the contribution and how the repository turns a
@@ -178,9 +178,7 @@ The outputs have distinct jobs:
 | `dist/release-manifest.json` and `dist/envd.json` | Release identity, compatibility and component references, plus daemon discovery metadata. |
 | `dist/checksums.txt` and `dist/sbom.spdx.json` | Artifact hashes and the dependency inventory. |
 
-The images are `runtime`, `configurator-mcp`, `platform`, and
-`platform-workers`. The last name is retained for compatibility; it contains
-the connector host. Bots and Channels core run in the Rust `runtime` image.
+The images are `runtime`, `configurator-mcp`, and `platform`.
 The demo and documentation site are separate static archives served under
 `/demo/` and `/docs/`.
 
@@ -236,8 +234,20 @@ Pushing the tag starts publication. The protected Linux amd64 and Windows x64
 environment must contain `NPM_TOKEN`. The environment only pauses publication
 if approval rules have actually been configured in GitHub.
 
+Before the first Python release, create the `lightspeed-ai-sdk` project under
+**Projects** in the `lightspeed-ai` PyPI organization. [PyPI project setup](https://docs.pypi.org/organization-accounts/actions/project-actions/#create-a-project)
+
+In the project's **Publishing** settings, add a GitHub trusted publisher.
+Enter `smartcomputer-ai` as the GitHub owner, `lightspeed` as
+the repository, `release-tag.yml` as the workflow filename and
+`official-release` as the environment. The workflow exchanges its GitHub
+identity for a short-lived PyPI upload token. [PyPI trusted publisher setup](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)
+
 The release workflow independently tests and builds the tagged source. It
-does not promote an already-built main snapshot. Final publication runs
+builds a Python wheel and source distribution and installs each in isolation.
+After release assembly succeeds, a protected job uploads those exact files
+to PyPI. On retry, it checks the hashes of files already published for that
+version. Final publication runs
 through the `official-release` environment, validates the staged bundle by
 digest, and publishes exact-version OCI aliases, the npm package, and the
 GitHub Release with its assets. Existing aliases are checked against their

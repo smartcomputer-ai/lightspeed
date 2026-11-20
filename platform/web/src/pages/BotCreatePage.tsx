@@ -111,8 +111,6 @@ export function templateHighlights(template: BotTemplate): string[] {
         return describeCron(trigger.cron, trigger.timezone === "UTC" ? null : trigger.timezone);
       case "webhook":
         return trigger.preset === "github" ? "GitHub events" : "Webhook";
-      case "chat":
-        return "Chat messages";
       case "bot":
         return "Other bots";
     }
@@ -211,16 +209,16 @@ function Wizard({
 
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
-    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/ui/universes/${universeId}/profiles`),
   });
   const bots = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
   });
   const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups");
   const sharedProfile = useQuery({
     queryKey: ["profile", universeId, sharedProfileId],
-    queryFn: () => api<ProfileDocument>("GET", `/api/v1/universes/${universeId}/profiles/${sharedProfileId}`),
+    queryFn: () => api<ProfileDocument>("GET", `/api/ui/universes/${universeId}/profiles/${sharedProfileId}`),
     enabled: step === "profile" && setupMode === "shared" && Boolean(sharedProfileId),
   });
   const defaultEnvironmentId = defaultEnvironmentAttachment(config)?.environmentId;
@@ -321,7 +319,7 @@ function Wizard({
         profileId = id;
         await api(
           "PUT",
-          `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(profileId)}`,
+          `/api/ui/universes/${universeId}/profiles/${encodeURIComponent(profileId)}`,
           botOwnedProfileDocument({
             profileId,
             displayName: displayName.trim() || id,
@@ -332,7 +330,7 @@ function Wizard({
         );
       }
       try {
-        const { bot } = await api<BotCreateResponse>("POST", `/api/v1/universes/${universeId}/bots`, {
+        const { bot } = await api<BotCreateResponse>("POST", `/api/ui/universes/${universeId}/bots`, {
           bot: {
             botId: id,
             ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
@@ -348,7 +346,7 @@ function Wizard({
         return bot;
       } catch (error) {
         if (setupMode === "own") {
-          await api("DELETE", `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(profileId)}`).catch(
+          await api("DELETE", `/api/ui/universes/${universeId}/profiles/${encodeURIComponent(profileId)}`).catch(
             () => undefined,
           );
         }

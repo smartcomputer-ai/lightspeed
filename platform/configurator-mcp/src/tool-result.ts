@@ -1,5 +1,5 @@
 import {
-  LightspeedRpcError,
+  LightspeedApiError,
   LightspeedTransportError,
 } from "@lightspeed-ai/sdk";
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -11,7 +11,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 // empty result if the text block were dropped instead.
 export function successfulToolResult(outcome: unknown): CallToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(outcome) }],
+    content: [{ type: "text", text: JSON.stringify(outcome instanceof Uint8Array ? { encoding: "base64", data: Buffer.from(outcome).toString("base64"), bytes: outcome.byteLength } : outcome) }],
   };
 }
 
@@ -24,15 +24,15 @@ export function failedToolResult(error: unknown): CallToolResult {
 }
 
 export function safeError(error: unknown): Record<string, unknown> {
-  if (error instanceof LightspeedRpcError) {
+  if (error instanceof LightspeedApiError) {
     const result: Record<string, unknown> = {
-      type: "lightspeedRpc",
-      code: error.code,
+      type: "lightspeedApi",
+      status: error.status,
       kind: error.data?.kind ?? error.kind,
       message: redact(error.message),
     };
     if (error.data !== null && error.data !== undefined) {
-      result.data = { ...error.data, message: redact(error.data.message) };
+      result.data = { ...error.data, detail: redact(error.data.detail) };
     }
     return result;
   }
@@ -54,7 +54,7 @@ export function safeError(error: unknown): Record<string, unknown> {
 
 function redact(value: string): string {
   return value
-    .replace(/\blsk_[A-Za-z0-9._~-]+/g, "[REDACTED]")
+    .replace(/\blsr_[A-Za-z0-9._~-]+/g, "[REDACTED]")
     .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]");
 }
 

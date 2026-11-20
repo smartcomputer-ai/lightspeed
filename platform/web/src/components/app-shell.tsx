@@ -1,8 +1,11 @@
+import { OrganizationSwitcher } from "@/components/admin/organization-switcher";
+import { organizationAdminPath, useAdminAccess } from "@/lib/admin-access";
+import type { DeploymentAction, OrganizationAction } from "@lightspeed-ai/platform-shared";
 import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
+import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ReducedMotionOnIcon, EnvironmentProviderIcon, MemberIcon, SignInIcon, SettingsIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +19,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
@@ -33,37 +37,38 @@ import { useDialogStarscapeWarmth } from "@/components/starscape/use-dialog-star
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
 
-/// The sidebar has four modes. Universe mode is the app's top level:
-/// switcher + universe nav. Admin, account and preferences are modes
-/// *above* the universe structure — the header becomes a deliberately
-/// generic "Back" (naming no universe) and the content is the mode's own
-/// menu, if it has one.
-type ShellMode = "universe" | "admin" | "account" | "preferences";
-
-const ADMIN_TITLE = "Platform admin";
-const ACCOUNT_TITLE = "Your account";
-const PREFERENCES_TITLE = "Preferences";
+/// Working universes and organization administration have explicit context switchers.
+/// Platform controls are a separate deployment-wide section inside Admin.
+type ShellMode = "universe" | "admin" | "settings";
 
 const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
-  admin: ADMIN_TITLE,
-  account: ACCOUNT_TITLE,
-  preferences: PREFERENCES_TITLE,
+  admin: "Admin",
+  settings: "Settings",
 };
 
 /// The mode a path belongs to: its first segment, for the modes above the
 /// universes.
 function shellMode(pathname: string): ShellMode {
   const first = pathname.split("/")[1];
-  return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
+  return first === "admin" || first === "settings" ? first : "universe";
 }
 
-const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
-  { to: "/admin/users", icon: UserAdminIcon, label: "Users" },
-  { to: "/admin/universes", icon: UniversesIcon, label: "Universes" },
-  { to: "/admin/api-keys", icon: ApiKeyIcon, label: "API keys" },
-  { to: "/admin/channels", icon: ChannelIcon, label: "Channels" },
-  { to: "/admin/audit", icon: AuditLogIcon, label: "Audit log" },
-  { to: "/admin/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
+/// Each admin entry shows when the caller holds the action its page needs.
+const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string; action: DeploymentAction }> = [
+  { to: "/admin/platform/organizations", icon: UserIcon, label: "All Organizations", action: "administerOrganizations" },
+  { to: "/admin/platform/users", icon: UserAdminIcon, label: "Users", action: "manageUsers" },
+  { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log", action: "readAudit" },
+  { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", action: "configureDeployment" },
+  { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes", action: "manageUnclaimedUniverses" },
+  { to: "/admin/platform/settings", icon: SettingsIcon, label: "Settings", action: "configureDeployment" },
+];
+/// Universes has no action of its own: it opens for the organization's
+/// administrators and for Owners of any of its universes.
+const ORGANIZATION_NAV: Array<{ path: string; icon: ComponentType; label: string; action?: OrganizationAction }> = [
+  { path: "universes", icon: UniversesIcon, label: "Universes" },
+  { path: "members", icon: MemberIcon, label: "Members", action: "manageMembers" },
+  { path: "api-keys", icon: ApiKeyIcon, label: "API keys", action: "manageMembers" },
+  { path: "settings", icon: SettingsIcon, label: "Settings", action: "managePolicy" },
 ];
 
 /// The part of the page title the route alone determines, most specific
@@ -72,8 +77,10 @@ const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
 export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
   const mode = shellMode(pathname);
   if (mode === "admin") {
-    const item = ADMIN_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
-    return item ? [item.label, ADMIN_TITLE] : [ADMIN_TITLE];
+    const item = PLATFORM_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
+    if (item) return [item.label, "Platform administration"];
+    const section = pathname.split("/")[4];
+    return [ORGANIZATION_NAV.find(item => item.path === section)?.label ?? MODE_TITLE.admin, MODE_TITLE.admin];
   }
   if (mode !== "universe") return [MODE_TITLE[mode]];
   const universe = matchPath("/u/:handle/*", pathname);
@@ -116,7 +123,7 @@ function NavItem({
   );
 }
 
-/// Header slot for admin/account modes: whole row navigates back to the
+/// Header slot for Settings: whole row navigates back to the
 /// app (HomeRedirect resolves the last-visited universe or the empty
 /// state); the mode title marks where you are.
 function ModeHeader({ title }: { title: string }) {
@@ -137,44 +144,54 @@ function ModeHeader({ title }: { title: string }) {
   );
 }
 
-/// The account and preferences pages' cards, by element id, as the
-/// sidebar's links to them; `shown` leaves out a card the page leaves out.
-const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label: string; icon: ComponentType; shown?: () => boolean }>> = {
-  account: [
+/// The Settings page's cards, by element id, as the sidebar's links to
+/// them, in the page's groups; `shown` leaves out a card the page leaves out.
+const SETTINGS_SECTIONS: Array<{ label: string; items: Array<{ id: string; label: string; icon: ComponentType; shown?: () => boolean }> }> = [
+  { label: "Account", items: [
     { id: "profile", label: "Profile", icon: UserIcon },
-    { id: "security", label: "Security", icon: SecurityIcon },
-  ],
-  preferences: [
-    { id: "appearance", label: "Appearance", icon: AppearanceIcon },
+    { id: "security", label: "Sign-in", icon: SignInIcon },
+    { id: "api-keys", label: "API keys", icon: ApiKeyIcon },
+  ] },
+  { label: "Appearance", items: [
+    { id: "appearance", label: "Theme", icon: AppearanceIcon },
+    { id: "accessibility", label: "Accessibility", icon: ReducedMotionOnIcon },
     { id: "demo-data", label: "Demo data", icon: ResetIcon, shown: () => demoMode() !== null },
-  ],
-};
+  ] },
+];
 
 function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-export function AppShell({ user, admin }: { user: SessionUser; admin: boolean }) {
+export function AppShell({ user }: { user: SessionUser }) {
   const universes = useUniverses();
+  const adminAccess = useAdminAccess();
+  const platformNav = PLATFORM_NAV.filter(item => adminAccess.deployment(item.action));
   const match = useMatch("/u/:handle/*");
-  const activeHandle = match?.params.handle;
+  const adminMatch = useMatch("/admin/organizations/:organizationId/universes/:handle/*");
+  const activeHandle = match?.params.handle ?? adminMatch?.params.handle;
   const active = activeHandle
-    ? universes.data?.find((u) => u.handle === activeHandle)
+    ? universes.data?.find((u) => u.handle === activeHandle && (!adminMatch || u.organizationId === adminMatch.params.organizationId))
     : undefined;
   const permissions = useActionPermissions(active?.id);
   const location = useLocation();
   const mode = shellMode(location.pathname);
+  useEffect(() => {
+    if (mode !== "settings") return;
+    const section = SETTINGS_SECTIONS.flatMap((group) => group.items).find((item) => `#${item.id}` === location.hash);
+    if (section) scrollToSection(section.id);
+  }, [location.hash, location.pathname, mode]);
   // Creating dialogs open on a starscape drawn ahead, after the page has loaded.
   useDialogStarscapeWarmth();
 
   useEffect(() => {
-    if (active) {
+    if (active && mode === "universe") {
       rememberUniverse(active.handle);
     }
-  }, [active]);
+  }, [active, mode]);
 
   // The main menu's width can be dragged, and dragged narrow enough it
-  // folds to icons; both are kept per account.
+  // folds to icons; both are kept per user.
   const { sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useUserPreferences();
   const sidebarResize = useResizableWidth({
     stored: sidebarWidth,
@@ -190,12 +207,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     onCommit: setSidebarWidth,
   });
 
-  const mobileTitle =
-    mode === "universe"
-      ? (active?.name ?? "Lightspeed")
-      : mode === "account"
-        ? "Account"
-        : MODE_TITLE[mode];
+  const mobileTitle = mode === "universe" ? (active?.name ?? "Lightspeed") : MODE_TITLE[mode];
 
   return (
     <SidebarProvider
@@ -214,11 +226,11 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           data-sidebar-logo=""
           className="sidebar-logo pointer-events-none absolute -z-10 group-data-[collapsible=icon]:hidden"
         />
-        {/* Fixed at the pane bar height, so the collapsed sidebar keeps the line too. */}
-        <SidebarHeader className="relative h-(--pane-bar-height) shrink-0 justify-center p-(--sidebar-header-padding)">
+        {/* Admin stacks Back, the Organizations heading, and its selector. */}
+        <SidebarHeader className={cn("relative shrink-0 justify-center p-(--sidebar-header-padding)", mode !== "admin" && "h-(--pane-bar-height)")}>
           {mode === "universe" ? (
-            <UniverseSwitcher active={active} admin={admin} />
-          ) : (
+            <UniverseSwitcher active={active} />
+          ) : mode === "admin" ? <OrganizationSwitcher /> : (
             <ModeHeader title={MODE_TITLE[mode]} />
           )}
         </SidebarHeader>
@@ -244,26 +256,28 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               </SidebarGroup>
             );
           })}
-          {mode === "admin" && (
-            <SidebarGroup>
-              <SidebarGroupLabel>{ADMIN_TITLE}</SidebarGroupLabel>
+          {mode === "admin" && <>
+            {adminAccess.selected && <SidebarGroup><SidebarGroupContent><SidebarMenu>
+              {ORGANIZATION_NAV.filter(item => item.action ? adminAccess.organization(item.action) : adminAccess.universes).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
+            </SidebarMenu></SidebarGroupContent></SidebarGroup>}
+            {platformNav.length > 0 && <><SidebarSeparator /><SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
+              {platformNav.map(({ action: _action, ...item }) => <NavItem key={item.to} {...item} />)}
+            </SidebarMenu></SidebarGroupContent></SidebarGroup></>}
+          </>}
+          {mode === "settings" && SETTINGS_SECTIONS.map((group) => (
+            <SidebarGroup key={group.label}>
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {ADMIN_NAV.map((item) => (
-                    <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} />
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
-          {(mode === "account" || mode === "preferences") && (
-            <SidebarGroup>
-              <SidebarGroupLabel>{MODE_TITLE[mode]}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {PAGE_SECTIONS[mode].filter((section) => section.shown?.() ?? true).map((section) => (
+                  {group.items.filter((section) => section.shown?.() ?? true).map((section) => (
                     <SidebarMenuItem key={section.id}>
-                      <SidebarMenuButton onClick={() => scrollToSection(section.id)} tooltip={section.label} className={NAV_ICON_CLASS}>
+                      <SidebarMenuButton
+                        render={<Link to={`#${section.id}`} />}
+                        onClick={() => scrollToSection(section.id)}
+                        isActive={location.hash === `#${section.id}`}
+                        tooltip={section.label}
+                        className={NAV_ICON_CLASS}
+                      >
                         <section.icon />
                         <span>{section.label}</span>
                       </SidebarMenuButton>
@@ -272,10 +286,10 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-          )}
+          ))}
         </SidebarContent>
         <SidebarFooter>
-          <UserMenu user={user} admin={admin} />
+          <UserMenu user={user} canAdmin={adminAccess.any} organizationId={active?.organizationId} />
         </SidebarFooter>
         <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>

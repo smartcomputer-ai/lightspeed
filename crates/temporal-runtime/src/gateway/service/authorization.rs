@@ -1,7 +1,5 @@
 //! Shared-service admission. Every handler authorizes by its method name:
-//! a request must address this universe with a key holding the method's
-//! group, which the boundary already checked and in-process callers must
-//! satisfy too; internal work for a bot or a delegated session is held to
+//! a request must address this universe; internal work for a bot or a delegated session is held to
 //! the controller rules, from the target's own row. Deciding what
 //! a person may do belongs to whoever asserts actors.
 pub(crate) use super::controller::ControllerContext;
@@ -29,36 +27,6 @@ fn access_error(error: store_pg::AccessStoreError) -> AgentApiError {
 }
 
 impl GatewayAgentApi {
-    /// A channel conversation reads the runs of sessions that admitted it as a
-    /// bound receiver; it acts with the authority of the bot that owns them.
-    pub(crate) async fn read_run_for_channel(
-        &self,
-        workflow_id: &str,
-        params: RunReadParams,
-    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
-        if !workflow_id.starts_with(&format!("{}/chat-", self.universe_id())) {
-            return Err(denied());
-        }
-        let session = SessionId::try_new(params.session_id.clone()).map_err(|_| denied())?;
-        let loaded = self.load_session_state(&session).await?;
-        let bound = loaded.state.workflow_tools.bindings.values().any(|binding| matches!(&binding.target,
-            harness::WorkflowToolTarget::Bound { receiver, .. }
-                if receiver.workflow_id == workflow_id && receiver.workflow_kind == temporal_workflow::channels::CHANNEL_CONVERSATION_WORKFLOW_KIND));
-        let bot = self
-            .access_store()
-            .session_access(self.universe_id(), &params.session_id)
-            .await
-            .map_err(access_error)?
-            .and_then(|access| access.bot);
-        let (true, Some(bot)) = (bound, bot) else {
-            return Err(denied());
-        };
-        let context = self
-            .controller_context(ResourceRef::Bot(bot), workflow_id.to_owned())
-            .await?;
-        with_controller_authority(context, self.read_run(params)).await
-    }
-
     /// Cascade deletion checks every session of the retention tree.
     pub(super) async fn authorize_session_subtree(
         &self,
@@ -92,8 +60,8 @@ impl GatewayAgentApi {
     /// configuration names, under the bot's own controller authority.
     pub(crate) async fn lease_bot_poll_grant(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
+        params: CredentialGrantLeaseParams,
+    ) -> Result<CredentialGrantLeaseResponse, AgentApiError> {
         use ::bots::BotTriggerStore as _;
         let authority = CONTROLLER.try_with(Clone::clone).map_err(|_| denied())?;
         let ResourceRef::Bot(ref id) = authority.actor else {
@@ -320,9 +288,7 @@ impl GatewayAgentApi {
     ) -> Result<(), AgentApiError> {
         let requirement = api::method_access(method).ok_or_else(denied)?;
         let Some(controller) = self.current_controller() else {
-            if !self.caller()?.permits(method) {
-                return Err(denied());
-            }
+            self.caller()?;
             return Ok(());
         };
         if self
@@ -379,7 +345,7 @@ impl GatewayAgentApi {
     }
 
     /// Who a change is attributed to: internal work names its controller; a
-    /// request, its actor, else its key, else the local caller.
+    /// request, its actor, else its token, else the local caller.
     pub(super) fn attribution(&self) -> Result<Attribution, AgentApiError> {
         Ok(match self.current_controller() {
             Some(controller) => Attribution::Internal {
@@ -403,34 +369,35 @@ impl GatewayAgentApi {
         session: &SessionId,
         visibility: Option<Visibility>,
     ) -> Result<(), AgentApiError> {
-        let (created_by, visibility, bot) = match self.current_controller() {
+        match self.current_controller() {
             Some(controller) => match controller.actor {
-                ResourceRef::Bot(bot) => (
-                    Attribution::Internal {
-                        component: "controller".into(),
-                        cause: controller.cause,
-                    },
-                    None,
-                    Some(bot),
-                ),
-                _ => return Ok(()),
+                ResourceRef::Bot(bot) => {
+                    self.access_store()
+                        .stamp_bot_session(
+                            self.universe_id(),
+                            session.as_str(),
+                            &Attribution::Internal {
+                                component: "controller".into(),
+                                cause: controller.cause,
+                            },
+                            &bot,
+                        )
+                        .await
+                }
+                _ => Ok(()),
             },
-            None => (
-                self.caller()?.attribution(),
-                Some(visibility.unwrap_or(Visibility::Restricted)),
-                None,
-            ),
-        };
-        self.access_store()
-            .stamp_session(
-                self.universe_id(),
-                session.as_str(),
-                &created_by,
-                visibility,
-                bot.as_deref(),
-            )
-            .await
-            .map_err(access_error)
+            None => {
+                self.access_store()
+                    .stamp_session(
+                        self.universe_id(),
+                        session.as_str(),
+                        &self.caller()?.attribution(),
+                        Some(visibility.unwrap_or(Visibility::Restricted)),
+                    )
+                    .await
+            }
+        }
+        .map_err(access_error)
     }
 
     /// Record who created a bot, once its row exists.
@@ -449,13 +416,7 @@ impl GatewayAgentApi {
 pub(super) fn recorded_attribution(attribution: Attribution) -> harness::Attribution {
     match attribution {
         Attribution::Actor { id } => harness::Attribution::Actor { id },
-        Attribution::Key { key_id, scope_kind } => harness::Attribution::Key {
-            key_id,
-            scope_kind: match scope_kind {
-                api::AccessScopeKind::Deployment => harness::AttributedKeyScope::Deployment,
-                api::AccessScopeKind::Universe => harness::AttributedKeyScope::Universe,
-            },
-        },
+        Attribution::Token { name } => harness::Attribution::Token { name },
         Attribution::Local => harness::Attribution::Local,
         Attribution::Internal { component, cause } => {
             harness::Attribution::Internal { component, cause }
@@ -500,13 +461,9 @@ mod tests {
             Attribution::Actor {
                 id: "user-1".into(),
             },
-            Attribution::key("ci-bot", api::AccessScope::Deployment),
-            Attribution::key(
-                "ci-bot",
-                api::AccessScope::Universe {
-                    universe_id: uuid::Uuid::from_u128(1),
-                },
-            ),
+            Attribution::Token {
+                name: "operator".into(),
+            },
             Attribution::Local,
             Attribution::Internal {
                 component: "controller".into(),
@@ -519,10 +476,11 @@ mod tests {
             );
         }
         assert_eq!(
-            recorded_attribution(Attribution::key("ci-bot", api::AccessScope::Deployment)),
-            harness::Attribution::Key {
-                key_id: "ci-bot".into(),
-                scope_kind: harness::AttributedKeyScope::Deployment,
+            recorded_attribution(Attribution::Token {
+                name: "operator".into()
+            }),
+            harness::Attribution::Token {
+                name: "operator".into()
             }
         );
     }

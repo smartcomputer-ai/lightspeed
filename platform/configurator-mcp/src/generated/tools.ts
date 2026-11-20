@@ -12,7 +12,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read a workspace file",
     "description": "Reads bytes at a path in the current workspace head.",
     "paramsType": "VfsWorkspaceFileReadParams",
-    "resultType": "AgentApiOutcome<BlobReadResponse>",
+    "resultType": "bytes",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -41,7 +41,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Start a session",
     "description": "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
     "paramsType": "SessionStartParams",
-    "resultType": "AgentApiOutcome<SessionStartResponse>",
+    "resultType": "SessionStartResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -1230,7 +1230,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read a session",
     "description": "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
     "paramsType": "SessionReadParams",
-    "resultType": "AgentApiOutcome<SessionReadResponse>",
+    "resultType": "SessionReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -1260,7 +1260,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List sessions",
     "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.",
     "paramsType": "SessionListParams",
-    "resultType": "AgentApiOutcome<SessionListResponse>",
+    "resultType": "SessionListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -1343,7 +1343,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Replace session configuration",
     "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
     "paramsType": "SessionConfigPutParams",
-    "resultType": "AgentApiOutcome<SessionConfigPutResponse>",
+    "resultType": "SessionConfigPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Replace the session config with a complete document. Anything omitted\nfrom the document reverts to defaults; an absent feature is revoked.\nRequires an idle session; putting an identical document is a no-op that\nleaves the revision untouched.",
@@ -2314,7 +2314,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Rename a session",
     "description": "Sets the display name, or clears it when displayName is omitted.",
     "paramsType": "SessionRenameParams",
-    "resultType": "AgentApiOutcome<SessionRenameResponse>",
+    "resultType": "SessionRenameResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2342,7 +2342,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Replace session metadata",
     "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
     "paramsType": "SessionMetadataPutParams",
-    "resultType": "AgentApiOutcome<SessionMetadataPutResponse>",
+    "resultType": "SessionMetadataPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Replace a session's metadata with a complete map (the same bounds as\n`session/start`). Record-only: it does not touch the event log or\n`updatedAtMs`. There is no merge form; read, edit, and put.",
@@ -2371,7 +2371,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Replace session retention",
     "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
     "paramsType": "SessionRetentionPutParams",
-    "resultType": "AgentApiOutcome<SessionRetentionPutResponse>",
+    "resultType": "SessionRetentionPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -2405,7 +2405,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Restart a stopped session",
     "description": "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.",
     "paramsType": "SessionRestartParams",
-    "resultType": "AgentApiOutcome<SessionRestartResponse>",
+    "resultType": "SessionRestartResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2426,7 +2426,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Close a session",
     "description": "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
     "paramsType": "SessionCloseParams",
-    "resultType": "AgentApiOutcome<SessionCloseResponse>",
+    "resultType": "SessionCloseResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2452,7 +2452,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Delete closed sessions",
     "description": "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
     "paramsType": "SessionDeleteParams",
-    "resultType": "AgentApiOutcome<SessionDeleteResponse>",
+    "resultType": "SessionDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2485,7 +2485,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Share a session with the universe",
     "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
     "paramsType": "SessionShareParams",
-    "resultType": "AgentApiOutcome<SessionShareResponse>",
+    "resultType": "SessionShareResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -2509,7 +2509,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read the session event stream",
     "description": "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
     "paramsType": "SessionEventsReadParams",
-    "resultType": "AgentApiOutcome<SessionEventsReadResponse>",
+    "resultType": "SessionEventsReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2598,7 +2598,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Append keyed session context",
     "description": "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.",
     "paramsType": "ContextAppendParams",
-    "resultType": "AgentApiOutcome<ContextAppendResponse>",
+    "resultType": "ContextAppendResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2777,7 +2777,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Remove keyed session context",
     "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
     "paramsType": "ContextRemoveParams",
-    "resultType": "AgentApiOutcome<ContextRemoveResponse>",
+    "resultType": "ContextRemoveResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2806,7 +2806,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Replace session context entries",
     "description": "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
     "paramsType": "ContextReplaceParams",
-    "resultType": "AgentApiOutcome<ContextReplaceResponse>",
+    "resultType": "ContextReplaceResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -2985,7 +2985,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Compact session context",
     "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.",
     "paramsType": "ContextCompactParams",
-    "resultType": "AgentApiOutcome<ContextCompactResponse>",
+    "resultType": "ContextCompactResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3006,7 +3006,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Start an agent run",
     "description": "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.",
     "paramsType": "RunStartParams",
-    "resultType": "AgentApiOutcome<RunStartResponse>",
+    "resultType": "RunStartResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3417,7 +3417,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List session runs",
     "description": "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.",
     "paramsType": "RunListParams",
-    "resultType": "AgentApiOutcome<RunListResponse>",
+    "resultType": "RunListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3453,7 +3453,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read one session run",
     "description": "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.",
     "paramsType": "RunReadParams",
-    "resultType": "AgentApiOutcome<RunReadResponse>",
+    "resultType": "RunReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3478,7 +3478,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Cancel a run",
     "description": "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
     "paramsType": "RunCancelParams",
-    "resultType": "AgentApiOutcome<RunCancelResponse>",
+    "resultType": "RunCancelResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3503,7 +3503,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Decide pending run approvals",
     "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.",
     "paramsType": "RunApprovalsDecideParams",
-    "resultType": "AgentApiOutcome<RunApprovalsDecideResponse>",
+    "resultType": "RunApprovalsDecideResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3565,7 +3565,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Steer the active run",
     "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.",
     "paramsType": "RunSteerParams",
-    "resultType": "AgentApiOutcome<RunSteerResponse>",
+    "resultType": "RunSteerResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3741,7 +3741,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List available session skills",
     "description": "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
     "paramsType": "SkillListParams",
-    "resultType": "AgentApiOutcome<SkillListResponse>",
+    "resultType": "SkillListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -3762,7 +3762,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Apply a profile to a session",
     "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
     "paramsType": "ProfileApplyParams",
-    "resultType": "AgentApiOutcome<ProfileApplyResponse>",
+    "resultType": "ProfileApplyResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -4886,7 +4886,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Activate a session environment",
     "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
     "paramsType": "SessionEnvironmentActivateParams",
-    "resultType": "AgentApiOutcome<SessionEnvironmentActivateResponse>",
+    "resultType": "SessionEnvironmentActivateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -4911,7 +4911,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Deactivate the session environment",
     "description": "Clears active environment selection without changing or closing the universe environment.",
     "paramsType": "SessionEnvironmentDeactivateParams",
-    "resultType": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>",
+    "resultType": "SessionEnvironmentDeactivateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -4932,7 +4932,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Bind a credential into an environment",
     "description": "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.",
     "paramsType": "EnvironmentCredentialBindParams",
-    "resultType": "AgentApiOutcome<EnvironmentCredentialBindResponse>",
+    "resultType": "EnvironmentCredentialBindResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5001,7 +5001,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List environment credential bindings",
     "description": "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
     "paramsType": "EnvironmentCredentialListParams",
-    "resultType": "AgentApiOutcome<EnvironmentCredentialListResponse>",
+    "resultType": "EnvironmentCredentialListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5022,7 +5022,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Unbind an environment credential",
     "description": "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.",
     "paramsType": "EnvironmentCredentialUnbindParams",
-    "resultType": "AgentApiOutcome<EnvironmentCredentialUnbindResponse>",
+    "resultType": "EnvironmentCredentialUnbindResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5047,7 +5047,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Create an environment",
     "description": "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.",
     "paramsType": "EnvironmentCreateParams",
-    "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
+    "resultType": "EnvironmentCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5082,7 +5082,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "object"
         },
         "providerId": {
-          "description": "The provider to create the environment with; the universe needs an\nenabled binding to it.",
+          "description": "The provider to create the environment with; it must be available to\nthe universe.",
           "type": "string"
         },
         "requestId": {
@@ -5152,7 +5152,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read an environment",
     "description": "Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.",
     "paramsType": "EnvironmentReadParams",
-    "resultType": "AgentApiOutcome<EnvironmentReadResponse>",
+    "resultType": "EnvironmentReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5173,7 +5173,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Update an environment",
     "description": "Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.",
     "paramsType": "EnvironmentUpdateParams",
-    "resultType": "AgentApiOutcome<EnvironmentUpdateResponse>",
+    "resultType": "EnvironmentUpdateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Replace an environment's display name and caller metadata.",
@@ -5209,7 +5209,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List environments",
     "description": "Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.",
     "paramsType": "EnvironmentListParams",
-    "resultType": "AgentApiOutcome<EnvironmentListResponse>",
+    "resultType": "EnvironmentListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5306,7 +5306,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Close an environment",
     "description": "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.",
     "paramsType": "EnvironmentCloseParams",
-    "resultType": "AgentApiOutcome<EnvironmentCloseResponse>",
+    "resultType": "EnvironmentCloseResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5327,7 +5327,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Register an external environment",
     "description": "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
     "paramsType": "EnvironmentExternalCreateParams",
-    "resultType": "AgentApiOutcome<EnvironmentExternalCreateResponse>",
+    "resultType": "EnvironmentExternalCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5373,7 +5373,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Configure environment public ingress",
     "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
     "paramsType": "EnvironmentIngressPutParams",
-    "resultType": "AgentApiOutcome<EnvironmentIngressPutResponse>",
+    "resultType": "EnvironmentIngressPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5399,7 +5399,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Set environment power",
     "description": "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
     "paramsType": "EnvironmentPowerPutParams",
-    "resultType": "AgentApiOutcome<EnvironmentPowerPutResponse>",
+    "resultType": "EnvironmentPowerPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5451,26 +5451,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_environments_provider-bindings_list",
-    "method": "environments/provider-bindings/list",
+    "name": "lightspeed_environments_providers_list",
+    "method": "environments/providers/list",
     "group": "environments",
-    "summary": "List environment provider bindings",
-    "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
-    "paramsType": "EnvironmentProviderBindingListParams",
-    "resultType": "AgentApiOutcome<EnvironmentProviderBindingListResponse>",
+    "summary": "List available environment providers",
+    "description": "Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.",
+    "paramsType": "AvailableEnvironmentProviderListParams",
+    "resultType": "AvailableEnvironmentProviderListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
     }
   },
   {
-    "name": "lightspeed_environments_provider-bindings_read",
-    "method": "environments/provider-bindings/read",
+    "name": "lightspeed_environments_providers_read",
+    "method": "environments/providers/read",
     "group": "environments",
-    "summary": "Read an environment provider binding",
-    "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
-    "paramsType": "EnvironmentProviderBindingReadParams",
-    "resultType": "AgentApiOutcome<EnvironmentProviderBindingReadResponse>",
+    "summary": "Read an available environment provider",
+    "description": "Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.",
+    "paramsType": "AvailableEnvironmentProviderReadParams",
+    "resultType": "AvailableEnvironmentProviderReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5489,14 +5489,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/templates/list",
     "group": "environments",
     "summary": "List environment templates",
-    "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
+    "description": "Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.",
     "paramsType": "EnvironmentTemplateListParams",
-    "resultType": "AgentApiOutcome<EnvironmentTemplateListResponse>",
+    "resultType": "EnvironmentTemplateListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "providerId": {
-          "description": "Only this provider's templates; omit for every enabled binding.",
+          "description": "Only this provider's templates; omit for every provider available to\nthe universe.",
           "type": [
             "string",
             "null"
@@ -5511,9 +5511,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/templates/read",
     "group": "environments",
     "summary": "Read an environment template",
-    "description": "Returns one template, read live from a bound provider's controller.",
+    "description": "Returns one template, read live from the controller of a provider available to the universe.",
     "paramsType": "EnvironmentTemplateReadParams",
-    "resultType": "AgentApiOutcome<EnvironmentTemplateReadResponse>",
+    "resultType": "EnvironmentTemplateReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5538,7 +5538,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Start transcription",
     "description": "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.",
     "paramsType": "TranscriptionStartParams",
-    "resultType": "AgentApiOutcome<TranscriptionResponse>",
+    "resultType": "TranscriptionResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -5631,9 +5631,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "transcriptions/read",
     "group": "transcriptions",
     "summary": "Read transcription",
-    "description": "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
+    "description": "Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.",
     "paramsType": "TranscriptionReadParams",
-    "resultType": "AgentApiOutcome<TranscriptionResponse>",
+    "resultType": "TranscriptionResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -5655,9 +5655,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "transcriptions/cancel",
     "group": "transcriptions",
     "summary": "Cancel transcription",
-    "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
+    "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.",
     "paramsType": "TranscriptionCancelParams",
-    "resultType": "AgentApiOutcome<TranscriptionResponse>",
+    "resultType": "TranscriptionResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -5681,7 +5681,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read universe model defaults",
     "description": "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.",
     "paramsType": "ModelDefaultsReadParams",
-    "resultType": "AgentApiOutcome<ModelDefaultsResponse>",
+    "resultType": "ModelDefaultsResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -5697,7 +5697,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Set a universe model default",
     "description": "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
     "paramsType": "ModelDefaultsPutParams",
-    "resultType": "AgentApiOutcome<ModelDefaultsResponse>",
+    "resultType": "ModelDefaultsResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -5771,7 +5771,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Discover available models",
     "description": "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
     "paramsType": "ModelListParams",
-    "resultType": "AgentApiOutcome<ModelListResponse>",
+    "resultType": "ModelListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Direct provider model discovery. Results may be served from a brief\nprocess-local cache; clients refresh by calling this method.",
@@ -5791,7 +5791,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Create an agent profile",
     "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
     "paramsType": "ProfileCreateParams",
-    "resultType": "AgentApiOutcome<ProfileCreateResponse>",
+    "resultType": "ProfileCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -6865,7 +6865,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read an agent profile",
     "description": "Returns the complete profile document and current revision.",
     "paramsType": "ProfileReadParams",
-    "resultType": "AgentApiOutcome<ProfileReadResponse>",
+    "resultType": "ProfileReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -6891,7 +6891,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List agent profiles",
     "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
     "paramsType": "ProfileListParams",
-    "resultType": "AgentApiOutcome<ProfileListResponse>",
+    "resultType": "ProfileListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
@@ -6904,7 +6904,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Create or replace an agent profile",
     "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
     "paramsType": "ProfilePutParams",
-    "resultType": "AgentApiOutcome<ProfilePutResponse>",
+    "resultType": "ProfilePutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -7987,7 +7987,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Delete an agent profile",
     "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
     "paramsType": "ProfileDeleteParams",
-    "resultType": "AgentApiOutcome<ProfileDeleteResponse>",
+    "resultType": "ProfileDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8013,7 +8013,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Store content-addressed blobs",
     "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
     "paramsType": "BlobPutParams",
-    "resultType": "AgentApiOutcome<BlobPutResponse>",
+    "resultType": "BlobPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "`blobs/put` is batch-native: pass one item to store a single blob. Results\ncome back in request order. Uploads are eligible for collection after the\ndeployment's grace period unless retained by a durable resource. Reads do\nnot extend retention; admitting an existing ref refreshes its grace.",
@@ -8047,9 +8047,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "blobs/read",
     "group": "session",
     "summary": "Read a content-addressed blob",
-    "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
+    "description": "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.",
     "paramsType": "BlobReadParams",
-    "resultType": "AgentApiOutcome<BlobReadResponse>",
+    "resultType": "bytes",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8070,7 +8070,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Check blob availability",
     "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
     "paramsType": "BlobHasParams",
-    "resultType": "AgentApiOutcome<BlobHasResponse>",
+    "resultType": "BlobHasResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8092,7 +8092,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Commit a VFS snapshot",
     "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
     "paramsType": "VfsSnapshotCommitParams",
-    "resultType": "AgentApiOutcome<VfsSnapshotCommitResponse>",
+    "resultType": "VfsSnapshotCommitResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8111,7 +8111,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read a VFS snapshot",
     "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
     "paramsType": "VfsSnapshotReadParams",
-    "resultType": "AgentApiOutcome<VfsSnapshotReadResponse>",
+    "resultType": "VfsSnapshotReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8132,7 +8132,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Create a mutable VFS workspace",
     "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
     "paramsType": "VfsWorkspaceCreateParams",
-    "resultType": "AgentApiOutcome<VfsWorkspaceCreateResponse>",
+    "resultType": "VfsWorkspaceCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8166,7 +8166,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read a VFS workspace",
     "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
     "paramsType": "VfsWorkspaceReadParams",
-    "resultType": "AgentApiOutcome<VfsWorkspaceReadResponse>",
+    "resultType": "VfsWorkspaceReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8187,7 +8187,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List VFS workspaces",
     "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
     "paramsType": "VfsWorkspaceListParams",
-    "resultType": "AgentApiOutcome<VfsWorkspaceListResponse>",
+    "resultType": "VfsWorkspaceListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
@@ -8200,7 +8200,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Update a VFS workspace",
     "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
     "paramsType": "VfsWorkspaceUpdateParams",
-    "resultType": "AgentApiOutcome<VfsWorkspaceUpdateResponse>",
+    "resultType": "VfsWorkspaceUpdateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8239,7 +8239,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Delete a VFS workspace",
     "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
     "paramsType": "VfsWorkspaceDeleteParams",
-    "resultType": "AgentApiOutcome<VfsWorkspaceDeleteResponse>",
+    "resultType": "VfsWorkspaceDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8258,9 +8258,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "mcp/servers/put",
     "group": "mcp",
     "summary": "Create or replace an MCP server record",
-    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
+    "description": "Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
     "paramsType": "McpServerPutParams",
-    "resultType": "AgentApiOutcome<McpServerPutResponse>",
+    "resultType": "McpServerPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8393,7 +8393,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "McpServerCredential": {
-          "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the auth subsystem and is never returned.",
+          "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the credentials subsystem and is never returned.",
           "oneOf": [
             {
               "properties": {
@@ -8608,7 +8608,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Discover MCP server authentication",
     "description": "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
     "paramsType": "McpServerAuthDiscoverParams",
-    "resultType": "AgentApiOutcome<McpServerAuthDiscoverResponse>",
+    "resultType": "McpServerAuthDiscoverResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Read-only authentication discovery for a prospective MCP endpoint. A\nmissing OAuth result is deliberately inconclusive: the server may be\npublic, use bearer auth, or expose OAuth metadata only through an explicit\nURL. No catalog or auth records are created by this probe.",
@@ -8630,7 +8630,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Discover MCP server tools",
     "description": "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
     "paramsType": "McpServerToolsDiscoverParams",
-    "resultType": "AgentApiOutcome<McpServerToolsDiscoverResponse>",
+    "resultType": "McpServerToolsDiscoverResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": {
@@ -8655,7 +8655,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read an MCP server record",
     "description": "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
     "paramsType": "McpServerReadParams",
-    "resultType": "AgentApiOutcome<McpServerReadResponse>",
+    "resultType": "McpServerReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8676,7 +8676,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List MCP server records",
     "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
     "paramsType": "McpServerListParams",
-    "resultType": "AgentApiOutcome<McpServerListResponse>",
+    "resultType": "McpServerListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8712,7 +8712,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Delete an MCP server record",
     "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
     "paramsType": "McpServerDeleteParams",
-    "resultType": "AgentApiOutcome<McpServerDeleteResponse>",
+    "resultType": "McpServerDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8727,16 +8727,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_import",
-    "method": "auth/grants/import",
-    "group": "auth",
+    "name": "lightspeed_credentials_grants_import",
+    "method": "credentials/grants/import",
+    "group": "credentials",
     "summary": "Import a token credential",
     "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
-    "paramsType": "AuthGrantImportParams",
-    "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
+    "paramsType": "CredentialGrantImportParams",
+    "resultType": "CredentialGrantImportResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a new token credential as a credential grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -8760,7 +8760,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered"
@@ -8801,7 +8801,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -8820,13 +8820,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_read",
-    "method": "auth/grants/read",
-    "group": "auth",
-    "summary": "Read authentication grant metadata",
+    "name": "lightspeed_credentials_grants_read",
+    "method": "credentials/grants/read",
+    "group": "credentials",
+    "summary": "Read credential grant metadata",
     "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
-    "paramsType": "AuthGrantReadParams",
-    "resultType": "AgentApiOutcome<AuthGrantReadResponse>",
+    "paramsType": "CredentialGrantReadParams",
+    "resultType": "CredentialGrantReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8841,20 +8841,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_list",
-    "method": "auth/grants/list",
-    "group": "auth",
-    "summary": "List authentication grants",
+    "name": "lightspeed_credentials_grants_list",
+    "method": "credentials/grants/list",
+    "group": "credentials",
+    "summary": "List credential grants",
     "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
-    "paramsType": "AuthGrantListParams",
-    "resultType": "AgentApiOutcome<AuthGrantListResponse>",
+    "paramsType": "CredentialGrantListParams",
+    "resultType": "CredentialGrantListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "status": {
           "anyOf": [
             {
-              "$ref": "#/definitions/AuthGrantStatus"
+              "$ref": "#/definitions/CredentialGrantStatus"
             },
             {
               "type": "null"
@@ -8864,7 +8864,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "type": "object",
       "definitions": {
-        "AuthGrantStatus": {
+        "CredentialGrantStatus": {
           "enum": [
             "active",
             "needsReauth",
@@ -8877,13 +8877,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_put",
-    "method": "auth/grants/put",
-    "group": "auth",
+    "name": "lightspeed_credentials_grants_put",
+    "method": "credentials/grants/put",
+    "group": "credentials",
     "summary": "Declare a token credential",
     "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
-    "paramsType": "AuthGrantPutParams",
-    "resultType": "AgentApiOutcome<AuthGrantPutResponse>",
+    "paramsType": "CredentialGrantPutParams",
+    "resultType": "CredentialGrantPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
@@ -8915,7 +8915,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered",
@@ -8956,7 +8956,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -8975,13 +8975,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_revoke",
-    "method": "auth/grants/revoke",
-    "group": "auth",
-    "summary": "Revoke an authentication grant",
+    "name": "lightspeed_credentials_grants_revoke",
+    "method": "credentials/grants/revoke",
+    "group": "credentials",
+    "summary": "Revoke a credential grant",
     "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
-    "paramsType": "AuthGrantRevokeParams",
-    "resultType": "AgentApiOutcome<AuthGrantRevokeResponse>",
+    "paramsType": "CredentialGrantRevokeParams",
+    "resultType": "CredentialGrantRevokeResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8996,16 +8996,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_clients_create",
-    "method": "auth/clients/create",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_create",
+    "method": "credentials/clients/create",
+    "group": "credentials",
     "summary": "Register an OAuth client",
     "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
-    "paramsType": "AuthClientCreateParams",
-    "resultType": "AgentApiOutcome<AuthClientCreateResponse>",
+    "paramsType": "CredentialClientCreateParams",
+    "resultType": "CredentialClientCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
+      "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `credentials/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -9057,7 +9057,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
+          "$ref": "#/definitions/CredentialProviderKind"
         },
         "remoteClientId": {
           "type": "string"
@@ -9090,7 +9090,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthProviderKind": {
+        "CredentialProviderKind": {
           "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
           "enum": [
             "staticToken",
@@ -9115,13 +9115,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_clients_read",
-    "method": "auth/clients/read",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_read",
+    "method": "credentials/clients/read",
+    "group": "credentials",
     "summary": "Read OAuth client metadata",
     "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
-    "paramsType": "AuthClientReadParams",
-    "resultType": "AgentApiOutcome<AuthClientReadResponse>",
+    "paramsType": "CredentialClientReadParams",
+    "resultType": "CredentialClientReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9136,26 +9136,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_clients_list",
-    "method": "auth/clients/list",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_list",
+    "method": "credentials/clients/list",
+    "group": "credentials",
     "summary": "List OAuth clients",
     "description": "Lists non-secret OAuth client registrations in the universe.",
-    "paramsType": "AuthClientListParams",
-    "resultType": "AgentApiOutcome<AuthClientListResponse>",
+    "paramsType": "CredentialClientListParams",
+    "resultType": "CredentialClientListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
     }
   },
   {
-    "name": "lightspeed_auth_clients_delete",
-    "method": "auth/clients/delete",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_delete",
+    "method": "credentials/clients/delete",
+    "group": "credentials",
     "summary": "Delete an OAuth client",
     "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
-    "paramsType": "AuthClientDeleteParams",
-    "resultType": "AgentApiOutcome<AuthClientDeleteResponse>",
+    "paramsType": "CredentialClientDeleteParams",
+    "resultType": "CredentialClientDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9170,13 +9170,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_flows_start",
-    "method": "auth/flows/start",
-    "group": "auth",
+    "name": "lightspeed_credentials_flows_start",
+    "method": "credentials/flows/start",
+    "group": "credentials",
     "summary": "Start an OAuth authorization flow",
-    "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
-    "paramsType": "AuthFlowStartParams",
-    "resultType": "AgentApiOutcome<AuthFlowStartResponse>",
+    "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.",
+    "paramsType": "CredentialFlowStartParams",
+    "resultType": "CredentialFlowStartResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9192,7 +9192,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered"
@@ -9212,7 +9212,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -9231,13 +9231,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_flows_read",
-    "method": "auth/flows/read",
-    "group": "auth",
+    "name": "lightspeed_credentials_flows_read",
+    "method": "credentials/flows/read",
+    "group": "credentials",
     "summary": "Read OAuth flow status",
     "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
-    "paramsType": "AuthFlowStatusParams",
-    "resultType": "AgentApiOutcome<AuthFlowStatusResponse>",
+    "paramsType": "CredentialFlowStatusParams",
+    "resultType": "CredentialFlowStatusResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9252,19 +9252,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_create",
-    "method": "auth/providers/create",
-    "group": "auth",
-    "summary": "Register an authentication provider",
+    "name": "lightspeed_credentials_providers_create",
+    "method": "credentials/providers/create",
+    "group": "credentials",
+    "summary": "Register a credential provider",
     "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
-    "paramsType": "AuthProviderCreateParams",
-    "resultType": "AgentApiOutcome<AuthProviderCreateResponse>",
+    "paramsType": "CredentialProviderCreateParams",
+    "resultType": "CredentialProviderCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Register an auth provider. `credential` (for GitHub Apps: the private\nkey PEM) is the third deliberate inbound-plaintext path: it is encrypted\non receipt and never returned by any method. `Debug` output redacts it;\nrequest logging must never echo these params.",
+      "description": "Register a credential provider. `credential` (for GitHub Apps: the private\nkey PEM) is the third deliberate inbound-plaintext path: it is encrypted\non receipt and never returned by any method. `Debug` output redacts it;\nrequest logging must never echo these params.",
       "properties": {
         "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
+          "$ref": "#/definitions/CredentialProviderConfigInput"
         },
         "credential": {
           "type": [
@@ -9290,7 +9290,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthProviderConfigInput": {
+        "CredentialProviderConfigInput": {
           "oneOf": [
             {
               "properties": {
@@ -9338,7 +9338,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "object"
             },
             {
-              "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+              "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
               "properties": {
                 "audience": {
                   "type": [
@@ -9457,19 +9457,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_put",
-    "method": "auth/providers/put",
-    "group": "auth",
-    "summary": "Declare an authentication provider",
+    "name": "lightspeed_credentials_providers_put",
+    "method": "credentials/providers/put",
+    "group": "credentials",
+    "summary": "Declare a credential provider",
     "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
-    "paramsType": "AuthProviderPutParams",
-    "resultType": "AgentApiOutcome<AuthProviderPutResponse>",
+    "paramsType": "CredentialProviderPutParams",
+    "resultType": "CredentialProviderPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
       "properties": {
         "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
+          "$ref": "#/definitions/CredentialProviderConfigInput"
         },
         "credential": {
           "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
@@ -9498,7 +9498,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthProviderConfigInput": {
+        "CredentialProviderConfigInput": {
           "oneOf": [
             {
               "properties": {
@@ -9546,7 +9546,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "object"
             },
             {
-              "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+              "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
               "properties": {
                 "audience": {
                   "type": [
@@ -9665,13 +9665,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_read",
-    "method": "auth/providers/read",
-    "group": "auth",
-    "summary": "Read authentication provider metadata",
+    "name": "lightspeed_credentials_providers_read",
+    "method": "credentials/providers/read",
+    "group": "credentials",
+    "summary": "Read credential provider metadata",
     "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
-    "paramsType": "AuthProviderReadParams",
-    "resultType": "AgentApiOutcome<AuthProviderReadResponse>",
+    "paramsType": "CredentialProviderReadParams",
+    "resultType": "CredentialProviderReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9686,26 +9686,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_list",
-    "method": "auth/providers/list",
-    "group": "auth",
-    "summary": "List authentication providers",
+    "name": "lightspeed_credentials_providers_list",
+    "method": "credentials/providers/list",
+    "group": "credentials",
+    "summary": "List credential providers",
     "description": "Lists non-secret model/GitHub provider registrations for the universe.",
-    "paramsType": "AuthProviderListParams",
-    "resultType": "AgentApiOutcome<AuthProviderListResponse>",
+    "paramsType": "CredentialProviderListParams",
+    "resultType": "CredentialProviderListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
     }
   },
   {
-    "name": "lightspeed_auth_providers_delete",
-    "method": "auth/providers/delete",
-    "group": "auth",
-    "summary": "Delete an authentication provider",
+    "name": "lightspeed_credentials_providers_delete",
+    "method": "credentials/providers/delete",
+    "group": "credentials",
+    "summary": "Delete a credential provider",
     "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
-    "paramsType": "AuthProviderDeleteParams",
-    "resultType": "AgentApiOutcome<AuthProviderDeleteResponse>",
+    "paramsType": "CredentialProviderDeleteParams",
+    "resultType": "CredentialProviderDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9720,13 +9720,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_github_installations_list",
-    "method": "auth/github/installations/list",
-    "group": "auth",
+    "name": "lightspeed_credentials_github_installs_list",
+    "method": "credentials/github/installations/list",
+    "group": "credentials",
     "summary": "List GitHub App installations",
     "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
-    "paramsType": "AuthGitHubInstallationListParams",
-    "resultType": "AgentApiOutcome<AuthGitHubInstallationListResponse>",
+    "paramsType": "CredentialGitHubInstallationListParams",
+    "resultType": "CredentialGitHubInstallationListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9741,13 +9741,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_github_installations_grant",
-    "method": "auth/github/installations/grant",
-    "group": "auth",
+    "name": "lightspeed_credentials_github_installs_grant",
+    "method": "credentials/github/installations/grant",
+    "group": "credentials",
     "summary": "Grant access to a GitHub App installation",
-    "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
-    "paramsType": "AuthGitHubInstallationGrantParams",
-    "resultType": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>",
+    "description": "Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
+    "paramsType": "CredentialGitHubInstallationGrantParams",
+    "resultType": "CredentialGitHubInstallationGrantResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9760,7 +9760,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered"
@@ -9785,7 +9785,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -9808,9 +9808,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/create",
     "group": "bots",
     "summary": "Create a bot",
-    "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
+    "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.",
     "paramsType": "BotCreateParams",
-    "resultType": "AgentApiOutcome<BotCreateResponse>",
+    "resultType": "BotCreateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10101,66 +10101,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "kind"
               ],
               "type": "object"
-            },
-            {
-              "properties": {
-                "access": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatAccess"
-                    }
-                  ],
-                  "default": {
-                    "turn": "anyone"
-                  }
-                },
-                "accountId": {
-                  "description": "The universe's channel account this connection serves.",
-                  "type": "string"
-                },
-                "activation": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatActivation"
-                    }
-                  ],
-                  "default": {}
-                },
-                "kind": {
-                  "const": "chat",
-                  "type": "string"
-                },
-                "matchScope": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/ChatScope"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "pairing": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatPairing"
-                    }
-                  ],
-                  "default": "code"
-                },
-                "priority": {
-                  "default": 100,
-                  "description": "Lower wins among matching chat triggers on one account.",
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "kind",
-                "accountId"
-              ],
-              "type": "object"
             }
           ],
           "properties": {
@@ -10195,13 +10135,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "route": {
               "anyOf": [
                 {
@@ -10213,7 +10146,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "sessionCloseAfterMs": {
-              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the\nchat default).",
+              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.",
               "format": "uint64",
               "minimum": 0,
               "type": [
@@ -10294,112 +10227,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "const": "append",
               "description": "Append the events as context without starting a run.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatAccess": {
-          "description": "Who may take a turn and who may issue control commands, by provider\nhandle (Telegram user id, WhatsApp JID). Handle allowlists on the\ntrigger replace any platform membership lookup.",
-          "properties": {
-            "allowed": {
-              "description": "Handles allowed to take a turn when `turn` is `listed`.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "controllers": {
-              "description": "Handles allowed to issue `/activation` and `/status`; empty denies\ncontrol commands to everyone.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "turn": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChatTurnAccess"
-                }
-              ],
-              "default": "anyone"
-            }
-          },
-          "type": "object"
-        },
-        "ChatActivation": {
-          "description": "When the bot acts in a conversation.",
-          "properties": {
-            "group": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ChatGroupActivation"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "mentionNames": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "triggerPrefixes": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "ChatGroupActivation": {
-          "oneOf": [
-            {
-              "const": "mention",
-              "description": "Act on mentions, replies to the bot, and trigger prefixes only.",
-              "type": "string"
-            },
-            {
-              "const": "always",
-              "description": "Act on every message.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatPairing": {
-          "description": "Whether a conversation must present a pairing code before it connects.",
-          "oneOf": [
-            {
-              "const": "code",
-              "description": "A conversation connects once someone sends the trigger's pairing\ncode (minted by the server, shown to managers).",
-              "type": "string"
-            },
-            {
-              "const": "open",
-              "description": "Every matching conversation connects implicitly.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatScope": {
-          "enum": [
-            "direct",
-            "group"
-          ],
-          "type": "string"
-        },
-        "ChatTurnAccess": {
-          "oneOf": [
-            {
-              "const": "anyone",
-              "description": "Anyone in the conversation may take a turn.",
-              "type": "string"
-            },
-            {
-              "const": "listed",
-              "description": "Only the listed provider handles may take a turn.",
               "type": "string"
             }
           ]
@@ -10643,7 +10470,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Create or replace a bot document",
     "description": "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
     "paramsType": "BotPutParams",
-    "resultType": "AgentApiOutcome<BotPutResponse>",
+    "resultType": "BotPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10781,7 +10608,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read a bot",
     "description": "Returns the bot record, its current revision, and lifecycle columns.",
     "paramsType": "BotReadParams",
-    "resultType": "AgentApiOutcome<BotReadResponse>",
+    "resultType": "BotReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10807,7 +10634,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List bots",
     "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
     "paramsType": "BotListParams",
-    "resultType": "AgentApiOutcome<BotListResponse>",
+    "resultType": "BotListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10829,7 +10656,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Close a bot",
     "description": "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
     "paramsType": "BotCloseParams",
-    "resultType": "AgentApiOutcome<BotCloseResponse>",
+    "resultType": "BotCloseResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10855,7 +10682,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Delete a bot",
     "description": "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
     "paramsType": "BotDeleteParams",
-    "resultType": "AgentApiOutcome<BotDeleteResponse>",
+    "resultType": "BotDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10881,7 +10708,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read bot controller state",
     "description": "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
     "paramsType": "BotStateReadParams",
-    "resultType": "AgentApiOutcome<BotStateReadResponse>",
+    "resultType": "BotStateReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10907,7 +10734,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Rotate a bot session",
     "description": "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
     "paramsType": "BotSessionRotateParams",
-    "resultType": "AgentApiOutcome<BotSessionRotateResponse>",
+    "resultType": "BotSessionRotateResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -10936,9 +10763,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/put",
     "group": "bots",
     "summary": "Create or replace a trigger",
-    "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
+    "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.",
     "paramsType": "BotTriggerPutParams",
-    "resultType": "AgentApiOutcome<BotTriggerPutResponse>",
+    "resultType": "BotTriggerPutResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11135,66 +10962,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "kind"
               ],
               "type": "object"
-            },
-            {
-              "properties": {
-                "access": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatAccess"
-                    }
-                  ],
-                  "default": {
-                    "turn": "anyone"
-                  }
-                },
-                "accountId": {
-                  "description": "The universe's channel account this connection serves.",
-                  "type": "string"
-                },
-                "activation": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatActivation"
-                    }
-                  ],
-                  "default": {}
-                },
-                "kind": {
-                  "const": "chat",
-                  "type": "string"
-                },
-                "matchScope": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/ChatScope"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "pairing": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatPairing"
-                    }
-                  ],
-                  "default": "code"
-                },
-                "priority": {
-                  "default": 100,
-                  "description": "Lower wins among matching chat triggers on one account.",
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "kind",
-                "accountId"
-              ],
-              "type": "object"
             }
           ],
           "properties": {
@@ -11229,13 +10996,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "route": {
               "anyOf": [
                 {
@@ -11247,7 +11007,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "sessionCloseAfterMs": {
-              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the\nchat default).",
+              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.",
               "format": "uint64",
               "minimum": 0,
               "type": [
@@ -11328,112 +11088,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "const": "append",
               "description": "Append the events as context without starting a run.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatAccess": {
-          "description": "Who may take a turn and who may issue control commands, by provider\nhandle (Telegram user id, WhatsApp JID). Handle allowlists on the\ntrigger replace any platform membership lookup.",
-          "properties": {
-            "allowed": {
-              "description": "Handles allowed to take a turn when `turn` is `listed`.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "controllers": {
-              "description": "Handles allowed to issue `/activation` and `/status`; empty denies\ncontrol commands to everyone.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "turn": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChatTurnAccess"
-                }
-              ],
-              "default": "anyone"
-            }
-          },
-          "type": "object"
-        },
-        "ChatActivation": {
-          "description": "When the bot acts in a conversation.",
-          "properties": {
-            "group": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ChatGroupActivation"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "mentionNames": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "triggerPrefixes": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "ChatGroupActivation": {
-          "oneOf": [
-            {
-              "const": "mention",
-              "description": "Act on mentions, replies to the bot, and trigger prefixes only.",
-              "type": "string"
-            },
-            {
-              "const": "always",
-              "description": "Act on every message.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatPairing": {
-          "description": "Whether a conversation must present a pairing code before it connects.",
-          "oneOf": [
-            {
-              "const": "code",
-              "description": "A conversation connects once someone sends the trigger's pairing\ncode (minted by the server, shown to managers).",
-              "type": "string"
-            },
-            {
-              "const": "open",
-              "description": "Every matching conversation connects implicitly.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatScope": {
-          "enum": [
-            "direct",
-            "group"
-          ],
-          "type": "string"
-        },
-        "ChatTurnAccess": {
-          "oneOf": [
-            {
-              "const": "anyone",
-              "description": "Anyone in the conversation may take a turn.",
-              "type": "string"
-            },
-            {
-              "const": "listed",
-              "description": "Only the listed provider handles may take a turn.",
               "type": "string"
             }
           ]
@@ -11672,9 +11326,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/read",
     "group": "bots",
     "summary": "Read a trigger",
-    "description": "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
+    "description": "Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.",
     "paramsType": "BotTriggerReadParams",
-    "resultType": "AgentApiOutcome<BotTriggerReadResponse>",
+    "resultType": "BotTriggerReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11705,9 +11359,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/list",
     "group": "bots",
     "summary": "List a bot's triggers",
-    "description": "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
+    "description": "Returns every trigger of the bot ordered by id, without ingest paths.",
     "paramsType": "BotTriggerListParams",
-    "resultType": "AgentApiOutcome<BotTriggerListResponse>",
+    "resultType": "BotTriggerListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11731,9 +11385,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/secrets/read",
     "group": "bots",
     "summary": "Read a trigger's secrets",
-    "description": "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+    "description": "Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.",
     "paramsType": "BotTriggerSecretsReadParams",
-    "resultType": "AgentApiOutcome<BotTriggerSecretsReadResponse>",
+    "resultType": "BotTriggerSecretsReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11764,9 +11418,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/delete",
     "group": "bots",
     "summary": "Delete a trigger",
-    "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
+    "description": "Drops the trigger's Temporal Schedule, then the record; stored events keep their history.",
     "paramsType": "BotTriggerDeleteParams",
-    "resultType": "AgentApiOutcome<BotTriggerDeleteResponse>",
+    "resultType": "BotTriggerDeleteResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11799,7 +11453,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Admit an event manually",
     "description": "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
     "paramsType": "BotEventAdmitParams",
-    "resultType": "AgentApiOutcome<BotEventAdmitResponse>",
+    "resultType": "BotEventAdmitResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11878,7 +11532,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Replay a stored event",
     "description": "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
     "paramsType": "BotEventReplayParams",
-    "resultType": "AgentApiOutcome<BotEventReplayResponse>",
+    "resultType": "BotEventReplayResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11910,7 +11564,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "List a bot's events",
     "description": "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
     "paramsType": "BotEventListParams",
-    "resultType": "AgentApiOutcome<BotEventListResponse>",
+    "resultType": "BotEventListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11952,7 +11606,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Read an event by number",
     "description": "Returns the event row and its full stored envelope document.",
     "paramsType": "BotEventReadParams",
-    "resultType": "AgentApiOutcome<BotEventReadResponse>",
+    "resultType": "BotEventReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -11984,7 +11638,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "summary": "Test a CEL filter",
     "description": "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
     "paramsType": "BotFilterTestParams",
-    "resultType": "AgentApiOutcome<BotFilterTestResponse>",
+    "resultType": "BotFilterTestResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -12015,377 +11669,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "BotId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_create",
-    "method": "channels/accounts/create",
-    "group": "channels",
-    "summary": "Create a channel account",
-    "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
-    "paramsType": "ChannelAccountCreateParams",
-    "resultType": "AgentApiOutcome<ChannelAccountCreateResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "account": {
-          "$ref": "#/definitions/ChannelAccountInput"
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        },
-        "ChannelAccountInput": {
-          "description": "A provider account served by the connector host. Secret material stays\nin the referenced grant; this document is routing identity and\noperational configuration.",
-          "properties": {
-            "accountId": {
-              "$ref": "#/definitions/ChannelAccountId"
-            },
-            "credentialGrantId": {
-              "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "displayName": {
-              "type": "string"
-            },
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
-            "provider": {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            "providerAccountId": {
-              "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
-              "type": "string"
-            },
-            "settings": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChannelAccountSettings"
-                }
-              ],
-              "default": {}
-            }
-          },
-          "required": [
-            "accountId",
-            "provider",
-            "providerAccountId",
-            "displayName"
-          ],
-          "type": "object"
-        },
-        "ChannelAccountSettings": {
-          "additionalProperties": {},
-          "properties": {
-            "printQr": {
-              "description": "WhatsApp: print the pairing QR code on the connector's terminal.",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "ChannelProvider": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_put",
-    "method": "channels/accounts/put",
-    "group": "channels",
-    "summary": "Create or replace a channel account",
-    "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
-    "paramsType": "ChannelAccountPutParams",
-    "resultType": "AgentApiOutcome<ChannelAccountPutResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "account": {
-          "$ref": "#/definitions/ChannelAccountInput"
-        },
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        },
-        "ChannelAccountInput": {
-          "description": "A provider account served by the connector host. Secret material stays\nin the referenced grant; this document is routing identity and\noperational configuration.",
-          "properties": {
-            "accountId": {
-              "$ref": "#/definitions/ChannelAccountId"
-            },
-            "credentialGrantId": {
-              "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "displayName": {
-              "type": "string"
-            },
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
-            "provider": {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            "providerAccountId": {
-              "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
-              "type": "string"
-            },
-            "settings": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChannelAccountSettings"
-                }
-              ],
-              "default": {}
-            }
-          },
-          "required": [
-            "accountId",
-            "provider",
-            "providerAccountId",
-            "displayName"
-          ],
-          "type": "object"
-        },
-        "ChannelAccountSettings": {
-          "additionalProperties": {},
-          "properties": {
-            "printQr": {
-              "description": "WhatsApp: print the pairing QR code on the connector's terminal.",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "ChannelProvider": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_read",
-    "method": "channels/accounts/read",
-    "group": "channels",
-    "summary": "Read a channel account",
-    "description": "Returns the account document and revision.",
-    "paramsType": "ChannelAccountReadParams",
-    "resultType": "AgentApiOutcome<ChannelAccountReadResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        }
-      },
-      "required": [
-        "accountId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_list",
-    "method": "channels/accounts/list",
-    "group": "channels",
-    "summary": "List channel accounts",
-    "description": "Lists this universe's provider accounts, optionally by provider.",
-    "paramsType": "ChannelAccountListParams",
-    "resultType": "AgentApiOutcome<ChannelAccountListResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "provider": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object",
-      "definitions": {
-        "ChannelProvider": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_delete",
-    "method": "channels/accounts/delete",
-    "group": "channels",
-    "summary": "Delete a channel account",
-    "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
-    "paramsType": "ChannelAccountDeleteParams",
-    "resultType": "AgentApiOutcome<ChannelAccountDeleteResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        }
-      },
-      "required": [
-        "accountId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_pairings_list",
-    "method": "channels/pairings/list",
-    "group": "channels",
-    "summary": "List chat pairings",
-    "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
-    "paramsType": "ChannelPairingListParams",
-    "resultType": "AgentApiOutcome<ChannelPairingListResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ChannelAccountId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "botId": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/BotId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object",
-      "definitions": {
-        "BotId": {
-          "type": "string"
-        },
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_pairings_delete",
-    "method": "channels/pairings/delete",
-    "group": "channels",
-    "summary": "Unpair a conversation",
-    "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
-    "paramsType": "ChannelPairingDeleteParams",
-    "resultType": "AgentApiOutcome<ChannelPairingDeleteResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "chatId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "accountId",
-        "chatId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_conversations_read",
-    "method": "channels/conversations/read",
-    "group": "channels",
-    "summary": "Read a conversation snapshot",
-    "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
-    "paramsType": "ChannelConversationReadParams",
-    "resultType": "AgentApiOutcome<ChannelConversationReadResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "chatId": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "accountId",
-        "chatId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
           "type": "string"
         }
       }

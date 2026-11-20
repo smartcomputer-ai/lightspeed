@@ -7,11 +7,15 @@ Use images from one release, or build the current source when you need work
 that has not yet been released.
 
 The [deployment overview](overview.md) explains how the components fit together.
-This recipe initially stores small blobs in PostgreSQL. The current inline
-limit is 64 KiB per blob; larger writes require S3-compatible object storage.
-Use the small-text verification below, then configure object storage before
-using larger files, attachments, or payloads. Chat connectors, Configurator
-MCP, and execution environments can be added afterward.
+Use empty databases for a fresh installation. If you have retained work,
+check [database compatibility](upgrades-and-recovery.md#check-compatibility-before-reusing-state)
+first.
+
+This recipe initially stores blobs up to 64 KiB in PostgreSQL. Add
+[S3-compatible or Azure Blob storage](configuration.md#choose-the-blob-backend)
+before using larger files or attachments. You can add execution environments
+and [Configurator MCP](../integrating-and-extending/configurator-mcp.md)
+after the first run.
 
 ## Prepare the infrastructure
 
@@ -141,14 +145,15 @@ Generate the runtime's secrets master key:
 openssl rand -base64 32
 ```
 
-Generate two other secrets, one for Platform authentication and one for
-internal environment routing, by running this command once for each:
+Generate three other secrets: one for Platform authentication, one for
+internal environment routing, and one for the Platform’s runtime HTTP access.
+Run this command once for each:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Keep all three values stable across restarts. Store them in your secret manager
+Keep all four values stable across restarts. Store them in your secret manager
 and recovery material. Replacing the runtime's master key makes credentials
 encrypted with the previous key unreadable.
 
@@ -159,21 +164,23 @@ no `export` prefix and no shell quotes around values.
 ```dotenv
 LIGHTSPEED_POSTGRES_URL=<runtime-postgres-connection-url>
 LIGHTSPEED_AUTH_MODE=authenticated
+LIGHTSPEED_API_TOKEN_PLATFORM=<platform-runtime-token>
 LIGHTSPEED_GATEWAY_BIND=0.0.0.0:18080
+LIGHTSPEED_PUBLIC_BIND=0.0.0.0:18082
+LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND=0.0.0.0:18083
 LIGHTSPEED_PUBLIC_BASE_URL=https://lightspeed.example.com
-LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18080
+LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL=https://lightspeed.example.com
+LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18083
 LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN=<internal-routing-secret>
 LIGHTSPEED_SECRETS_MASTER_KEY=<base64-master-key>
 TEMPORAL_ADDRESS=<private-temporal-host>:7233
 TEMPORAL_NAMESPACE=lightspeed
-LIGHTSPEED_ROLES=gateway,environment-gateway,sessions,bots,channels
+LIGHTSPEED_ROLES=gateway,environment-gateway,sessions,code
 LIGHTSPEED_LOG_FORMAT=json
 ```
 
-This `LIGHTSPEED_ROLES` value includes the `bots` and `channels` roles, which
-suits an installation that uses bots and chat channels. If yours does not,
-remove those two roles from the list and leave the **Bots** and **Channels**
-switches off in each universe; see
+These roles run sessions, including Code Mode. Add the `bots` role if
+your deployment uses bot workflows. See
 [Runtime roles and scaling](overview.md#runtime-roles-and-scaling).
 
 A database URL has the form
@@ -181,11 +188,11 @@ A database URL has the form
 in credentials. Supply the connection options required by your PostgreSQL
 deployment.
 
-The public base URL generates addresses that external clients need, such as
-OAuth callbacks and daemon data connections. The separate environment gateway
-URL keeps worker-to-environment traffic on the Docker network. Both values
-are needed here because the public proxy will expose only selected runtime
-routes.
+The public base URL generates OAuth callback and bot webhook addresses. The
+environment public base URL generates daemon addresses and identifies the
+origin daemons sign when registering. The private environment gateway URL
+keeps worker-to-environment traffic on the Docker network. Set all three here
+because the public proxy exposes only selected runtime routes.
 
 Leave all `LIGHTSPEED_OBJECT_STORE_*` settings absent for the initial small-blob
 PostgreSQL setup. Writes above 64 KiB fail without object storage. Even setting
@@ -194,16 +201,16 @@ configuration and require backend-specific settings. Follow
 [Choose the blob backend](configuration.md#choose-the-blob-backend) to add the
 complete S3-compatible or Azure Blob configuration.
 
-The Platform needs a deployment-scoped runtime key with every method group and
-permission to assert actors. The migration procedure below creates it. Prepare
-`platform.env` now, then replace the key placeholder before starting Platform:
+The Platform uses the runtime token configured above. Give the same secret to
+both applications, keeping it out of browser configuration, agent workspaces,
+and environment credentials. Prepare `platform.env` with:
 
 ```dotenv
 LIGHTSPEED_PLATFORM_DATABASE_URL=<platform-postgres-connection-url>
 LIGHTSPEED_PLATFORM_AUTH_SECRET=<platform-auth-secret>
 LIGHTSPEED_PLATFORM_BASE_URL=https://lightspeed.example.com
-LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/rpc
-LIGHTSPEED_PLATFORM_API_KEY=<platform-deployment-key>
+LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/api/v1
+LIGHTSPEED_PLATFORM_API_TOKEN=<platform-runtime-token>
 LIGHTSPEED_PLATFORM_ADMIN_EMAIL=<administrator-email>
 LIGHTSPEED_PLATFORM_ADMIN_PASSWORD=<strong-initial-password>
 PORT=3000
@@ -218,9 +225,9 @@ empty. Set the intended credentials before the first startup. Changing these
 environment variables later does not reset an existing account's password.
 
 This guide uses one dedicated Temporal namespace with the default task queues.
-If several deployments share a namespace, also assign distinct values for
-`LIGHTSPEED_TASK_QUEUE`, `LIGHTSPEED_TASK_QUEUE_BOTS`, and
-`LIGHTSPEED_TASK_QUEUE_CHANNELS` and keep each deployment's processes aligned.
+If several deployments share a namespace, set a distinct task queue for each
+worker role in each deployment. See
+[Runtime configuration](configuration.md#keep-deployment-wide-settings-aligned).
 
 ## Migrate and start the runtime
 
@@ -245,24 +252,15 @@ their checksums. The diagnostic command reports the schema revision. Normal
 runtime startup verifies the ledger and refuses a schema that requires
 migration; it does not apply migrations implicitly.
 
-Create the Platform's key against the migrated database:
+Runtime tokens come from configuration; migration creates no caller keys.
+`authenticated` mode refuses startup without a token. Every configured token
+has full authority over all universes and may name an actor. The first
+Platform administrator is a separate login created from the email and
+password above. See
+[Runtime service access](../access-and-security/api-keys-and-service-access.md)
+for mounted token files and rotation.
 
-```bash
-docker run --rm --network lightspeed --env-file runtime.env \
-  "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID" api-key create \
-  --deployment --assert-actor --all-groups --name Platform
-```
-
-Copy the printed `secret` into `LIGHTSPEED_PLATFORM_API_KEY` in `platform.env`
-and store it securely; the command prints it only once. A key's groups are
-always stated: `--all-groups` grants every group allowed by the deployment
-scope, and repeated `--group` grants a chosen list. This key authorizes the
-Platform's runtime calls; the first Platform administrator is a separate login
-created from the email and password above. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
-for key issuance and revocation.
-
-Start all runtime roles in one container:
+Start the configured runtime roles in one container.
 
 ```bash
 docker run -d --name lightspeed-runtime \
@@ -271,13 +269,15 @@ docker run -d --name lightspeed-runtime \
   --stop-timeout 30 \
   --env-file runtime.env \
   -p 127.0.0.1:18080:18080 \
+  -p 127.0.0.1:18082:18082 \
+  -p 127.0.0.1:18083:18083 \
   "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID"
 ```
 
-The host mapping is loopback-only. The Platform can reach the runtime by
-container name on the Docker network, and the host proxy can reach its selected
-public routes at `127.0.0.1:18080`. Docker's stop signal starts the runtime's
-graceful shutdown, and the timeout gives it time to finish.
+The host mappings are loopback-only. The Platform reaches private HTTP API by
+container name on the Docker network. The host proxy reaches public callbacks
+at `127.0.0.1:18082` and daemon connections at `127.0.0.1:18083`. Docker's
+stop signal starts graceful shutdown; the timeout gives it time to finish.
 
 Wait for the listener; the retries allow time for startup:
 
@@ -317,31 +317,34 @@ the proxy runs on the application host.
 
 | Public path | Upstream | Purpose |
 | --- | --- | --- |
-| Exact `/auth/callback` | `http://127.0.0.1:18080` | Runtime OAuth callback |
-| Exact `/auth/client-metadata.json` | `http://127.0.0.1:18080` | Runtime OAuth client metadata |
-| Prefix `/hooks/bots/` | `http://127.0.0.1:18080` | Bot webhooks |
-| Exact `/environment-gateway/connect` | `http://127.0.0.1:18080` | Daemon control WebSocket |
-| Exact `/environment-gateway/data` | `http://127.0.0.1:18080` | Daemon data WebSocket |
-| `/rpc` and prefix `/environment-gateway/routes/` | Reject at the public edge | Private runtime and worker APIs |
+| Exact `/ingress/credentials/callback` | `http://127.0.0.1:18082` | Runtime OAuth callback |
+| Exact `/ingress/credentials/client-metadata.json` | `http://127.0.0.1:18082` | Runtime OAuth client metadata |
+| Prefix `/ingress/webhooks/bots/` | `http://127.0.0.1:18082` | Bot webhooks |
+| Exact `/environments/connect` | `http://127.0.0.1:18083` | Daemon control WebSocket |
+| Exact `/environments/data` | `http://127.0.0.1:18083` | Daemon data WebSocket |
+| Prefixes `/environments/routes/` and `/environments/peer/` | Reject at the public edge | Private environment worker and peer routes |
 | All remaining paths | `http://127.0.0.1:3000` | Platform, including `/app/`, `/api/auth/`, and `/api/v1/` |
+
+Use the listed paths when registering OAuth redirects, webhook senders, and
+registered daemons. If you upgrade from an installation with older paths,
+update the proxy and callback settings together.
 
 Allow WebSocket upgrades and long-lived connections on the two public daemon
 routes. Forward the original host and scheme through the proxy's forwarded
 headers, pass WebSocket ping frames through, accept messages of up to 16 MiB,
 and do not close a quiet connection sooner than 60 seconds. Match those two
-routes exactly; forwarding the entire `/environment-gateway/` prefix would
+routes exactly; forwarding the entire `/environments/` prefix would
 also expose internal worker routes. Daemons must dial these routes on the
-host of `LIGHTSPEED_PUBLIC_BASE_URL`, or on a URL listed in
+host of `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`, or on a URL listed in
 `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`: they sign that origin when they
 register, and the runtime refuses to serve registration on a non-loopback
 bind with neither.
 
-The Platform checks login, membership, role, and session visibility before
-calling the runtime with its deployment key, universe selector, and actor ID.
-This recipe keeps the RPC listener private so browser access goes through those
-checks. Keep port `18080` private even if your reverse proxy has its own
-authentication rules. Direct API integrations use their own
-[scoped keys](../access-and-security/api-keys-and-service-access.md).
+Keep runtime port `18080` on the private application network. Platform
+uses it after authorizing the request. Send browsers, API clients and CLI
+users to the public Platform URL so their session or Platform API key is
+checked there. Reserve direct runtime access for trusted infrastructure
+components. See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 If the proxy runs in another container, put it on the application network and
 use the service names as upstreams. Its own loopback address does not reach
@@ -351,8 +354,9 @@ the host mappings above.
 
 1. Open `https://lightspeed.example.com/app/` and sign in with the
    administrator you configured.
-2. Choose **New universe** and create one for your team. The Platform creates
-   the corresponding runtime universe as part of that operation.
+2. Choose **New universe** in the switcher and create one in your personal
+   organization. For a shared space, create an organization from **Admin →
+   Platform → All Organizations**, then create its universe.
 3. Follow [Configure a model](../getting-started/quickstart.md#configure-a-model)
    to add a provider key and select a model for a new session.
 4. Send a message and wait for the assistant's completed response.
@@ -366,9 +370,9 @@ checks persistent file tools. To verify daemon routing, use
 public `wss://` URL.
 
 After bootstrap, remove the administrator password from the deployment
-environment file and omit it when recreating the Platform container. Manage
-the account through the Platform. Preserve its authentication secret and the
-runtime's encryption key.
+environment file and omit it when recreating the Platform container. Preserve the Platform authentication secret and runtime encryption key.
+For company login and emergency access, see
+[Company sign-in (SSO)](../access-and-security/single-sign-on.md).
 
 ## Operate and update the installation
 
@@ -384,7 +388,7 @@ docker logs --tail 100 lightspeed-platform
 | Runtime exits before serving health | Database connectivity, migration ledger, required settings, or Temporal address, namespace, and TLS or API key settings |
 | Platform health never succeeds | Platform database permissions/migrations and required authentication settings |
 | Sign-in redirects or origin checks fail | Public base URL, HTTPS, and proxy host/scheme forwarding |
-| A universe cannot be created | Platform administrator role, runtime connectivity, and a Platform deployment key with `deployment/universes` access |
+| A universe cannot be created | Create access and an available slot in the organization, then Platform-to-runtime connectivity and the matching runtime token |
 | A run is accepted but makes no progress | Temporal namespace, session workers, and matching task queues |
 | Model calls fail | The universe's provider credential and the session's selected model |
 | A daemon connects but process calls cannot route | The two public WebSocket paths, internal environment gateway URL/token, and replica peer reachability and leases |
@@ -392,11 +396,10 @@ docker logs --tail 100 lightspeed-platform
 Use [Operations](operations.md) for monitoring, role scaling, and retention,
 and [Troubleshooting](troubleshooting.md) for a failing request path.
 [Upgrades and recovery](upgrades-and-recovery.md) gives the maintenance
-procedure and the complete recovery inventory, including optional connector
-and machine state.
+procedure and the complete recovery inventory.
 
-[Access and security](../access-and-security/overview.md) covers accounts, roles,
-client keys, and isolation; [Managing universes](multi-tenancy.md) explains
+[Access and security](../access-and-security/overview.md) covers organizations, roles,
+runtime tokens, and isolation; [Managing universes](multi-tenancy.md) explains
 universe reconciliation and retirement. [Configuration](configuration.md)
 explains deployment choices, with exact settings in the
 [environment-variable reference](../reference/environment-variables.md).

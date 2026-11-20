@@ -37,8 +37,9 @@ done
 install -m 0755 "target/$envd_target/release/lightspeed-envd" "$dist_dir/bin/lightspeed-envd"
 strip "$dist_dir/bin/lightspeed-envd"
 
-cp crates/api/contract/api.schema.json crates/api/contract/methods.json \
-  crates/api/contract/openrpc.json crates/api/contract/api-reference.md "$dist_dir/contracts/"
+cp crates/api/contract/api.schema.json \
+  crates/api/contract/http.json \
+  crates/api/contract/openapi.json crates/api/contract/api-reference.md "$dist_dir/contracts/"
 
 npm ci
 npm run build

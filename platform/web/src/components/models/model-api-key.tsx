@@ -51,6 +51,8 @@ const COPY: Record<
   },
 };
 
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
 const COMPATIBLE_PROVIDER_PRESETS = [
   {
     id: "deepseek",
@@ -60,7 +62,7 @@ const COMPATIBLE_PROVIDER_PRESETS = [
   {
     id: "openrouter",
     label: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
+    baseUrl: OPENROUTER_BASE_URL,
   },
   {
     id: "ollama",
@@ -78,7 +80,7 @@ type CompatibleProviderPresetId =
   (typeof COMPATIBLE_PROVIDER_PRESETS)[number]["id"];
 type CompatibleProviderChoice = CompatibleProviderPresetId | "custom";
 
-function compatibleProviderPreset(id: string) {
+export function compatibleProviderPreset(id: string) {
   return COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === id);
 }
 
@@ -118,7 +120,7 @@ export function ModelApiKeyForm({
         : undefined;
       return api<SecretProvider>(
         "POST",
-        `/api/v1/universes/${universeId}/integrations/model-keys`,
+        `/api/ui/universes/${universeId}/integrations/model-keys`,
         {
           provider,
           credential: key,
@@ -175,7 +177,7 @@ export function ModelApiKeyForm({
               id="model-key-base-url"
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://openrouter.ai/api/v1"
+              placeholder={OPENROUTER_BASE_URL}
             />
             <FieldDescription>
               Optional. HTTPS is required except for localhost/loopback HTTP.
@@ -251,7 +253,7 @@ export function ModelApiKeyDetails({
     mutationFn: () =>
       api<SecretProvider>(
         "DELETE",
-        `/api/v1/universes/${universeId}/secrets/providers/${encodeURIComponent(provider.credentialId)}`,
+        `/api/ui/universes/${universeId}/secrets/providers/${encodeURIComponent(provider.credentialId)}`,
       ),
     onSuccess: onRemoved,
   });
@@ -387,7 +389,7 @@ export function OpenAiCompatibleForm({
       if (!apiKinds.length) throw new Error("select at least one API kind");
       return api<SecretProvider>(
         "POST",
-        `/api/v1/universes/${universeId}/integrations/model-keys`,
+        `/api/ui/universes/${universeId}/integrations/model-keys`,
         {
           provider: providerId.trim(),
           ...(key ? { credential: key } : {}),
@@ -486,7 +488,7 @@ export function OpenAiCompatibleForm({
         <Input
           value={baseUrl}
           onChange={(event) => setBaseUrl(event.target.value)}
-          placeholder="https://openrouter.ai/api/v1"
+          placeholder={OPENROUTER_BASE_URL}
         />
       </Field>
       <Field>
@@ -564,7 +566,7 @@ export function OpenAiCompatibleDetails({
     mutationFn: () =>
       api(
         "DELETE",
-        `/api/v1/universes/${universeId}/secrets/providers/${encodeURIComponent(provider.credentialId)}`,
+        `/api/ui/universes/${universeId}/secrets/providers/${encodeURIComponent(provider.credentialId)}`,
       ),
     onSuccess: onRemoved,
   });
@@ -679,7 +681,7 @@ export function ProviderModelList({
     queryFn: () =>
       api<ModelListResponse>(
         "GET",
-        "/api/v1/universes/" + universeId + "/models",
+        "/api/ui/universes/" + universeId + "/models",
       ),
     staleTime: 60_000,
     refetchOnMount: "always",

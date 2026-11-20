@@ -1,15 +1,11 @@
-//! JSON-RPC method and notification names.
+//! Stable operation IDs.
 //!
-//! The first segment of a method name is its addressing scope: `session/`
-//! methods act inside one session (params carry `sessionId`), `deployment/`
-//! methods (see [`crate::deployment`]) address the deployment, and every other
-//! prefix is a universe-scoped catalog or stream. Collection segments are
-//! plural; uncountable facets (`context`, `mcp`) are singular; the
-//! verb is always the last segment.
+//! These opaque identifiers remain stable when HTTP methods or resource paths
+//! change. The operation catalog associates each ID with its route, input and
+//! response types, scope, and policy metadata; clients must use that metadata
+//! instead of inferring addressing rules from an ID's spelling.
 
-pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
-
-// ── Protocol handshake ──────────────────────────────────────────────────────
+// ── Connection discovery ──────────────────────────────────────────────────────
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 
@@ -73,6 +69,7 @@ pub const METHOD_PROFILES_DELETE: &str = "profiles/delete";
 
 // ── Universe: content-addressed storage and VFS ─────────────────────────────
 
+pub const METHOD_BLOBS_UPLOAD: &str = "blobs/upload";
 pub const METHOD_BLOBS_PUT: &str = "blobs/put";
 pub const METHOD_BLOBS_READ: &str = "blobs/read";
 pub const METHOD_BLOBS_HAS: &str = "blobs/has";
@@ -106,8 +103,8 @@ pub const METHOD_ENVIRONMENTS_REGISTERED_PUT: &str = "environments/registered/pu
 pub const METHOD_ENVIRONMENTS_REGISTERED_RELEASE: &str = "environments/registered/release";
 pub const METHOD_ENVIRONMENTS_INGRESS_PUT: &str = "environments/ingress/put";
 pub const METHOD_ENVIRONMENTS_POWER_PUT: &str = "environments/power/put";
-pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST: &str = "environments/provider-bindings/list";
-pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ: &str = "environments/provider-bindings/read";
+pub const METHOD_ENVIRONMENTS_PROVIDERS_LIST: &str = "environments/providers/list";
+pub const METHOD_ENVIRONMENTS_PROVIDERS_READ: &str = "environments/providers/read";
 pub const METHOD_ENVIRONMENTS_TEMPLATES_LIST: &str = "environments/templates/list";
 pub const METHOD_ENVIRONMENTS_TEMPLATES_READ: &str = "environments/templates/read";
 pub const METHOD_ENVIRONMENTS_JOBS_CREATE: &str = "environments/jobs/create";
@@ -127,25 +124,27 @@ pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE: &str =
 
 // ── Universe: auth ──────────────────────────────────────────────────────────
 
-pub const METHOD_AUTH_GRANTS_IMPORT: &str = "auth/grants/import";
-pub const METHOD_AUTH_GRANTS_LEASE: &str = "auth/grants/lease";
-pub const METHOD_AUTH_GRANTS_READ: &str = "auth/grants/read";
-pub const METHOD_AUTH_GRANTS_LIST: &str = "auth/grants/list";
-pub const METHOD_AUTH_GRANTS_PUT: &str = "auth/grants/put";
-pub const METHOD_AUTH_GRANTS_REVOKE: &str = "auth/grants/revoke";
-pub const METHOD_AUTH_CLIENTS_CREATE: &str = "auth/clients/create";
-pub const METHOD_AUTH_CLIENTS_READ: &str = "auth/clients/read";
-pub const METHOD_AUTH_CLIENTS_LIST: &str = "auth/clients/list";
-pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
-pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
-pub const METHOD_AUTH_FLOWS_READ: &str = "auth/flows/read";
-pub const METHOD_AUTH_PROVIDERS_CREATE: &str = "auth/providers/create";
-pub const METHOD_AUTH_PROVIDERS_PUT: &str = "auth/providers/put";
-pub const METHOD_AUTH_PROVIDERS_READ: &str = "auth/providers/read";
-pub const METHOD_AUTH_PROVIDERS_LIST: &str = "auth/providers/list";
-pub const METHOD_AUTH_PROVIDERS_DELETE: &str = "auth/providers/delete";
-pub const METHOD_AUTH_GITHUB_INSTALLATIONS_LIST: &str = "auth/github/installations/list";
-pub const METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT: &str = "auth/github/installations/grant";
+pub const METHOD_CREDENTIALS_GRANTS_IMPORT: &str = "credentials/grants/import";
+pub const METHOD_CREDENTIALS_GRANTS_LEASE: &str = "credentials/grants/lease";
+pub const METHOD_CREDENTIALS_GRANTS_READ: &str = "credentials/grants/read";
+pub const METHOD_CREDENTIALS_GRANTS_LIST: &str = "credentials/grants/list";
+pub const METHOD_CREDENTIALS_GRANTS_PUT: &str = "credentials/grants/put";
+pub const METHOD_CREDENTIALS_GRANTS_REVOKE: &str = "credentials/grants/revoke";
+pub const METHOD_CREDENTIALS_CLIENTS_CREATE: &str = "credentials/clients/create";
+pub const METHOD_CREDENTIALS_CLIENTS_READ: &str = "credentials/clients/read";
+pub const METHOD_CREDENTIALS_CLIENTS_LIST: &str = "credentials/clients/list";
+pub const METHOD_CREDENTIALS_CLIENTS_DELETE: &str = "credentials/clients/delete";
+pub const METHOD_CREDENTIALS_FLOWS_START: &str = "credentials/flows/start";
+pub const METHOD_CREDENTIALS_FLOWS_READ: &str = "credentials/flows/read";
+pub const METHOD_CREDENTIALS_PROVIDERS_CREATE: &str = "credentials/providers/create";
+pub const METHOD_CREDENTIALS_PROVIDERS_PUT: &str = "credentials/providers/put";
+pub const METHOD_CREDENTIALS_PROVIDERS_READ: &str = "credentials/providers/read";
+pub const METHOD_CREDENTIALS_PROVIDERS_LIST: &str = "credentials/providers/list";
+pub const METHOD_CREDENTIALS_PROVIDERS_DELETE: &str = "credentials/providers/delete";
+pub const METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST: &str =
+    "credentials/github/installations/list";
+pub const METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT: &str =
+    "credentials/github/installations/grant";
 
 // ── Universe: bots ──────────────────────────────────────────────────────────
 
@@ -168,25 +167,7 @@ pub const METHOD_BOTS_EVENTS_LIST: &str = "bots/events/list";
 pub const METHOD_BOTS_EVENTS_READ: &str = "bots/events/read";
 pub const METHOD_BOTS_FILTERS_TEST: &str = "bots/filters/test";
 
-// ── Universe: channels ──────────────────────────────────────────────────────
-
-pub const METHOD_CHANNELS_ACCOUNTS_CREATE: &str = "channels/accounts/create";
-pub const METHOD_CHANNELS_ACCOUNTS_PUT: &str = "channels/accounts/put";
-pub const METHOD_CHANNELS_ACCOUNTS_READ: &str = "channels/accounts/read";
-pub const METHOD_CHANNELS_ACCOUNTS_LIST: &str = "channels/accounts/list";
-pub const METHOD_CHANNELS_ACCOUNTS_DELETE: &str = "channels/accounts/delete";
-pub const METHOD_CHANNELS_INBOUND_ADMIT: &str = "channels/inbound/admit";
-pub const METHOD_CHANNELS_PAIRINGS_LIST: &str = "channels/pairings/list";
-pub const METHOD_CHANNELS_PAIRINGS_DELETE: &str = "channels/pairings/delete";
-pub const METHOD_CHANNELS_CONVERSATIONS_READ: &str = "channels/conversations/read";
-
 // ── Notifications ───────────────────────────────────────────────────────────
-
-pub const NOTIFY_SESSION_STARTED: &str = "session/started";
-pub const NOTIFY_SESSION_EVENT: &str = "session/event";
-pub const NOTIFY_SESSION_RUNS_STARTED: &str = "session/runs/started";
-pub const NOTIFY_SESSION_RUNS_COMPLETED: &str = "session/runs/completed";
-pub const NOTIFY_ERROR: &str = "error";
 
 // ── Transcriptions ───────────────────────────────────────────────────────────
 
@@ -194,8 +175,6 @@ pub const METHOD_TRANSCRIPTIONS_START: &str = "transcriptions/start";
 pub const METHOD_TRANSCRIPTIONS_READ: &str = "transcriptions/read";
 pub const METHOD_TRANSCRIPTIONS_CANCEL: &str = "transcriptions/cancel";
 
-/// Prefix of every API key secret.
-pub const API_KEY_SECRET_PREFIX: &str = "lsk_";
 /// Prefix of every environment registration key secret.
 pub const REGISTRATION_KEY_SECRET_PREFIX: &str = "lsrk_";
 /// Random bytes in a key secret. After its prefix a secret is these bytes

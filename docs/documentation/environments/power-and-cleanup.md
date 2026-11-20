@@ -6,7 +6,7 @@ between sessions, or close a disposable machine when its task ends. The
 environment's source determines which operations are available and what they
 remove.
 
-Use an Operator or Admin account, then inspect the machine under
+Use Operator or Owner access, then inspect the machine under
 **Environments → Details**. Its **Source** determines whether a provider
 manages the machine or Lightspeed only holds its connection. Check what the
 provider reports and its idle policy before changing a machine that other

@@ -1,15 +1,18 @@
+import { userSubject } from "../../test/subject-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
 import { environmentDeploymentRoutes } from "./environment-deployment.js";
 import { gatewayRoutes } from "./gateway.js";
-import { universeForSession } from "./universes.js";
+import { universeForRequest } from "./universes.js";
 
 vi.mock("./universes.js", () => ({
-  universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
+  universeForRequest: vi.fn(async () => ({
+    universe: { lightspeedUniverseId: "universe" },
     role: "operator",
-    member: { userId: "user", role: "operator" },
+    actions: universeActions(["operator" as UniverseRole]), caller: { actorId: "user", actions: universeActions(["operator" as UniverseRole]) },
   })),
 }));
 
@@ -27,12 +30,11 @@ function template(providerId: string) {
 
 function engineResult(method: string, params: Record<string, unknown>): unknown {
   switch (method) {
-    case "environments/provider-bindings/list":
+    case "environments/providers/list":
       return {
-        bindings: [
-          { providerId: "alpha", enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-          { providerId: "beta", enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-          { providerId: "gamma", enabled: false, createdAtMs: 1, updatedAtMs: 1 },
+        providers: [
+          { providerId: "alpha", availableToAllUniverses: true },
+          { providerId: "beta", availableToAllUniverses: false },
         ],
       };
     case "environments/templates/list":
@@ -57,7 +59,7 @@ function engineResult(method: string, params: Record<string, unknown>): unknown 
       return { provider: { providerId: params.providerId } };
     case "deployment/environment-providers/bindings/put":
     case "deployment/environment-providers/bindings/delete":
-      return { binding: { providerId: params.providerId, enabled: params.enabled ?? false } };
+      return { binding: { providerId: params.providerId, createdAtMs: 1, updatedAtMs: 1 } };
     default:
       throw new Error(`unexpected engine call ${method}`);
   }
@@ -68,34 +70,29 @@ beforeEach(() => {
   failingProviders = new Set();
   heldRegistrationKeys = new Map();
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    const params = (rpc.params ?? {}) as Record<string, unknown>;
-    calls.push({ method: rpc.method, params });
-    if (rpc.method === "environments/templates/list" && failingProviders.has(String(params.providerId))) {
-      return Response.json({
-        id: rpc.id,
-        error: { code: -32603, message: "provider unreachable", data: { kind: "internal" } },
-      });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    const params = (request.params ?? {}) as Record<string, unknown>;
+    calls.push({ method: request.method, params });
+    if (request.method === "environments/templates/list" && failingProviders.has(String(params.providerId))) {
+      return problemResponse({ type: "about:blank", title: "provider unreachable", detail: "provider unreachable", status: 500, kind: "internal" });
     }
-    if (rpc.method === "environments/registration-keys/create" && heldRegistrationKeys.has(String(params.registrationKeyId))) {
-      return Response.json({
-        id: rpc.id,
-        error: { code: -32603, message: "environment registry environment_registration_key already exists", data: { kind: "conflict" } },
-      });
+    if (request.method === "environments/registration-keys/create" && heldRegistrationKeys.has(String(params.registrationKeyId))) {
+      return problemResponse({ type: "about:blank", title: "environment registry environment_registration_key already exists", detail: "environment registry environment_registration_key already exists", status: 500, kind: "conflict" });
     }
-    return Response.json({ id: rpc.id, result: { result: engineResult(rpc.method, params), notifications: [] } });
+    return Response.json(engineResult(request.method, params));
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
 
 const ctx = {
-  env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_fixture" },
+  env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" },
 } as unknown as AppContext;
 
 function app(platformRole?: string) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "user", role: platformRole } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
   app.route("/universes", gatewayRoutes(ctx));
@@ -113,7 +110,7 @@ function request(method: string, path: string, body?: unknown, platformRole?: st
 
 const callsOf = (method: string) => calls.filter((call) => call.method === method);
 
-it("lists templates per enabled provider and drops a provider that fails", async () => {
+it("lists templates per available provider and drops a provider that fails", async () => {
   failingProviders.add("beta");
   const response = await request("GET", "/universes/u/environment-templates");
   expect(response.status).toBe(200);
@@ -127,7 +124,7 @@ it("lists templates per enabled provider and drops a provider that fails", async
 it("lists one provider's templates directly when asked", async () => {
   const response = await request("GET", "/universes/u/environment-templates?providerId=gamma");
   expect(await response.json()).toEqual([template("gamma")]);
-  expect(callsOf("environments/provider-bindings/list")).toEqual([]);
+  expect(callsOf("environments/providers/list")).toEqual([]);
 });
 
 it("maps the environment list query onto one environments/list page", async () => {
@@ -254,11 +251,12 @@ it.each([
   ["POST", "/universes/u/environments/build-01/release", undefined],
   ["POST", "/universes/u/environment-registration-keys", { identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci" }],
 ] as const)("keeps %s %s with operators", async (method, path, body) => {
-  const access = (await universeForSession(ctx, undefined as never, "u"))!;
-  vi.mocked(universeForSession).mockResolvedValueOnce({
+  const access = (await universeForRequest(ctx, undefined as never, "u"))!;
+  vi.mocked(universeForRequest).mockResolvedValueOnce({
     ...access,
     role: "contributor",
-    member: { ...access.member, role: "contributor" },
+    actions: universeActions(["contributor"]),
+    caller: { ...access.caller, actions: universeActions(["contributor"]) },
   });
   const response = await request(method, path, body);
   expect(response.status).toBe(403);
@@ -316,14 +314,14 @@ it("returns a rotated registration key's secret", async () => {
 });
 
 it("puts and deletes a universe binding by provider id", async () => {
-  const put = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", { enabled: false }, "admin");
+  expect((await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", { enabled: false }, "admin")).status).toBe(400);
+  const put = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", {}, "admin");
   expect(put.status).toBe(200);
   const deleted = await request("DELETE", "/admin/universes/u1/environment-provider-bindings/alpha", undefined, "admin");
   expect(deleted.status).toBe(200);
   expect(callsOf("deployment/environment-providers/bindings/put")[0]?.params).toEqual({
     universe: "u1",
     providerId: "alpha",
-    enabled: false,
   });
   expect(callsOf("deployment/environment-providers/bindings/delete")[0]?.params).toEqual({
     universe: "u1",
@@ -355,7 +353,7 @@ it("rejects a provider put with both a credential and clearCredential", async ()
 });
 
 it("keeps the deployment routes for platform admins", async () => {
-  const response = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", { enabled: true });
+  const response = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", {});
   expect(response.status).toBe(403);
   expect(calls).toEqual([]);
 });

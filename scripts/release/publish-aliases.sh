@@ -90,8 +90,6 @@ copy_image_alias "$(jq -er .images.configuratorMcp "$manifest")" \
   "$root/configurator-mcp:$alias_name"
 copy_image_alias "$(jq -er .images.platform "$manifest")" \
   "$root/platform:$alias_name"
-copy_image_alias "$(jq -er .images.platformWorkers "$manifest")" \
-  "$root/platform-workers:$alias_name"
 
 while IFS=$'\t' read -r manifest_key target_name; do
   source_url="$(jq -er --arg key "$manifest_key" '.binaries[$key].url' "$manifest")"

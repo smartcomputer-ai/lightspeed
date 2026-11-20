@@ -51,6 +51,7 @@ pub enum ProviderAuthScheme {
 pub struct ResolvedProviderAuth {
     pub value: ResolvedSecretValue,
     pub scheme: ProviderAuthScheme,
+    audience: Option<String>,
 }
 
 /// Validated per-provider endpoint plus its admitted API kinds. Built with the
@@ -100,19 +101,31 @@ impl ResolvedProviderAuth {
         Self {
             value: ResolvedSecretValue::new(value),
             scheme: ProviderAuthScheme::ApiKey,
+            audience: None,
         }
     }
 
     pub fn bearer(value: impl Into<String>) -> Self {
+        Self::bearer_for_audience(value, None)
+    }
+
+    pub fn bearer_for_audience(value: impl Into<String>, audience: Option<String>) -> Self {
         Self {
             value: ResolvedSecretValue::new(value),
             scheme: ProviderAuthScheme::Bearer,
+            audience,
         }
     }
 
     pub fn as_request_auth(&self) -> llm_clients::RequestAuth<'_> {
         match self.scheme {
             ProviderAuthScheme::ApiKey => llm_clients::RequestAuth::ApiKey(self.value.expose()),
+            ProviderAuthScheme::Bearer if let Some(audience) = &self.audience => {
+                llm_clients::RequestAuth::ScopedBearer(llm_clients::ScopedBearer::new(
+                    self.value.expose(),
+                    audience,
+                ))
+            }
             ProviderAuthScheme::Bearer => llm_clients::RequestAuth::Bearer(self.value.expose()),
         }
     }

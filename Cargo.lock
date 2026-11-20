@@ -264,30 +264,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "auth"
-version = "0.1.0"
-dependencies = [
- "api",
- "async-trait",
- "base64 0.23.1",
- "futures-util",
- "harness",
- "hex",
- "ipnet",
- "jsonwebtoken",
- "oauth2",
- "rand 0.10.3",
- "reqwest",
- "rmcp",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -642,24 +618,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "channels"
-version = "0.1.0"
-dependencies = [
- "api",
- "async-trait",
- "bots",
- "chrono",
- "hex",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -736,7 +694,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "api",
@@ -921,6 +879,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "credentials"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "async-trait",
+ "base64 0.23.1",
+ "futures-util",
+ "harness",
+ "hex",
+ "ipnet",
+ "jsonwebtoken",
+ "oauth2",
+ "rand 0.10.3",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1384,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "environment-daemon"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1439,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "environment-provider-incus"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1467,7 +1449,7 @@ name = "environments"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "auth",
+ "credentials",
  "environment-protocol",
  "harness",
  "serde",
@@ -2737,10 +2719,12 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "harness",
+ "hex",
  "image",
  "llm-clients",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "test-support",
  "thiserror 2.0.21",
  "tokio",
@@ -2809,7 +2793,7 @@ name = "mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "auth",
+ "credentials",
  "harness",
  "serde",
  "serde_json",
@@ -4269,7 +4253,7 @@ dependencies = [
 
 [[package]]
 name = "release-info"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "tempfile",
 ]
@@ -5162,10 +5146,9 @@ dependencies = [
  "aes-gcm",
  "api",
  "async-trait",
- "auth",
  "base64 0.23.1",
  "bots",
- "channels",
+ "credentials",
  "environment-protocol",
  "environments",
  "futures-util",
@@ -5345,20 +5328,19 @@ dependencies = [
 
 [[package]]
 name = "temporal-runtime"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "api",
  "api-projection",
  "async-trait",
- "auth",
  "axum",
  "base64 0.23.1",
  "bots",
- "channels",
  "chrono",
  "clap",
  "codemode",
+ "credentials",
  "dotenvy",
  "ed25519-dalek",
  "environment-client",
@@ -5370,6 +5352,7 @@ dependencies = [
  "harness",
  "hmac",
  "http",
+ "http-body-util",
  "jsonschema",
  "llm-clients",
  "llm-runtime",
@@ -5386,6 +5369,7 @@ dependencies = [
  "sqlx",
  "sse-stream",
  "store-pg",
+ "subtle",
  "tempfile",
  "temporal-workflow",
  "temporalio-client",
@@ -5413,7 +5397,6 @@ dependencies = [
  "anyhow",
  "api",
  "bots",
- "channels",
  "chrono",
  "futures",
  "futures-util",

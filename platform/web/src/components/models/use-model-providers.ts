@@ -101,11 +101,11 @@ export function useModelProviders(universeId: string) {
   const subscriptions = useQuery({
     queryKey: ["integrations", "subscriptions", universeId],
     queryFn: () =>
-      api<SecretGrant[]>("GET", `/api/v1/universes/${universeId}/integrations/subscriptions`),
+      api<SecretGrant[]>("GET", `/api/ui/universes/${universeId}/integrations/subscriptions`),
   });
   const secrets = useQuery({
     queryKey: ["secrets", universeId],
-    queryFn: () => api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
+    queryFn: () => api<SecretsInventory>("GET", `/api/ui/universes/${universeId}/secrets`),
   });
   return {
     connected: connectedModelProviders(secrets.data, subscriptions.data),

@@ -1,9 +1,8 @@
 import { ReadError } from "@/components/read-error";
-import { useEffect, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AddIcon, EditIcon } from "@/icons";
+import { useRef, useState, type FormEvent } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { AddIcon } from "@/icons";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { SaveButton } from "@/components/ui/save-button";
 import {
   Select,
   SelectContent,
@@ -22,368 +22,220 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCard,
-  TableCell,
-  TableActionsCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableCell } from "@/components/ui/table";
+import { ConfirmDangerButton } from "@/components/confirm-danger-button";
+import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
+import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceStatusBadge, ResourceTable, ResourceValue } from "@/components/resource-table";
+import type { ResourceStatusInfo } from "@/lib/resource-status";
+import { useDeploymentUsers, type DeploymentUser } from "@/lib/deployment-users";
 import { LoadingNote, PageHeader } from "@/components/page";
 
-interface UserRow extends SessionUser {
-  createdAt?: string | Date;
+type UserRow = DeploymentUser;
+
+const isPlatformAdmin = (user: UserRow) => user.role?.split(",").includes("admin") === true;
+
+function signIn(user: UserRow): string {
+  return user.identitySource === "company" ? "Company" : user.emergencyAdmin ? "Emergency admin" : "Local";
 }
 
+function userStatus(user: UserRow): ResourceStatusInfo {
+  if (user.banned) return { label: "Suspended", tone: "neutral" };
+  if (user.identitySource === "company" && !user.companyAdmitted) return { label: "Company access absent", tone: "warning" };
+  return { label: "Active", tone: "positive" };
+}
+
+/// Everyone who can sign in to the deployment; each row opens the user.
 export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
   const config = useLoginConfig();
-  const users = useQuery({
-    queryKey: ["admin", "users"],
-    queryFn: async () => {
-      const result = await authClient.admin.listUsers({
-        query: { limit: 200, sortBy: "createdAt" },
-      });
-      if (result.error) {
-        throw new Error(result.error.message ?? "failed to load users");
-      }
-      return result.data.users as UserRow[];
-    },
-  });
+  const users = useDeploymentUsers();
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [editing, setEditing] = useState<UserRow | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const selected = users.data?.find((user) => user.id === selectedId) ?? null;
 
   return (
     <>
       <PageHeader
         title="Users"
-        description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage universe roles on Members." : "Platform accounts. Signup is closed — accounts are created here."}
+        description={config.data?.sso
+          ? "Company users appear after their first admitted sign-in. Add them to organizations under Admin → organization → Members."
+          : "People who can sign in to this deployment. Add them to organizations under Admin → organization → Members."}
         actions={
           config.data && config.data.password !== "off" && <Button onClick={() => setCreateOpen(true)}>
             <AddIcon data-icon="inline-start" />
-            {config.data.sso ? "Create emergency admin" : "Create user"}
+            {config.data.sso ? "Create emergency admin" : "New user"}
           </Button>
         }
       />
       <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} sso={config.data?.sso ?? false} />
-      <EditUserDialog
-        user={editing}
-        currentUserId={currentUser.id}
-        passwordMode={config.data?.password}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null);
-        }}
-      />
       {users.isLoading && <LoadingNote />}
       {users.error && <ReadError error={users.error} loading={!users.data} />}
-      {users.data && (
-        <TableCard className="mb-8">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Access</TableHead>
-                <TableHead>Last company check</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-0" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.data.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell>{user.name}</TableCell>
-                  <TableCell>{user.email}</TableCell>
-                  <TableCell>
-                    {user.role?.split(",").includes("admin") ? (
-                      <Badge variant="secondary">admin</Badge>
-                    ) : (
-                      <span className="text-muted-foreground">user</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {user.banned ? "Suspended" : user.identitySource === "company" ? user.companyAdmitted ? "Company account" : "Company access absent" : user.emergencyAdmin ? "Emergency admin" : "Local account"}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {user.providerCheckedAt ? new Date(user.providerCheckedAt).toLocaleString() : "—"}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {user.createdAt
-                      ? new Date(user.createdAt).toLocaleDateString()
-                      : "—"}
-                  </TableCell>
-                  <TableActionsCell>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Edit ${user.email}`}
-                      onClick={() => setEditing(user)}
-                    >
-                      <EditIcon />
-                    </Button>
-                  </TableActionsCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableCard>
+      {!!users.data?.length && (
+        <ResourceTable label="Users" columns={["User", "Sign-in", "Platform role", "Status"]}>
+          {users.data.map((user) => (
+            <ResourceRow key={user.id} name={user.email} onOpen={(trigger) => { triggerRef.current = trigger; setSelectedId(user.id); }}>
+              <ResourceIdentityCell name={user.name} subtitle={user.email} />
+              <TableCell className="hidden sm:table-cell">
+                <ResourceValue description={user.identitySource === "company" && user.providerCheckedAt ? `Checked ${new Date(user.providerCheckedAt).toLocaleDateString()}` : undefined}>{signIn(user)}</ResourceValue>
+              </TableCell>
+              <TableCell className="hidden sm:table-cell"><ResourceValue>{isPlatformAdmin(user) ? "Platform Admin" : "User"}</ResourceValue></TableCell>
+              <TableCell><ResourceStatusBadge status={userStatus(user)} /></TableCell>
+            </ResourceRow>
+          ))}
+        </ResourceTable>
       )}
+      <ResourceDetailsDialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelectedId(null); }} finalFocus={triggerRef}
+        title={selected?.name ?? "User"} description={selected?.email ?? ""}>
+        {selected && <UserDetails key={selected.id} user={selected} currentUserId={currentUser.id} passwordMode={config.data?.password} />}
+      </ResourceDetailsDialog>
     </>
   );
 }
 
-function EditUserDialog({
-  user,
-  currentUserId,
-  passwordMode,
-  onOpenChange,
-}: {
-  user: UserRow | null;
+function UserDetails({ user, currentUserId, passwordMode }: {
+  user: UserRow;
   currentUserId: string;
   passwordMode?: "local" | "break-glass" | "off";
-  onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState("user");
+  const isCurrentUser = user.id === currentUserId;
+  const company = user.identitySource === "company";
+  const passwordAllowed = !company && passwordMode !== "off" && (passwordMode === "local" || user.emergencyAdmin === true);
+  const currentRole = isPlatformAdmin(user) ? "admin" : "user";
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [role, setRole] = useState(currentRole);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["admin"] });
 
-  const open = user !== null;
-  const isCurrentUser = user?.id === currentUserId;
-  const company = user?.identitySource === "company";
-  const passwordAllowed = !company && passwordMode !== "off" && (passwordMode === "local" || user?.emergencyAdmin === true);
-
-  useEffect(() => {
-    if (!user) return;
-    setName(user.name);
-    setEmail(user.email);
-    setRole(user.role?.split(",").includes("admin") ? "admin" : "user");
-    setPassword("");
-    setConfirm("");
-    setError(null);
-  }, [user]);
-
-  const reset = () => {
-    setName("");
-    setEmail("");
-    setRole("user");
-    setPassword("");
-    setConfirm("");
-    setError(null);
-  };
-
-  const close = () => {
-    onOpenChange(false);
-    reset();
-  };
-
+  const profileChanges = name.trim() !== user.name || email.trim().toLowerCase() !== user.email.toLowerCase() || (!isCurrentUser && role !== currentRole);
+  const saveProfile = useMutation({
+    mutationFn: async () => {
+      const data: Record<string, unknown> = {};
+      if (name.trim() !== user.name) data.name = name.trim();
+      if (email.trim().toLowerCase() !== user.email.toLowerCase()) {
+        data.email = email.trim().toLowerCase();
+        // Local users are provisioned and maintained by a trusted admin.
+        data.emailVerified = true;
+      }
+      if (!isCurrentUser && role !== currentRole) data.role = role;
+      const result = await authClient.admin.updateUser({ userId: user.id, data });
+      if (result.error) throw new Error(result.error.message ?? "failed to update user");
+    },
+    onSuccess: () => {
+      void refresh();
+      if (isCurrentUser) window.location.reload();
+    },
+  });
+  const setUserPassword = useMutation({
+    mutationFn: async () => {
+      const result = await authClient.admin.setUserPassword({ userId: user.id, newPassword: password });
+      if (result.error) throw new Error(result.error.message ?? "failed to set password");
+    },
+    onSuccess: () => {
+      setPassword("");
+      setConfirm("");
+      if (isCurrentUser) window.location.assign(`${import.meta.env.BASE_URL}login`);
+    },
+  });
   const accessChange = useMutation({
     mutationFn: async (action: "suspend" | "reinstate" | "revoke") => {
-      if (!user) return;
       const result = action === "revoke" ? await authClient.admin.revokeUserSessions({ userId: user.id })
         : action === "reinstate" ? await authClient.admin.unbanUser({ userId: user.id })
         : await authClient.admin.banUser({ userId: user.id });
       if (result.error) throw new Error(result.error.message ?? "Access change failed");
     },
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["admin"] }); close(); },
-    onError: (err) => setError(err.message),
+    onSuccess: () => void refresh(),
   });
 
-  const edit = useMutation({
-    mutationFn: async () => {
-      if (!user) return;
-
-      const data: Record<string, unknown> = {};
-      const nextName = name.trim();
-      const nextEmail = email.trim().toLowerCase();
-      const currentRole = user.role?.split(",").includes("admin") ? "admin" : "user";
-      if (nextName !== user.name) data.name = nextName;
-      if (nextEmail !== user.email.toLowerCase()) {
-        data.email = nextEmail;
-        // Platform accounts are provisioned and maintained by a trusted admin.
-        data.emailVerified = true;
-      }
-      if (!isCurrentUser && role !== currentRole) data.role = role;
-
-      if (Object.keys(data).length > 0) {
-        const result = await authClient.admin.updateUser({ userId: user.id, data });
-        if (result.error) {
-          throw new Error(result.error.message ?? "failed to update user");
-        }
-      }
-
-      if (password) {
-        const result = await authClient.admin.setUserPassword({
-          userId: user.id,
-          newPassword: password,
-        });
-        if (result.error) {
-          throw new Error(result.error.message ?? "failed to set password");
-        }
-
-      }
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["admin"] });
-      const signedOutSelf = isCurrentUser && Boolean(password);
-      const refreshedSelf = isCurrentUser && hasProfileChanges;
-      close();
-      if (signedOutSelf) {
-        window.location.assign(`${import.meta.env.BASE_URL}login`);
-      } else if (refreshedSelf) {
-        window.location.reload();
-      }
-    },
-    onError: (err) => setError(err.message),
-  });
-
-  const currentRole = user?.role?.split(",").includes("admin") ? "admin" : "user";
-  const hasProfileChanges = Boolean(
-    user &&
-      (name.trim() !== user.name ||
-        email.trim().toLowerCase() !== user.email.toLowerCase() ||
-        (!isCurrentUser && role !== currentRole)),
-  );
-  const hasChanges = hasProfileChanges || Boolean(password);
-
-  const submit = (event: FormEvent) => {
+  const submitProfile = (event: FormEvent) => { event.preventDefault(); if (profileChanges && name.trim() && email.trim()) saveProfile.mutate(); };
+  const submitPassword = (event: FormEvent) => {
     event.preventDefault();
-    setError(null);
-    if (password !== confirm) {
-      setError("New passwords do not match.");
-      return;
-    }
-    edit.mutate();
+    setPasswordError(null);
+    if (password !== confirm) { setPasswordError("New passwords do not match."); return; }
+    setUserPassword.mutate();
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) close();
-      }}
-    >
-      <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Edit user</DialogTitle>
-          <DialogDescription>
-            {company ? `Identity and platform role for ${user?.email} are managed by the company. Universe roles are managed on Members.` : `Update the platform account for ${user?.email}. A password reset signs the user out of every session.`}
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit} className="grid gap-5">
-          <div className="grid gap-4">
-            <Field>
-              <FieldLabel htmlFor="edit-user-name">Name</FieldLabel>
-              <Input
-                id="edit-user-name"
-                value={name}
-                disabled={company}
-                onChange={(event) => setName(event.target.value)}
-                required
-                autoFocus
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="edit-user-email">Email</FieldLabel>
-              <Input
-                id="edit-user-email"
-                type="email"
-                value={email}
-                disabled={company}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-              />
-              <FieldDescription>
-                Admin-managed addresses are treated as verified sign-in addresses.
-              </FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="edit-user-role">Platform role</FieldLabel>
-              <Select
-                value={role}
-                onValueChange={(value) => setRole(value as string)}
-                disabled={isCurrentUser || company || user?.emergencyAdmin === true}
-              >
-                <SelectTrigger id="edit-user-role" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="user">user</SelectItem>
-                  <SelectItem value="admin">admin</SelectItem>
-                </SelectContent>
-              </Select>
-              {isCurrentUser && (
-                <FieldDescription>
-                  Another platform admin must change your role, preventing accidental
-                  self-lockout.
-                </FieldDescription>
-              )}
-            </Field>
+    <>
+      <ResourceDetailsGrid>
+        <ResourceDetail label="User ID" mono>{user.id}</ResourceDetail>
+        <ResourceDetail label="Status"><ResourceStatus status={userStatus(user)} /></ResourceDetail>
+        <ResourceDetail label="Sign-in">{signIn(user)}</ResourceDetail>
+        <ResourceDetail label="Created">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</ResourceDetail>
+        {company && <ResourceDetail label="Last company check">{user.providerCheckedAt ? new Date(user.providerCheckedAt).toLocaleString() : "—"}</ResourceDetail>}
+      </ResourceDetailsGrid>
+      <p className="text-sm text-muted-foreground">
+        {company
+          ? "Their identity and Platform role are managed by the company. Add them to organizations under Admin → organization → Members."
+          : "Add them to organizations under Admin → organization → Members."}
+      </p>
+      <form onSubmit={submitProfile} className="grid gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="edit-user-name">Name</FieldLabel>
+            <Input id="edit-user-name" value={name} disabled={company} onChange={(event) => setName(event.target.value)} required />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="edit-user-email">Email</FieldLabel>
+            <Input id="edit-user-email" type="email" value={email} disabled={company} onChange={(event) => setEmail(event.target.value)} required />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="edit-user-role">Platform role</FieldLabel>
+            <Select value={role} onValueChange={(value) => setRole(value as string)} disabled={isCurrentUser || company || user.emergencyAdmin === true}>
+              <SelectTrigger id="edit-user-role" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="user">User</SelectItem>
+                <SelectItem value="admin">Platform Admin</SelectItem>
+              </SelectContent>
+            </Select>
+            {isCurrentUser && <FieldDescription>Another Platform Admin must change your role, so you cannot lock yourself out.</FieldDescription>}
+          </Field>
+        </div>
+        {!company && (
+          <div className="flex items-center gap-3">
+            <SaveButton type="submit" dirty={profileChanges && !!name.trim() && !!email.trim()} saving={saveProfile.isPending} error={saveProfile.isError} />
+            {saveProfile.error && <p role="alert" className="text-sm text-destructive">{saveProfile.error.message}</p>}
           </div>
-
-          {passwordAllowed && <div className="grid gap-4 border-t pt-5">
-            <div>
-              <p className="font-medium">Reset password</p>
-              <p className="text-sm text-muted-foreground">
-                Leave these fields empty to keep the current password.
-                {isCurrentUser ? " You will be signed out if you reset your own password." : ""}
-              </p>
-            </div>
+        )}
+      </form>
+      {passwordAllowed && (
+        <form onSubmit={submitPassword} className="grid gap-4 border-t pt-5">
+          <div>
+            <p className="text-sm font-medium">Reset password</p>
+            <p className="text-sm text-muted-foreground">Signs them out of every session.{isCurrentUser ? " That includes you." : ""}</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="edit-user-password">New password</FieldLabel>
-              <Input
-                id="edit-user-password"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                minLength={8}
-                autoComplete="new-password"
-              />
+              <Input id="edit-user-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} autoComplete="new-password" required />
             </Field>
             <Field>
               <FieldLabel htmlFor="edit-user-confirm">Repeat new password</FieldLabel>
-              <Input
-                id="edit-user-confirm"
-                type="password"
-                value={confirm}
-                onChange={(event) => setConfirm(event.target.value)}
-                minLength={8}
-                autoComplete="new-password"
-                required={Boolean(password)}
-              />
+              <Input id="edit-user-confirm" type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} minLength={8} autoComplete="new-password" required />
             </Field>
-          </div>}
-
-          <div className="grid gap-2 border-t pt-5">
-            <p className="text-sm text-muted-foreground">Suspension blocks Platform access and signs out every device. Core API keys must be revoked separately.</p>
-            {!isCurrentUser && <Button type="button" variant="outline" disabled={accessChange.isPending} onClick={() => accessChange.mutate(user?.banned ? "reinstate" : "suspend")}>
-              {user?.banned ? "Reinstate access" : "Suspend access"}
-            </Button>}
-            <Button type="button" variant="outline" disabled={accessChange.isPending} onClick={() => accessChange.mutate("revoke")}>Sign out all sessions</Button>
           </div>
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={close}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={edit.isPending || !hasChanges || !name.trim() || !email.trim()}
-            >
-              {edit.isPending ? "Saving…" : "Save changes"}
-            </Button>
-          </DialogFooter>
+          <div className="flex items-center gap-3">
+            <Button type="submit" variant="outline" disabled={setUserPassword.isPending || !password}>{setUserPassword.isPending ? "Setting…" : "Set password"}</Button>
+            {(passwordError ?? setUserPassword.error?.message) && <p role="alert" className="text-sm text-destructive">{passwordError ?? setUserPassword.error?.message}</p>}
+          </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      )}
+      <ResourceActions>
+        {!isCurrentUser && (user.banned ? (
+          <Button variant="outline" size="sm" disabled={accessChange.isPending} onClick={() => accessChange.mutate("reinstate")}>Reinstate access</Button>
+        ) : (
+          <ConfirmDangerButton label="Suspend access" title={`Suspend ${user.name}?`} pending={accessChange.isPending}
+            description="They lose Platform access and are signed out of every device. Their data and memberships stay."
+            onConfirm={() => accessChange.mutate("suspend")} />
+        ))}
+        <Button variant="outline" size="sm" disabled={accessChange.isPending} onClick={() => accessChange.mutate("revoke")}>Sign out all sessions</Button>
+        {accessChange.error && <p role="alert" className="text-sm text-destructive">{accessChange.error.message}</p>}
+      </ResourceActions>
+    </>
   );
 }
 
@@ -441,11 +293,11 @@ function CreateUserDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) reset(); }}>
-      <DialogContent>
+      <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{sso ? "Create emergency admin" : "Create user"}</DialogTitle>
           <DialogDescription>
-            {sso ? "Creates a separate local administrator for emergency access. Use an email distinct from company sign-in accounts and store the password securely." : "Creates a platform account. Share the password out of band — users can change it under Account."}
+            {sso ? "Creates a separate local administrator for emergency access. Use an email distinct from company sign-in accounts and store the password securely." : "Creates a local user. Share the password out of band — users can change it under Your profile → Sign-in."}
           </DialogDescription>
         </DialogHeader>
           <form onSubmit={submit} className="grid gap-4">
@@ -482,14 +334,14 @@ function CreateUserDialog({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="user-role">Role</FieldLabel>
+                <FieldLabel htmlFor="user-role">Platform role</FieldLabel>
                 <Select value={sso ? "admin" : role} disabled={sso} onValueChange={(value) => setRole(value as string)}>
                   <SelectTrigger id="user-role" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="user">user</SelectItem>
-                    <SelectItem value="admin">admin</SelectItem>
+                    <SelectItem value="user">User</SelectItem>
+                    <SelectItem value="admin">Platform Admin</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>

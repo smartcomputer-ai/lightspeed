@@ -1,24 +1,12 @@
 //! Deployment-scoped (deployment-level) service: universe lifecycle over the
 //! shared deployment resources, above the universe-bound store boundary.
 //!
-//! Purge ordering (`deployment/universes/delete`): terminate live session
-//! workflows, sweep externally stored blob objects, delete the `universes`
-//! row (every universe-scoped table cascades from it), then evict the cached
-//! runtime state. Each step is idempotent and the row is deleted last, so a
-//! partial failure leaves the universe visible and a re-run resumes where it
-//! stopped. Callers stop routing traffic to the universe before purging (the
-//! platform archives first); a write racing the purge can lazily re-insert an
-//! empty universe row via `ensure_universe`, which a re-run removes.
-
 use std::sync::Arc;
 
 use api::AccessScope;
 
 use api::{
-    AgentApiError, AgentApiOutcome, DeploymentApiKeyCreateParams, DeploymentApiKeyCreateResponse,
-    DeploymentApiKeyListParams, DeploymentApiKeyListResponse, DeploymentApiKeyRevokeParams,
-    DeploymentApiKeyRevokeResponse, DeploymentApiKeyRotateParams, DeploymentApiKeyView,
-    DeploymentApiService, DeploymentEnvironmentProviderDeleteParams,
+    AgentApiError, DeploymentApiService, DeploymentEnvironmentProviderDeleteParams,
     DeploymentEnvironmentProviderDeleteResponse, DeploymentEnvironmentProviderListParams,
     DeploymentEnvironmentProviderListResponse, DeploymentEnvironmentProviderPutParams,
     DeploymentEnvironmentProviderPutResponse, DeploymentEnvironmentProviderReadParams,
@@ -30,7 +18,7 @@ use api::{
     DeploymentUniverseReadParams, DeploymentUniverseReadResponse, DeploymentUniverseView,
 };
 use async_trait::async_trait;
-use auth::SecretValue;
+use credentials::SecretValue;
 use environment_protocol::routes::DataRouteBase;
 use environments::{
     EnvironmentEndpoint, EnvironmentProviderBindingStore, EnvironmentProviderId,
@@ -38,10 +26,6 @@ use environments::{
     PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
 use harness::SessionId;
-use object_store::ObjectStoreExt as _;
-use object_store::path::Path as ObjectPath;
-use temporal_workflow::{AgentSessionWorkflow, compose_workflow_id};
-use temporalio_client::{Client, WorkflowTerminateOptions, errors::WorkflowInteractionError};
 use uuid::Uuid;
 
 use crate::{
@@ -65,8 +49,7 @@ impl GatewayDeploymentApi {
         self.runtime.stores().pool()
     }
 
-    /// Deployment handlers run for a deployment request whose key holds the
-    /// method's group; a direct caller must install such a context.
+    /// Deployment handlers require an explicit deployment request target.
     async fn admitted<T>(
         &self,
         method: &str,
@@ -74,10 +57,6 @@ impl GatewayDeploymentApi {
     ) -> Result<T, AgentApiError> {
         admit(method)?;
         operation.await
-    }
-
-    fn temporal(&self) -> &Client {
-        self.runtime.client()
     }
 
     async fn read_universe_view(
@@ -98,84 +77,6 @@ impl GatewayDeploymentApi {
             .map_err(map_store_error)?
             .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {reference}")))
     }
-
-    /// What a created or declared key is called and may do, once its name is
-    /// present and its universe is known to exist. The caller always states
-    /// the groups; `all` is resolved when the key is built.
-    async fn api_key_spec(
-        &self,
-        scope: AccessScope,
-        key_id: Option<String>,
-        groups: api::ApiKeyGroups,
-        assert_actor: bool,
-        display_name: &str,
-    ) -> Result<auth::ApiKeySpec, AgentApiError> {
-        let display_name = display_name.trim();
-        if display_name.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "api key displayName must not be empty",
-            ));
-        }
-        if let AccessScope::Universe { universe_id } = scope {
-            self.require_universe(universe_id).await?;
-        }
-        Ok(auth::ApiKeySpec {
-            key_id,
-            scope,
-            groups,
-            assert_actor,
-            created_by: super::request_context::request_context()?.attribution(),
-            display_name: Some(display_name.to_owned()),
-        })
-    }
-
-    async fn require_universe(&self, universe_id: Uuid) -> Result<(), AgentApiError> {
-        if store_pg::universe_exists(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?
-        {
-            Ok(())
-        } else {
-            Err(AgentApiError::not_found(format!(
-                "unknown universe: {universe_id}"
-            )))
-        }
-    }
-
-    /// Terminate the session's live workflow. `NotFound` covers both "never
-    /// started" and "already closed" and counts as nothing-to-terminate; any
-    /// other failure aborts the purge before rows are touched (a purge that
-    /// leaves a live workflow writing into a half-deleted universe is worse
-    /// than a retryable error).
-    async fn terminate_session_workflow(
-        &self,
-        universe_id: Uuid,
-        session_id: &str,
-    ) -> Result<bool, AgentApiError> {
-        let session_id = SessionId::try_new(session_id).map_err(|error| {
-            AgentApiError::internal(format!("stored session id is invalid: {error}"))
-        })?;
-        let handle =
-            self.temporal()
-                .get_workflow_handle::<AgentSessionWorkflow>(compose_workflow_id(
-                    universe_id,
-                    &session_id,
-                ));
-        match handle
-            .terminate(
-                WorkflowTerminateOptions::builder()
-                    .reason("deployment universe purge")
-                    .build(),
-            )
-            .await
-        {
-            Ok(()) => Ok(true),
-            Err(WorkflowInteractionError::NotFound(_)) => Ok(false),
-            Err(error) => Err(AgentApiError::internal(format!(
-                "terminate session workflow {session_id}: {error}"
-            ))),
-        }
-    }
 }
 
 #[async_trait]
@@ -183,7 +84,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_deleted_sessions(
         &self,
         params: api::DeploymentDeletedSessionsListParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentDeletedSessionsListResponse>, AgentApiError> {
+    ) -> Result<api::DeploymentDeletedSessionsListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let rows = self
@@ -205,12 +106,10 @@ impl DeploymentApiService for GatewayDeploymentApi {
                     },
                 )
                 .collect();
-            Ok(AgentApiOutcome::new(
-                api::DeploymentDeletedSessionsListResponse {
-                    sessions,
-                    next_after,
-                },
-            ))
+            Ok(api::DeploymentDeletedSessionsListResponse {
+                sessions,
+                next_after,
+            })
         })
         .await
     }
@@ -218,7 +117,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn purge_session(
         &self,
         params: api::DeploymentSessionPurgeParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentSessionPurgeResponse>, AgentApiError> {
+    ) -> Result<api::DeploymentSessionPurgeResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_PURGE, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             SessionId::try_new(&params.session_id)
@@ -237,9 +136,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                         AgentApiError::internal(error.to_string())
                     }
                 })?;
-            Ok(AgentApiOutcome::new(api::DeploymentSessionPurgeResponse {
+            Ok(api::DeploymentSessionPurgeResponse {
                 deleted_session_ids,
-            }))
+            })
         })
         .await
     }
@@ -247,7 +146,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_deployment_provider_bindings(
         &self,
         params: api::DeploymentUniverseReadParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentProviderBindingListResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentProviderBindingListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let bindings = self
@@ -261,9 +160,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .iter()
                 .map(super::service::environment_providers::environment_provider_binding_view)
                 .collect();
-            Ok(AgentApiOutcome::new(
-                api::EnvironmentProviderBindingListResponse { bindings },
-            ))
+            Ok(api::EnvironmentProviderBindingListResponse { bindings })
         })
         .await
     }
@@ -271,26 +168,26 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseCreateResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CREATE, async {
             let universe_id = parse_universe_id(&params.universe_id)?;
             if let Some(handle) = &params.handle {
                 validate_universe_handle(handle)?;
             }
-            let created = store_pg::create_universe_with_handle(
+            let created = store_pg::create_universe_with_configuration(
                 self.pool(),
                 universe_id,
                 params.handle.as_deref(),
+                &params.metadata,
+                params.protected,
+                expiry_i64(params.expires_at_ms)?,
             )
             .await
             .map_err(map_universe_store_error)?;
             let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
                 AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
             })?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseCreateResponse {
-                universe,
-                created,
-            }))
+            Ok(DeploymentUniverseCreateResponse { universe, created })
         })
         .await
     }
@@ -298,7 +195,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderPutResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -334,6 +231,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 controller_endpoint: controller_endpoint.clone(),
                 data_route_base,
                 credential,
+                available_to_all_universes: params.available_to_all_universes,
                 updated_at_ms: i64::try_from(current_time_ms()?)
                     .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
             };
@@ -372,11 +270,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .put_provider(request)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderPutResponse {
-                    provider: environment_provider_view(&provider),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderPutResponse {
+                provider: environment_provider_view(&provider),
+            })
         })
         .await
     }
@@ -384,18 +280,16 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_environment_providers(
         &self,
         _params: DeploymentEnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderListResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let providers = store
                 .list_providers()
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderListResponse {
-                    providers: providers.iter().map(environment_provider_view).collect(),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderListResponse {
+                providers: providers.iter().map(environment_provider_view).collect(),
+            })
         })
         .await
     }
@@ -403,7 +297,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn read_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderReadParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -411,11 +305,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .read_provider(&provider_id)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderReadResponse {
-                    provider: environment_provider_view(&provider),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderReadResponse {
+                provider: environment_provider_view(&provider),
+            })
         })
         .await
     }
@@ -423,7 +315,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn delete_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderDeleteResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -431,11 +323,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .delete_provider(&provider_id)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderDeleteResponse {
-                    provider: environment_provider_view(&provider),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderDeleteResponse {
+                provider: environment_provider_view(&provider),
+            })
         })
         .await
     }
@@ -443,7 +333,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_environment_provider_binding(
         &self,
         params: DeploymentProviderBindingPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
+    ) -> Result<DeploymentProviderBindingPutResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let store = self.runtime.stores().store_for(universe_id);
@@ -451,17 +341,16 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .put_provider_binding(PutEnvironmentProviderBinding {
                     universe_id,
                     provider_id: parse_environment_provider_id(params.provider_id)?,
-                    enabled: params.enabled,
                     updated_at_ms: i64::try_from(current_time_ms()?)
                         .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
                 })
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(DeploymentProviderBindingPutResponse {
+            Ok(DeploymentProviderBindingPutResponse {
                 binding: super::service::environment_providers::environment_provider_binding_view(
                     &binding,
                 ),
-            }))
+            })
         })
         .await
     }
@@ -469,7 +358,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn delete_environment_provider_binding(
         &self,
         params: DeploymentProviderBindingDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentProviderBindingDeleteResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -478,14 +367,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .delete_provider_binding(universe_id, &provider_id)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentProviderBindingDeleteResponse {
-                    binding:
-                        super::service::environment_providers::environment_provider_binding_view(
-                            &binding,
-                        ),
-                },
-            ))
+            Ok(DeploymentProviderBindingDeleteResponse {
+                binding: super::service::environment_providers::environment_provider_binding_view(
+                    &binding,
+                ),
+            })
         })
         .await
     }
@@ -493,7 +379,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_universe_configuration(
         &self,
         params: api::DeploymentUniverseConfigurationPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT, async {
             params
                 .configuration
@@ -510,9 +396,28 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .read_universe_view(id)
                 .await?
                 .ok_or_else(|| AgentApiError::not_found("universe no longer exists"))?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-                universe,
-            }))
+            Ok(DeploymentUniverseReadResponse { universe })
+        })
+        .await
+    }
+
+    async fn put_universe_expiry(
+        &self,
+        params: api::DeploymentUniverseExpiryPutParams,
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_EXPIRY_PUT, async {
+            let id = self.resolve_universe(&params.universe).await?;
+            if !store_pg::put_universe_expiry(self.pool(), id, expiry_i64(params.expires_at_ms)?)
+                .await
+                .map_err(map_store_error)?
+            {
+                return Err(AgentApiError::not_found("universe no longer exists"));
+            }
+            let universe = self
+                .read_universe_view(id)
+                .await?
+                .ok_or_else(|| AgentApiError::not_found("universe no longer exists"))?;
+            Ok(DeploymentUniverseReadResponse { universe })
         })
         .await
     }
@@ -520,7 +425,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_universe_handle(
         &self,
         params: api::DeploymentUniverseHandlePutParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT, async {
             validate_universe_handle(&params.handle)?;
             let id = self.resolve_universe(&params.universe).await?;
@@ -532,51 +437,22 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 return Err(unknown());
             }
             let universe = self.read_universe_view(id).await?.ok_or_else(unknown)?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-                universe,
-            }))
+            Ok(DeploymentUniverseReadResponse { universe })
         })
         .await
     }
 
     async fn list_universes(
         &self,
-        _params: DeploymentUniverseListParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseListResponse>, AgentApiError> {
+        params: DeploymentUniverseListParams,
+    ) -> Result<DeploymentUniverseListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_LIST, async {
-            let universes = store_pg::list_universe_stats(self.pool())
+            let universes = store_pg::list_universe_stats_matching(self.pool(), &params.metadata)
                 .await
                 .map_err(map_store_error)?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseListResponse {
+            Ok(DeploymentUniverseListResponse {
                 universes: universes.into_iter().map(universe_view).collect(),
-            }))
-        })
-        .await
-    }
-
-    async fn list_deployment_channel_accounts(
-        &self,
-        params: api::DeploymentChannelAccountListParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentChannelAccountListResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST, async {
-            let accounts = store_pg::list_channel_accounts_all(
-                self.pool(),
-                params.provider,
-                params.include_disabled,
-            )
-            .await
-            .map_err(map_store_error)?;
-            Ok(AgentApiOutcome::new(
-                api::DeploymentChannelAccountListResponse {
-                    accounts: accounts
-                        .into_iter()
-                        .map(|(universe_id, record)| api::DeploymentChannelAccountView {
-                            universe_id: universe_id.to_string(),
-                            account: record.view(),
-                        })
-                        .collect(),
-                },
-            ))
+            })
         })
         .await
     }
@@ -584,15 +460,27 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn read_universe(
         &self,
         params: DeploymentUniverseReadParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_READ, async {
-            let universe_id = self.resolve_universe(&params.universe).await?;
-            let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
-                AgentApiError::not_found(format!("unknown universe: {universe_id}"))
-            })?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-                universe,
-            }))
+            let universe_id = match Uuid::parse_str(params.universe.trim()) {
+                Ok(id) => id,
+                Err(_) => self.resolve_universe(&params.universe).await?,
+            };
+            let universe = match self.read_universe_view(universe_id).await? {
+                Some(view) => view,
+                None => {
+                    if let Some(record) = store_pg::read_deleted_universe(self.pool(), universe_id)
+                        .await
+                        .map_err(map_store_error)?
+                    {
+                        return Err(AgentApiError::gone(record));
+                    }
+                    return Err(AgentApiError::not_found(format!(
+                        "unknown universe: {universe_id}"
+                    )));
+                }
+            };
+            Ok(DeploymentUniverseReadResponse { universe })
         })
         .await
     }
@@ -600,204 +488,57 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn delete_universe(
         &self,
         params: DeploymentUniverseDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseDeleteResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETE, async {
-        let universe_id = self.resolve_universe(&params.universe).await?;
-
-        let session_ids = store_pg::list_universe_session_ids(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?;
-        let mut workflows_terminated = 0u64;
-        for session_id in &session_ids {
-            if self
-                .terminate_session_workflow(universe_id, session_id)
-                .await?
-            {
-                workflows_terminated += 1;
-            }
-        }
-
-        let object_keys = store_pg::list_universe_object_keys(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?;
-        let mut blob_objects_deleted = 0u64;
-        if !object_keys.is_empty() {
-            let Some(object_store) = self.runtime.stores().object_store() else {
-                return Err(AgentApiError::internal(format!(
-                    "universe {universe_id} has externally stored blobs but no object store is configured"
-                )));
+            let universe_id = match Uuid::parse_str(params.universe.trim()) {
+                Ok(id) => id,
+                Err(_) => self.resolve_universe(&params.universe).await?,
             };
-            for key in &object_keys {
-                match object_store.delete(&ObjectPath::from(key.as_str())).await {
-                    Ok(()) => blob_objects_deleted += 1,
-                    // Already swept by an earlier partial purge.
-                    Err(object_store::Error::NotFound { .. }) => {}
-                    Err(error) => {
-                        return Err(AgentApiError::internal(format!(
-                            "delete blob object {key}: {error}"
-                        )));
-                    }
-                }
-            }
-        }
-
-        store_pg::delete_universe(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?;
-        // Objects whose catalog rows were already swept, or whose deletion
-        // failed after the row went, are not in the listing above; clear the
-        // universe's whole CAS prefix so nothing outlives the row cascade.
-        if let Some(object_store) = self.runtime.stores().object_store() {
-            let prefix = store_pg::universe_cas_object_prefix(
-                self.runtime.stores().object_prefix(),
+            let requested_by = super::request_context::request_context()?.attribution();
+            let state = store_pg::begin_universe_deletion(
+                self.pool(),
                 universe_id,
-            );
-            match store_pg::delete_objects_under_prefix(object_store.as_ref(), &prefix).await {
-                Ok(deleted) => blob_objects_deleted += deleted,
-                Err(error) => tracing::warn!(
-                    target: "temporal_runtime",
-                    universe_id = %universe_id,
-                    prefix,
-                    %error,
-                    "universe rows are deleted but clearing its object prefix failed"
-                ),
-            }
-        }
-        self.runtime.evict(universe_id).await;
-
-        tracing::info!(
-            target: "temporal_runtime",
-            universe_id = %universe_id,
-            sessions = session_ids.len(),
-            workflows_terminated,
-            blob_objects_deleted,
-            "universe purged"
-        );
-        Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
-            universe_id: universe_id.to_string(),
-            workflows_terminated,
-            blob_objects_deleted,
-        }))
-        }).await
+                &requested_by,
+                current_time_ms()? as i64,
+            )
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {universe_id}")))?;
+            self.runtime
+                .stores()
+                .changes()
+                .publish(store_pg::changes::Change::new(
+                    universe_id,
+                    store_pg::changes::ChangeKind::Universe,
+                    universe_id.to_string(),
+                ));
+            self.runtime.evict(universe_id).await;
+            Ok(DeploymentUniverseDeleteResponse {
+                universe_id: universe_id.to_string(),
+                state,
+            })
+        })
+        .await
     }
 
-    async fn create_api_key(
+    async fn list_deleted_universes(
         &self,
-        params: DeploymentApiKeyCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_CREATE, async {
-            let spec = self
-                .api_key_spec(
-                    params.scope,
-                    params.key_id,
-                    params.groups,
-                    params.assert_actor,
-                    &params.display_name,
-                )
-                .await?;
-            let store = store_pg::PgApiKeyStore::new(self.pool().clone());
-            for _ in 0..3 {
-                let minted = auth::mint_api_key(spec.clone(), current_time_ms()?)
-                    .map_err(map_api_key_error)?;
-                match store.create_api_key(&minted.key_hash, &minted.record).await {
-                    Ok(()) => {
-                        return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-                            api_key: api_key_view(minted.record),
-                            secret: minted.secret.expose().to_owned(),
-                        }));
-                    }
-                    // A display-prefix collision is rare and entirely
-                    // server-generated, so retry instead of burdening callers.
-                    Err(auth::ApiKeyError::AlreadyExists { .. }) => continue,
-                    Err(error) => return Err(map_api_key_error(error)),
+        params: api::DeploymentDeletedUniversesListParams,
+    ) -> Result<api::DeploymentDeletedUniversesListResponse, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST, async {
+            if let Some(cursor) = &params.after {
+                let valid = cursor.split_once(':').is_some_and(|(time, id)| {
+                    time.parse::<i64>().is_ok() && Uuid::parse_str(id).is_ok()
+                });
+                if !valid {
+                    return Err(AgentApiError::invalid_request(
+                        "invalid deleted universe cursor",
+                    ));
                 }
             }
-            Err(AgentApiError::internal(
-                "could not allocate a unique api key prefix",
-            ))
-        })
-        .await
-    }
-
-    async fn put_api_key(
-        &self,
-        params: api::DeploymentApiKeyPutParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentApiKeyPutResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_PUT, async {
-            let spec = self
-                .api_key_spec(
-                    params.scope,
-                    Some(params.key_id),
-                    params.groups,
-                    params.assert_actor,
-                    &params.display_name,
-                )
-                .await?;
-            let key = auth::import_api_key(spec, current_time_ms()?, &params.secret)
-                .map_err(map_api_key_error)?;
-            let put = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .put_api_key(&key)
+            store_pg::list_deleted_universes(self.pool(), params.after.as_deref())
                 .await
-                .map_err(map_api_key_error)?;
-            Ok(AgentApiOutcome::new(api::DeploymentApiKeyPutResponse {
-                api_key: api_key_view(put.record),
-                created: put.created,
-                secret_replaced: put.secret_replaced,
-            }))
-        })
-        .await
-    }
-
-    async fn list_api_keys(
-        &self,
-        params: DeploymentApiKeyListParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_LIST, async {
-            let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .list_api_keys(params.scope)
-                .await
-                .map_err(map_api_key_error)?
-                .into_iter()
-                .map(api_key_view)
-                .collect();
-            Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
-                api_keys,
-            }))
-        })
-        .await
-    }
-
-    async fn rotate_api_key(
-        &self,
-        params: DeploymentApiKeyRotateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_ROTATE, async {
-            let rotated = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .rotate_api_key(params.scope, params.key_id.trim())
-                .await
-                .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key"))?;
-            Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-                api_key: api_key_view(rotated.record),
-                secret: rotated.secret.expose().to_owned(),
-            }))
-        })
-        .await
-    }
-
-    async fn revoke_api_key(
-        &self,
-        params: DeploymentApiKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_REVOKE, async {
-            let record = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .revoke_api_key(params.scope, params.key_id.trim(), current_time_ms()?)
-                .await
-                .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown api key"))?;
-            Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
-                api_key: api_key_view(record),
-            }))
+                .map_err(map_store_error)
         })
         .await
     }
@@ -815,7 +556,9 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
 
 fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     DeploymentUniverseView {
+        deletion: stats.deletion,
         configuration: stats.configuration,
+        expires_at_ms: stats.expires_at_ms.map(|time| time as u64),
         universe_id: stats.universe_id.to_string(),
         handle: stats.handle,
         created_at_ms: u64::try_from(stats.created_at_ms).unwrap_or(0),
@@ -829,21 +572,6 @@ fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     }
 }
 
-fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
-    DeploymentApiKeyView {
-        key_id: record.key_id,
-        key_prefix: record.key_prefix,
-        scope: record.scope,
-        groups: record.groups.into_iter().collect(),
-        assert_actor: record.assert_actor,
-        created_by: record.created_by,
-        display_name: record.display_name,
-        created_at_ms: record.created_at_ms,
-        revoked_at_ms: record.revoked_at_ms,
-        last_used_at_ms: record.last_used_at_ms,
-    }
-}
-
 fn current_time_ms() -> Result<u64, AgentApiError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -851,18 +579,6 @@ fn current_time_ms() -> Result<u64, AgentApiError> {
         .map_err(|error| {
             AgentApiError::internal(format!("system clock before unix epoch: {error}"))
         })
-}
-
-fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
-    match error {
-        auth::ApiKeyError::AlreadyExists { .. } => {
-            AgentApiError::internal("generated api key prefix collision")
-        }
-        error @ auth::ApiKeyError::KeyIdInUse { .. } => AgentApiError::conflict(error.to_string()),
-        auth::ApiKeyError::Conflict { message } => AgentApiError::conflict(message),
-        auth::ApiKeyError::Invalid { message } => AgentApiError::invalid_request(message),
-        auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
-    }
 }
 
 fn validate_universe_handle(handle: &str) -> Result<(), AgentApiError> {
@@ -875,6 +591,9 @@ fn validate_universe_handle(handle: &str) -> Result<(), AgentApiError> {
 }
 
 fn map_universe_store_error(error: store_pg::PgStoreError) -> AgentApiError {
+    if matches!(error, store_pg::PgStoreError::UniverseDeleted { .. }) {
+        return AgentApiError::conflict(error.to_string());
+    }
     if let store_pg::PgStoreError::Postgres(sqlx::Error::Database(ref db)) = error
         && db.is_unique_violation()
     {
@@ -884,15 +603,31 @@ fn map_universe_store_error(error: store_pg::PgStoreError) -> AgentApiError {
 }
 
 fn map_store_error(error: store_pg::PgStoreError) -> AgentApiError {
-    AgentApiError::internal(error.to_string())
+    match error {
+        store_pg::PgStoreError::UniverseProtected { .. }
+        | store_pg::PgStoreError::UniverseProtectionExpiryConflict => {
+            AgentApiError::rejected(error.to_string())
+        }
+        store_pg::PgStoreError::InvalidUniverseConfiguration { .. } => {
+            AgentApiError::invalid_request(error.to_string())
+        }
+        _ => AgentApiError::internal(error.to_string()),
+    }
+}
+fn expiry_i64(value: Option<u64>) -> Result<Option<i64>, AgentApiError> {
+    value
+        .map(|value| {
+            i64::try_from(value).map_err(|_| {
+                AgentApiError::invalid_request("expiresAtMs exceeds the supported timestamp range")
+            })
+        })
+        .transpose()
 }
 
-/// A deployment method runs for a deployment request whose key, if any,
-/// holds its group; the boundary checked both, and an in-process caller must
-/// install the same context.
-fn admit(method: &str) -> Result<super::request_context::RequestContext, AgentApiError> {
+/// A deployment method requires an explicit deployment request target.
+fn admit(_method: &str) -> Result<super::request_context::RequestContext, AgentApiError> {
     let context = super::request_context::request_context()?;
-    if context.scope != AccessScope::Deployment || !context.permits(method) {
+    if context.scope != AccessScope::Deployment {
         return Err(AgentApiError::forbidden());
     }
     Ok(context)

@@ -2,299 +2,263 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
-    async fn watch_universe(
-        &self,
-        _params: UniverseWatchParams,
-    ) -> Result<AgentApiOutcome<UniverseWatchResponse>, AgentApiError> {
-        Err(AgentApiError::invalid_request(
-            "universe/watch requires an HTTP event stream",
-        ))
-    }
-
     async fn start_transcription(
         &self,
         _params: TranscriptionStartParams,
-    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+    ) -> Result<TranscriptionResponse, AgentApiError> {
         Err(AgentApiError::internal("transcription is unavailable"))
     }
     async fn read_transcription(
         &self,
         _params: TranscriptionReadParams,
-    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+    ) -> Result<TranscriptionResponse, AgentApiError> {
         Err(AgentApiError::internal("transcription is unavailable"))
     }
     async fn cancel_transcription(
         &self,
         _params: TranscriptionCancelParams,
-    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+    ) -> Result<TranscriptionResponse, AgentApiError> {
         Err(AgentApiError::internal("transcription is unavailable"))
     }
-
-    async fn read_vfs_workspace_file(
-        &self,
-        _params: VfsWorkspaceFileReadParams,
-    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
-        Err(AgentApiError::internal(
-            "workspace file reads are unavailable",
-        ))
-    }
-    async fn initialize(
-        &self,
-        params: InitializeParams,
-    ) -> Result<AgentApiOutcome<InitializeResponse>, AgentApiError>;
 
     async fn read_model_defaults(
         &self,
         _params: ModelDefaultsReadParams,
-    ) -> Result<AgentApiOutcome<ModelDefaultsResponse>, AgentApiError> {
+    ) -> Result<ModelDefaultsResponse, AgentApiError> {
         Err(AgentApiError::internal("model defaults are unavailable"))
     }
 
     async fn put_model_defaults(
         &self,
         _params: ModelDefaultsPutParams,
-    ) -> Result<AgentApiOutcome<ModelDefaultsResponse>, AgentApiError> {
+    ) -> Result<ModelDefaultsResponse, AgentApiError> {
         Err(AgentApiError::internal("model defaults are unavailable"))
     }
 
     async fn list_models(
         &self,
         params: ModelListParams,
-    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError>;
+    ) -> Result<ModelListResponse, AgentApiError>;
 
     async fn start_session(
         &self,
         params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
+    ) -> Result<SessionStartResponse, AgentApiError>;
 
     async fn create_profile(
         &self,
         params: ProfileCreateParams,
-    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError>;
+    ) -> Result<ProfileCreateResponse, AgentApiError>;
 
     async fn read_profile(
         &self,
         params: ProfileReadParams,
-    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError>;
+    ) -> Result<ProfileReadResponse, AgentApiError>;
 
     async fn list_profiles(
         &self,
         params: ProfileListParams,
-    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError>;
+    ) -> Result<ProfileListResponse, AgentApiError>;
 
     async fn put_profile(
         &self,
         params: ProfilePutParams,
-    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError>;
+    ) -> Result<ProfilePutResponse, AgentApiError>;
 
     async fn delete_profile(
         &self,
         params: ProfileDeleteParams,
-    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError>;
+    ) -> Result<ProfileDeleteResponse, AgentApiError>;
 
     async fn apply_profile(
         &self,
         params: ProfileApplyParams,
-    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError>;
+    ) -> Result<ProfileApplyResponse, AgentApiError>;
 
     async fn put_session_config(
         &self,
         params: SessionConfigPutParams,
-    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError>;
+    ) -> Result<SessionConfigPutResponse, AgentApiError>;
 
     async fn read_session(
         &self,
         params: SessionReadParams,
-    ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError>;
+    ) -> Result<SessionReadResponse, AgentApiError>;
 
     async fn list_sessions(
         &self,
         params: SessionListParams,
-    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError>;
+    ) -> Result<SessionListResponse, AgentApiError>;
 
     async fn rename_session(
         &self,
         params: SessionRenameParams,
-    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError>;
+    ) -> Result<SessionRenameResponse, AgentApiError>;
 
     async fn put_session_metadata(
         &self,
         params: SessionMetadataPutParams,
-    ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError>;
+    ) -> Result<SessionMetadataPutResponse, AgentApiError>;
 
     async fn put_session_retention(
         &self,
         _params: SessionRetentionPutParams,
-    ) -> Result<AgentApiOutcome<SessionRetentionPutResponse>, AgentApiError> {
+    ) -> Result<SessionRetentionPutResponse, AgentApiError> {
         Err(AgentApiError::internal("session retention is unavailable"))
     }
 
     async fn read_session_events(
         &self,
         params: SessionEventsReadParams,
-    ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError>;
+    ) -> Result<SessionEventsReadResponse, AgentApiError>;
 
     async fn restart_session(
         &self,
         _params: SessionRestartParams,
-    ) -> Result<AgentApiOutcome<SessionRestartResponse>, AgentApiError> {
+    ) -> Result<SessionRestartResponse, AgentApiError> {
         Err(AgentApiError::internal("session restart is unavailable"))
     }
 
     async fn close_session(
         &self,
         params: SessionCloseParams,
-    ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError>;
+    ) -> Result<SessionCloseResponse, AgentApiError>;
 
     async fn share_session(
         &self,
         _params: SessionShareParams,
-    ) -> Result<AgentApiOutcome<SessionShareResponse>, AgentApiError> {
+    ) -> Result<SessionShareResponse, AgentApiError> {
         Err(AgentApiError::internal("session sharing is unavailable"))
     }
 
     async fn delete_session(
         &self,
         params: SessionDeleteParams,
-    ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError>;
+    ) -> Result<SessionDeleteResponse, AgentApiError>;
 
     async fn compact_context(
         &self,
         params: ContextCompactParams,
-    ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError>;
+    ) -> Result<ContextCompactResponse, AgentApiError>;
 
     async fn append_context(
         &self,
         params: ContextAppendParams,
-    ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError>;
+    ) -> Result<ContextAppendResponse, AgentApiError>;
 
     async fn remove_context(
         &self,
         params: ContextRemoveParams,
-    ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError>;
+    ) -> Result<ContextRemoveResponse, AgentApiError>;
 
     async fn replace_context(
         &self,
         params: ContextReplaceParams,
-    ) -> Result<AgentApiOutcome<ContextReplaceResponse>, AgentApiError>;
+    ) -> Result<ContextReplaceResponse, AgentApiError>;
 
-    async fn start_run(
-        &self,
-        params: RunStartParams,
-    ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError>;
+    async fn start_run(&self, params: RunStartParams) -> Result<RunStartResponse, AgentApiError>;
 
-    async fn list_runs(
-        &self,
-        params: RunListParams,
-    ) -> Result<AgentApiOutcome<RunListResponse>, AgentApiError>;
+    async fn list_runs(&self, params: RunListParams) -> Result<RunListResponse, AgentApiError>;
 
-    async fn read_run(
-        &self,
-        params: RunReadParams,
-    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError>;
+    async fn read_run(&self, params: RunReadParams) -> Result<RunReadResponse, AgentApiError>;
 
-    async fn cancel_run(
-        &self,
-        params: RunCancelParams,
-    ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError>;
+    async fn cancel_run(&self, params: RunCancelParams)
+    -> Result<RunCancelResponse, AgentApiError>;
 
     async fn decide_run_approvals(
         &self,
         params: RunApprovalsDecideParams,
-    ) -> Result<AgentApiOutcome<RunApprovalsDecideResponse>, AgentApiError>;
+    ) -> Result<RunApprovalsDecideResponse, AgentApiError>;
 
-    async fn steer_run(
-        &self,
-        params: RunSteerParams,
-    ) -> Result<AgentApiOutcome<RunSteerResponse>, AgentApiError>;
+    async fn steer_run(&self, params: RunSteerParams) -> Result<RunSteerResponse, AgentApiError>;
 
     async fn list_skills(
         &self,
         params: SkillListParams,
-    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError>;
+    ) -> Result<SkillListResponse, AgentApiError>;
 
     async fn activate_session_environment(
         &self,
         params: SessionEnvironmentActivateParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError>;
+    ) -> Result<SessionEnvironmentActivateResponse, AgentApiError>;
 
     async fn deactivate_session_environment(
         &self,
         params: SessionEnvironmentDeactivateParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError>;
+    ) -> Result<SessionEnvironmentDeactivateResponse, AgentApiError>;
 
     async fn create_environment(
         &self,
         params: EnvironmentCreateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentCreateResponse, AgentApiError>;
 
     async fn read_environment(
         &self,
         params: EnvironmentReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError>;
+    ) -> Result<EnvironmentReadResponse, AgentApiError>;
 
     async fn update_environment(
         &self,
         params: EnvironmentUpdateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentUpdateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentUpdateResponse, AgentApiError>;
 
     async fn list_environments(
         &self,
         params: EnvironmentListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError>;
+    ) -> Result<EnvironmentListResponse, AgentApiError>;
 
     async fn close_environment(
         &self,
         params: EnvironmentCloseParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError>;
+    ) -> Result<EnvironmentCloseResponse, AgentApiError>;
 
     async fn create_external_environment(
         &self,
         params: EnvironmentExternalCreateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentExternalCreateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentExternalCreateResponse, AgentApiError>;
 
     async fn put_registered_environment(
         &self,
         params: EnvironmentRegisteredPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegisteredPutResponse, AgentApiError>;
 
     async fn release_registered_environment(
         &self,
         params: EnvironmentRegisteredReleaseParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegisteredReleaseResponse, AgentApiError>;
 
     async fn put_environment_ingress(
         &self,
         params: EnvironmentIngressPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentIngressPutResponse>, AgentApiError>;
+    ) -> Result<EnvironmentIngressPutResponse, AgentApiError>;
 
     async fn put_environment_power(
         &self,
         params: EnvironmentPowerPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError>;
+    ) -> Result<EnvironmentPowerPutResponse, AgentApiError>;
 
-    async fn list_environment_provider_bindings(
+    async fn list_available_environment_providers(
         &self,
-        _params: EnvironmentProviderBindingListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+        _params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
         Err(AgentApiError::internal(
-            "environment provider bindings are unavailable",
+            "environment providers are unavailable",
         ))
     }
 
-    async fn read_environment_provider_binding(
+    async fn read_available_environment_provider(
         &self,
-        _params: EnvironmentProviderBindingReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingReadResponse>, AgentApiError> {
+        _params: AvailableEnvironmentProviderReadParams,
+    ) -> Result<AvailableEnvironmentProviderReadResponse, AgentApiError> {
         Err(AgentApiError::internal(
-            "environment provider bindings are unavailable",
+            "environment providers are unavailable",
         ))
     }
 
     async fn list_environment_templates(
         &self,
         _params: EnvironmentTemplateListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentTemplateListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentTemplateListResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment templates are unavailable",
         ))
@@ -303,7 +267,7 @@ pub trait AgentApiService: Send + Sync {
     async fn read_environment_template(
         &self,
         _params: EnvironmentTemplateReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentTemplateReadResponse>, AgentApiError> {
+    ) -> Result<EnvironmentTemplateReadResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment templates are unavailable",
         ))
@@ -312,380 +276,306 @@ pub trait AgentApiService: Send + Sync {
     async fn bind_environment_credential(
         &self,
         params: EnvironmentCredentialBindParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialBindResponse>, AgentApiError>;
+    ) -> Result<EnvironmentCredentialBindResponse, AgentApiError>;
 
     async fn list_environment_credentials(
         &self,
         params: EnvironmentCredentialListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialListResponse>, AgentApiError>;
+    ) -> Result<EnvironmentCredentialListResponse, AgentApiError>;
 
     async fn unbind_environment_credential(
         &self,
         params: EnvironmentCredentialUnbindParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialUnbindResponse>, AgentApiError>;
+    ) -> Result<EnvironmentCredentialUnbindResponse, AgentApiError>;
 
     async fn create_environment_jobs(
         &self,
         params: EnvironmentJobCreateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentJobCreateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentJobCreateResponse, AgentApiError>;
 
     async fn read_environment_jobs(
         &self,
         params: EnvironmentJobReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentJobReadResponse>, AgentApiError>;
+    ) -> Result<EnvironmentJobReadResponse, AgentApiError>;
 
     async fn cancel_environment_jobs(
         &self,
         params: EnvironmentJobCancelParams,
-    ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError>;
+    ) -> Result<EnvironmentJobCancelResponse, AgentApiError>;
 
     async fn create_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyCreateResponse, AgentApiError>;
 
     async fn put_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyPutResponse, AgentApiError>;
 
     async fn read_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyReadResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyReadResponse, AgentApiError>;
 
     async fn list_environment_registration_keys(
         &self,
         params: EnvironmentRegistrationKeyListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyListResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyListResponse, AgentApiError>;
 
     async fn update_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyUpdateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyUpdateResponse, AgentApiError>;
 
     async fn rotate_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyRotateParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyRotateResponse, AgentApiError>;
 
     async fn revoke_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>, AgentApiError>;
+    ) -> Result<EnvironmentRegistrationKeyRevokeResponse, AgentApiError>;
 
-    async fn put_blobs(
-        &self,
-        params: BlobPutParams,
-    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError>;
+    async fn put_blobs(&self, params: BlobPutParams) -> Result<BlobPutResponse, AgentApiError>;
 
-    async fn read_blob(
-        &self,
-        params: BlobReadParams,
-    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError>;
-
-    async fn has_blobs(
-        &self,
-        params: BlobHasParams,
-    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError>;
+    async fn has_blobs(&self, params: BlobHasParams) -> Result<BlobHasResponse, AgentApiError>;
 
     async fn commit_vfs_snapshot(
         &self,
         params: VfsSnapshotCommitParams,
-    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError>;
+    ) -> Result<VfsSnapshotCommitResponse, AgentApiError>;
 
     async fn read_vfs_snapshot(
         &self,
         params: VfsSnapshotReadParams,
-    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError>;
+    ) -> Result<VfsSnapshotReadResponse, AgentApiError>;
 
     async fn create_vfs_workspace(
         &self,
         params: VfsWorkspaceCreateParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError>;
+    ) -> Result<VfsWorkspaceCreateResponse, AgentApiError>;
 
     async fn read_vfs_workspace(
         &self,
         params: VfsWorkspaceReadParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError>;
+    ) -> Result<VfsWorkspaceReadResponse, AgentApiError>;
 
     async fn list_vfs_workspaces(
         &self,
         params: VfsWorkspaceListParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError>;
+    ) -> Result<VfsWorkspaceListResponse, AgentApiError>;
 
     async fn update_vfs_workspace(
         &self,
         params: VfsWorkspaceUpdateParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError>;
+    ) -> Result<VfsWorkspaceUpdateResponse, AgentApiError>;
 
     async fn delete_vfs_workspace(
         &self,
         params: VfsWorkspaceDeleteParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError>;
+    ) -> Result<VfsWorkspaceDeleteResponse, AgentApiError>;
 
     /// Create-or-replace an MCP server document. `expected_revision` is
     /// checked only when the record already exists.
     async fn put_mcp_server(
         &self,
         params: McpServerPutParams,
-    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError>;
+    ) -> Result<McpServerPutResponse, AgentApiError>;
 
     async fn discover_mcp_server_auth(
         &self,
         params: McpServerAuthDiscoverParams,
-    ) -> Result<AgentApiOutcome<McpServerAuthDiscoverResponse>, AgentApiError>;
+    ) -> Result<McpServerAuthDiscoverResponse, AgentApiError>;
 
     async fn discover_mcp_server_tools(
         &self,
         params: McpServerToolsDiscoverParams,
-    ) -> Result<AgentApiOutcome<McpServerToolsDiscoverResponse>, AgentApiError>;
+    ) -> Result<McpServerToolsDiscoverResponse, AgentApiError>;
 
     async fn list_mcp_servers(
         &self,
         params: McpServerListParams,
-    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError>;
+    ) -> Result<McpServerListResponse, AgentApiError>;
 
     async fn read_mcp_server(
         &self,
         params: McpServerReadParams,
-    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError>;
+    ) -> Result<McpServerReadResponse, AgentApiError>;
 
     async fn delete_mcp_server(
         &self,
         params: McpServerDeleteParams,
-    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError>;
+    ) -> Result<McpServerDeleteResponse, AgentApiError>;
 
-    async fn import_auth_grant(
+    async fn import_credential_grant(
         &self,
-        params: AuthGrantImportParams,
-    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError>;
+        params: CredentialGrantImportParams,
+    ) -> Result<CredentialGrantImportResponse, AgentApiError>;
 
-    async fn lease_auth_grant(
+    async fn lease_credential_grant(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError>;
+        params: CredentialGrantLeaseParams,
+    ) -> Result<CredentialGrantLeaseResponse, AgentApiError>;
 
-    async fn list_auth_grants(
+    async fn list_credential_grants(
         &self,
-        params: AuthGrantListParams,
-    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError>;
+        params: CredentialGrantListParams,
+    ) -> Result<CredentialGrantListResponse, AgentApiError>;
 
-    async fn read_auth_grant(
+    async fn read_credential_grant(
         &self,
-        params: AuthGrantReadParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError>;
+        params: CredentialGrantReadParams,
+    ) -> Result<CredentialGrantReadResponse, AgentApiError>;
 
-    async fn put_auth_grant(
+    async fn put_credential_grant(
         &self,
-        params: AuthGrantPutParams,
-    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError>;
+        params: CredentialGrantPutParams,
+    ) -> Result<CredentialGrantPutResponse, AgentApiError>;
 
-    async fn revoke_auth_grant(
+    async fn revoke_credential_grant(
         &self,
-        params: AuthGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError>;
+        params: CredentialGrantRevokeParams,
+    ) -> Result<CredentialGrantRevokeResponse, AgentApiError>;
 
-    async fn create_auth_client(
+    async fn create_credential_client(
         &self,
-        params: AuthClientCreateParams,
-    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError>;
+        params: CredentialClientCreateParams,
+    ) -> Result<CredentialClientCreateResponse, AgentApiError>;
 
-    async fn list_auth_clients(
+    async fn list_credential_clients(
         &self,
-        params: AuthClientListParams,
-    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError>;
+        params: CredentialClientListParams,
+    ) -> Result<CredentialClientListResponse, AgentApiError>;
 
-    async fn read_auth_client(
+    async fn read_credential_client(
         &self,
-        params: AuthClientReadParams,
-    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError>;
+        params: CredentialClientReadParams,
+    ) -> Result<CredentialClientReadResponse, AgentApiError>;
 
-    async fn delete_auth_client(
+    async fn delete_credential_client(
         &self,
-        params: AuthClientDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError>;
+        params: CredentialClientDeleteParams,
+    ) -> Result<CredentialClientDeleteResponse, AgentApiError>;
 
-    async fn start_auth_flow(
+    async fn start_credential_flow(
         &self,
-        params: AuthFlowStartParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError>;
+        params: CredentialFlowStartParams,
+    ) -> Result<CredentialFlowStartResponse, AgentApiError>;
 
-    async fn read_auth_flow_status(
+    async fn read_credential_flow_status(
         &self,
-        params: AuthFlowStatusParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError>;
+        params: CredentialFlowStatusParams,
+    ) -> Result<CredentialFlowStatusResponse, AgentApiError>;
 
-    async fn create_auth_provider(
+    async fn create_credential_provider(
         &self,
-        params: AuthProviderCreateParams,
-    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
+        params: CredentialProviderCreateParams,
+    ) -> Result<CredentialProviderCreateResponse, AgentApiError>;
 
-    async fn put_auth_provider(
+    async fn put_credential_provider(
         &self,
-        params: AuthProviderPutParams,
-    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError>;
+        params: CredentialProviderPutParams,
+    ) -> Result<CredentialProviderPutResponse, AgentApiError>;
 
-    async fn list_auth_providers(
+    async fn list_credential_providers(
         &self,
-        params: AuthProviderListParams,
-    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError>;
+        params: CredentialProviderListParams,
+    ) -> Result<CredentialProviderListResponse, AgentApiError>;
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        params: AuthProviderReadParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError>;
+        params: CredentialProviderReadParams,
+    ) -> Result<CredentialProviderReadResponse, AgentApiError>;
 
-    async fn delete_auth_provider(
+    async fn delete_credential_provider(
         &self,
-        params: AuthProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError>;
+        params: CredentialProviderDeleteParams,
+    ) -> Result<CredentialProviderDeleteResponse, AgentApiError>;
 
     async fn list_github_installations(
         &self,
-        params: AuthGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError>;
+        params: CredentialGitHubInstallationListParams,
+    ) -> Result<CredentialGitHubInstallationListResponse, AgentApiError>;
 
     async fn grant_github_installation(
         &self,
-        params: AuthGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError>;
+        params: CredentialGitHubInstallationGrantParams,
+    ) -> Result<CredentialGitHubInstallationGrantResponse, AgentApiError>;
     // ── Bots ────────────────────────────────────────────────────────────────
 
-    async fn create_bot(
-        &self,
-        params: BotCreateParams,
-    ) -> Result<AgentApiOutcome<BotCreateResponse>, AgentApiError>;
+    async fn create_bot(&self, params: BotCreateParams)
+    -> Result<BotCreateResponse, AgentApiError>;
 
-    async fn put_bot(
-        &self,
-        params: BotPutParams,
-    ) -> Result<AgentApiOutcome<BotPutResponse>, AgentApiError>;
+    async fn put_bot(&self, params: BotPutParams) -> Result<BotPutResponse, AgentApiError>;
 
-    async fn read_bot(
-        &self,
-        params: BotReadParams,
-    ) -> Result<AgentApiOutcome<BotReadResponse>, AgentApiError>;
+    async fn read_bot(&self, params: BotReadParams) -> Result<BotReadResponse, AgentApiError>;
 
-    async fn list_bots(
-        &self,
-        params: BotListParams,
-    ) -> Result<AgentApiOutcome<BotListResponse>, AgentApiError>;
+    async fn list_bots(&self, params: BotListParams) -> Result<BotListResponse, AgentApiError>;
 
-    async fn close_bot(
-        &self,
-        params: BotCloseParams,
-    ) -> Result<AgentApiOutcome<BotCloseResponse>, AgentApiError>;
+    async fn close_bot(&self, params: BotCloseParams) -> Result<BotCloseResponse, AgentApiError>;
 
-    async fn delete_bot(
-        &self,
-        params: BotDeleteParams,
-    ) -> Result<AgentApiOutcome<BotDeleteResponse>, AgentApiError>;
+    async fn delete_bot(&self, params: BotDeleteParams)
+    -> Result<BotDeleteResponse, AgentApiError>;
 
     async fn read_bot_state(
         &self,
         params: BotStateReadParams,
-    ) -> Result<AgentApiOutcome<BotStateReadResponse>, AgentApiError>;
+    ) -> Result<BotStateReadResponse, AgentApiError>;
 
     async fn rotate_bot_session(
         &self,
         params: BotSessionRotateParams,
-    ) -> Result<AgentApiOutcome<BotSessionRotateResponse>, AgentApiError>;
+    ) -> Result<BotSessionRotateResponse, AgentApiError>;
 
     async fn put_bot_trigger(
         &self,
         params: BotTriggerPutParams,
-    ) -> Result<AgentApiOutcome<BotTriggerPutResponse>, AgentApiError>;
+    ) -> Result<BotTriggerPutResponse, AgentApiError>;
 
     async fn read_bot_trigger(
         &self,
         params: BotTriggerReadParams,
-    ) -> Result<AgentApiOutcome<BotTriggerReadResponse>, AgentApiError>;
+    ) -> Result<BotTriggerReadResponse, AgentApiError>;
 
     async fn list_bot_triggers(
         &self,
         params: BotTriggerListParams,
-    ) -> Result<AgentApiOutcome<BotTriggerListResponse>, AgentApiError>;
+    ) -> Result<BotTriggerListResponse, AgentApiError>;
 
     async fn read_bot_trigger_secrets(
         &self,
         params: BotTriggerSecretsReadParams,
-    ) -> Result<AgentApiOutcome<BotTriggerSecretsReadResponse>, AgentApiError>;
+    ) -> Result<BotTriggerSecretsReadResponse, AgentApiError>;
 
     async fn delete_bot_trigger(
         &self,
         params: BotTriggerDeleteParams,
-    ) -> Result<AgentApiOutcome<BotTriggerDeleteResponse>, AgentApiError>;
+    ) -> Result<BotTriggerDeleteResponse, AgentApiError>;
 
     async fn admit_bot_event(
         &self,
         params: BotEventAdmitParams,
-    ) -> Result<AgentApiOutcome<BotEventAdmitResponse>, AgentApiError>;
+    ) -> Result<BotEventAdmitResponse, AgentApiError>;
 
     async fn replay_bot_event(
         &self,
         params: BotEventReplayParams,
-    ) -> Result<AgentApiOutcome<BotEventReplayResponse>, AgentApiError>;
+    ) -> Result<BotEventReplayResponse, AgentApiError>;
 
     async fn list_bot_events(
         &self,
         params: BotEventListParams,
-    ) -> Result<AgentApiOutcome<BotEventListResponse>, AgentApiError>;
+    ) -> Result<BotEventListResponse, AgentApiError>;
 
     async fn read_bot_event(
         &self,
         params: BotEventReadParams,
-    ) -> Result<AgentApiOutcome<BotEventReadResponse>, AgentApiError>;
+    ) -> Result<BotEventReadResponse, AgentApiError>;
 
     async fn test_bot_filter(
         &self,
         params: BotFilterTestParams,
-    ) -> Result<AgentApiOutcome<BotFilterTestResponse>, AgentApiError>;
-
-    // ── Channels ────────────────────────────────────────────────────────────
-
-    async fn create_channel_account(
-        &self,
-        params: ChannelAccountCreateParams,
-    ) -> Result<AgentApiOutcome<ChannelAccountCreateResponse>, AgentApiError>;
-
-    async fn put_channel_account(
-        &self,
-        params: ChannelAccountPutParams,
-    ) -> Result<AgentApiOutcome<ChannelAccountPutResponse>, AgentApiError>;
-
-    async fn read_channel_account(
-        &self,
-        params: ChannelAccountReadParams,
-    ) -> Result<AgentApiOutcome<ChannelAccountReadResponse>, AgentApiError>;
-
-    async fn list_channel_accounts(
-        &self,
-        params: ChannelAccountListParams,
-    ) -> Result<AgentApiOutcome<ChannelAccountListResponse>, AgentApiError>;
-
-    async fn delete_channel_account(
-        &self,
-        params: ChannelAccountDeleteParams,
-    ) -> Result<AgentApiOutcome<ChannelAccountDeleteResponse>, AgentApiError>;
-
-    async fn admit_channel_inbound(
-        &self,
-        params: ChannelInboundAdmitParams,
-    ) -> Result<AgentApiOutcome<ChannelInboundAdmitResponse>, AgentApiError>;
-
-    async fn list_channel_pairings(
-        &self,
-        params: ChannelPairingListParams,
-    ) -> Result<AgentApiOutcome<ChannelPairingListResponse>, AgentApiError>;
-
-    async fn delete_channel_pairing(
-        &self,
-        params: ChannelPairingDeleteParams,
-    ) -> Result<AgentApiOutcome<ChannelPairingDeleteResponse>, AgentApiError>;
-
-    async fn read_channel_conversation(
-        &self,
-        params: ChannelConversationReadParams,
-    ) -> Result<AgentApiOutcome<ChannelConversationReadResponse>, AgentApiError>;
+    ) -> Result<BotFilterTestResponse, AgentApiError>;
 }

@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import { UniverseWatchProvider, useWatchConnected } from "./universe-watch";
 import { waitForUi } from "@/test/wait-for-ui";
 
-vi.mock("./universes", () => ({ useActiveUniverse: () => ({ universe: { id: "u", role: "admin", features: {} } }) }));
+vi.mock("./universes", () => ({ useActiveUniverse: () => ({ universe: { id: "u", lightspeedUniverseId: "runtime-u", role: "owner", features: {} } }) }));
 
 it("shares one stream between consumers and falls back when it disconnects", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -25,7 +25,7 @@ it("shares one stream between consumers and falls back when it disconnects", asy
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><UniverseWatchProvider><Consumer /><Consumer /></UniverseWatchProvider></QueryClientProvider>));
     expect(container.textContent).toBe("pollpoll");
-    await act(async () => { output.enqueue(new TextEncoder().encode('data: {"method":"watch/reset","params":{}}\n\n')); });
+    await act(async () => { output.enqueue(new TextEncoder().encode('event: watch/reset\ndata: {}\n\n')); });
     await waitForUi(() => expect(container.textContent).toBe("livelive"));
     expect(fetch).toHaveBeenCalledOnce();
     await act(async () => output.close());

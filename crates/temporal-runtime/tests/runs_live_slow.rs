@@ -103,12 +103,7 @@ async fn run_llm_timeout_live_client(
                 run_limit: None,
             })
             .await?;
-        if let Some(run) = session
-            .result
-            .session
-            .runs
-            .into_iter()
-            .find(|run| run.id == first)
+        if let Some(run) = session.session.runs.into_iter().find(|run| run.id == first)
             && matches!(
                 run.status,
                 RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
@@ -186,7 +181,6 @@ async fn start_text_run(
             config: None,
         })
         .await?
-        .result
         .run
         .id)
 }

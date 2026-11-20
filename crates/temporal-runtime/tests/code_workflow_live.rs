@@ -111,7 +111,7 @@ impl CoreAgentLlm for CodeCallLlm {
                 LlmFinish::ToolCalls,
                 vec![ObservedToolCall {
                     call_id,
-                    tool_id,
+                    target: tool_id.map(Into::into),
                     tool_name: name,
                     provider_kind: None,
                     arguments_ref: reference.clone(),
@@ -319,7 +319,12 @@ impl Fixture {
     async fn snapshot(&self) -> anyhow::Result<CodeExecutionSnapshot> {
         Ok(self
             .client
-            .get_workflow_handle::<CodeExecutionWorkflow>(self.execution_id().await?)
+            .get_workflow_handle::<CodeExecutionWorkflow>(
+                temporal_workflow::compose_workflow_tool_execution_id(
+                    self.store.config().universe_id,
+                    &self.execution_id().await?,
+                ),
+            )
             .query(
                 CodeExecutionWorkflow::snapshot,
                 (),
@@ -347,9 +352,12 @@ impl Fixture {
     }
 
     async fn verify_history(&self) -> anyhow::Result<()> {
-        let handle = self
-            .client
-            .get_workflow_handle::<CodeExecutionWorkflow>(self.execution_id().await?);
+        let handle = self.client.get_workflow_handle::<CodeExecutionWorkflow>(
+            temporal_workflow::compose_workflow_tool_execution_id(
+                self.store.config().universe_id,
+                &self.execution_id().await?,
+            ),
+        );
         wait_until(
             "code workflow history completion",
             Duration::from_secs(15),
@@ -541,7 +549,7 @@ async fn admitted_code_tool_runs_on_separate_queue_and_returns_selected_output()
         assert_eq!(detail["scope"]["calls"].as_object().unwrap().len(), 5);
         let snapshot = fixture.snapshot().await?;
         assert_eq!(snapshot.phase, CodeExecutionPhase::Resolved);
-        let recovered = fixture.client.get_workflow_handle::<CodeExecutionWorkflow>(fixture.execution_id().await?)
+        let recovered = fixture.client.get_workflow_handle::<CodeExecutionWorkflow>(temporal_workflow::compose_workflow_tool_execution_id(fixture.store.config().universe_id, &fixture.execution_id().await?))
             .query(CodeExecutionWorkflow::workflow_tool_recovery, (), WorkflowQueryOptions::default()).await?;
         assert_eq!(recovered.resolutions.get(harness::REPLY_COMPLETION_KEY), snapshot.resolution.as_ref());
         Ok(())
@@ -1306,9 +1314,12 @@ async fn cancellation_during_finalization_rewrites_report_without_reexecuting_so
                 Ok(fixture.probe.finalize_attempts.load(Ordering::SeqCst) == 1)
             })
             .await?;
-            let handle = fixture
-                .client
-                .get_workflow_handle::<CodeExecutionWorkflow>(fixture.execution_id().await?);
+            let handle = fixture.client.get_workflow_handle::<CodeExecutionWorkflow>(
+                temporal_workflow::compose_workflow_tool_execution_id(
+                    fixture.store.config().universe_id,
+                    &fixture.execution_id().await?,
+                ),
+            );
             handle.cancel(Default::default()).await?;
             // The cancellation event precedes the held activity completion in
             // server history. Avoid sleeps or racing a naturally finished script.

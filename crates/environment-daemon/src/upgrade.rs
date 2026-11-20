@@ -552,7 +552,7 @@ mod tests {
     fn discovery_url_is_derived_from_the_gateway_origin() {
         assert_eq!(
             resolve_discovery_url(
-                Some("wss://gateway.example/environment-gateway/connect?old=1"),
+                Some("wss://gateway.example/environments/connect?old=1"),
                 None,
             )
             .expect("derive"),

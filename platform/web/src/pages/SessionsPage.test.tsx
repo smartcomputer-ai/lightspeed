@@ -98,7 +98,7 @@ beforeEach(() => {
 });
 
 describe("queued message steering", () => {
-  const base = "/api/v1/universes/universe/sessions/session";
+  const base = "/api/ui/universes/universe/sessions/session";
   const text = "Complete message. ".repeat(500) + "Keep the final sentence.";
   const attachment = { blobRef: `sha256:${"a".repeat(64)}`, mime: "application/pdf", kind: "document", name: "notes.pdf" };
   const queued = { id: "queued-run", status: "queued", source: { type: "input", items: [
@@ -440,7 +440,7 @@ async function navigateAway() {
   await act(async () => root.render(null));
 }
 
-describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pathway) => {
+describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer drafts", (pathway) => {
   it("persists exact drafts across navigation and isolates sessions and universes", async () => {
     await show(pathway);
     await type("  unfinished\nmessage 🦀  ");
@@ -462,6 +462,12 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     await show(pathway, "another-universe", "session");
     expect(input().value).toBe("other universe draft");
   });
+});
+
+// A bot view renders the same session detail; only where its draft is kept
+// depends on the view, so the rest runs once.
+describe("composer", () => {
+  const pathway: Pathway = "session";
 
   it("shows compaction request failures inside the transcript", async () => {
     mocks.compactions = [{ status: "error", error: new Error("No compactable context") }];
@@ -519,7 +525,7 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     await enter(mode === "steer" ? { ctrlKey: true } : {});
     expect(mocks.api).toHaveBeenCalledWith(
       "POST",
-      `/api/v1/universes/universe/sessions/session/${mode === "steer" ? "runs/active-run/steer" : "messages"}`,
+      `/api/ui/universes/universe/sessions/session/${mode === "steer" ? "runs/active-run/steer" : "messages"}`,
       { text: "send this", submissionId: expect.any(String) },
     );
     expect(mocks.scrollToEnd).not.toHaveBeenCalled();
@@ -779,7 +785,7 @@ describe("session action permissions", () => {
     const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop run"]');
     expect(stop).not.toBeNull();
     await act(async () => stop!.click());
-    expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/universe/sessions/session/runs/active-run/cancel", {});
+    expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/universe/sessions/session/runs/active-run/cancel", {});
   });
 
   it("fails closed while the member's role is loading", async () => {

@@ -221,39 +221,11 @@ pub fn validate_tool_map(tools: &BTreeMap<ToolId, ToolSpec>) -> Result<(), Domai
     }
 
     validate_unique_remote_mcp_server_labels(tools)?;
-    validate_unique_runtime_mcp_prefixes(tools)?;
 
     for tool in tools.values() {
         tool.validate()?;
     }
 
-    Ok(())
-}
-
-fn validate_unique_runtime_mcp_prefixes(
-    tools: &BTreeMap<ToolId, ToolSpec>,
-) -> Result<(), DomainError> {
-    let prefixes = tools
-        .values()
-        .filter_map(|tool| match &tool.kind {
-            ToolKind::RemoteMcp(spec)
-                if spec.execution == RemoteMcpExecution::Runtime
-                    && spec.exposure == RemoteMcpExposure::Inject =>
-            {
-                Some((format!("{}__", tool.id), &tool.id))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    for (index, (prefix, name)) in prefixes.iter().enumerate() {
-        for (other_prefix, other_name) in prefixes.iter().skip(index + 1) {
-            if prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix) {
-                return Err(DomainError::InvariantViolation(format!(
-                    "runtime MCP tool prefixes for {name} and {other_name} are ambiguous"
-                )));
-            }
-        }
-    }
     Ok(())
 }
 
@@ -407,6 +379,31 @@ impl ToolSpec {
         match &self.kind {
             ToolKind::Builtin(_) | ToolKind::Function(_) | ToolKind::ProviderNative(_) => Ok(()),
             ToolKind::RemoteMcp(remote_mcp) => remote_mcp.validate(),
+        }
+    }
+
+    pub(crate) fn admits_call(&self, target: &ResolvedToolTarget) -> bool {
+        match (&self.kind, target) {
+            (
+                ToolKind::RemoteMcp(spec),
+                ResolvedToolTarget::Mcp {
+                    server_label,
+                    remote_name,
+                    ..
+                },
+            ) => {
+                spec.execution == RemoteMcpExecution::Runtime
+                    && spec.exposure == RemoteMcpExposure::Inject
+                    && server_label == &spec.server_label
+                    && spec
+                        .allowed_tools
+                        .as_ref()
+                        .is_none_or(|allowed| allowed.contains(remote_name))
+                    && validate_remote_mcp_allowed_tool_name(remote_name).is_ok()
+            }
+            (ToolKind::RemoteMcp(_), _) => false,
+            (_, ResolvedToolTarget::Registered(_)) => self.invokes_client_effect(),
+            _ => false,
         }
     }
 
@@ -622,16 +619,52 @@ pub enum ToolParallelism {
     ParallelSafe,
 }
 
+/// Execution identity resolved from the advertised name in a model request or script scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolvedToolTarget {
+    Mcp {
+        server_tool_id: ToolId,
+        server_label: String,
+        remote_name: String,
+    },
+    #[serde(untagged)]
+    Registered(ToolId),
+}
+
+impl ResolvedToolTarget {
+    pub fn tool_id(&self) -> &ToolId {
+        match self {
+            Self::Registered(id)
+            | Self::Mcp {
+                server_tool_id: id, ..
+            } => id,
+        }
+    }
+}
+
+impl From<ToolId> for ResolvedToolTarget {
+    fn from(id: ToolId) -> Self {
+        Self::Registered(id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedToolCall {
     pub call_id: ToolCallId,
-    /// Admitted registry identity resolved by the response adapter. Absent for
-    /// an unadvertised name. The original name remains transcript data below.
-    pub tool_id: Option<ToolId>,
+    /// Absent for an unadvertised name. The name itself remains transcript data.
+    #[serde(default, alias = "tool_id", skip_serializing_if = "Option::is_none")]
+    pub target: Option<ResolvedToolTarget>,
     pub tool_name: ToolName,
     pub provider_kind: Option<String>,
     pub arguments_ref: BlobRef,
     pub native_call_ref: Option<BlobRef>,
+}
+
+impl ObservedToolCall {
+    pub fn tool_id(&self) -> Option<&ToolId> {
+        self.target.as_ref().map(ResolvedToolTarget::tool_id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1235,11 +1268,10 @@ fn initial_tool_call_state(
     turn_id: TurnId,
     call: &ObservedToolCall,
 ) -> ToolCallState {
-    let invokes_client_effect = call
-        .tool_id
-        .as_ref()
-        .and_then(|tool_id| planned_tool_for_turn(state, turn_id, tool_id))
-        .is_some_and(|tool| tool.invokes_client_effect());
+    let invokes_client_effect = call.target.as_ref().is_some_and(|target| {
+        planned_tool_for_turn(state, turn_id, target.tool_id())
+            .is_some_and(|tool| tool.admits_call(target))
+    });
     if invokes_client_effect {
         ToolCallState {
             call: call.clone(),
@@ -1260,7 +1292,8 @@ pub fn remote_mcp_call_runtime(
     batch_id: ToolBatchId,
     call: &ObservedToolCall,
 ) -> Option<crate::RemoteMcpCallRuntime> {
-    let tool_id = call.tool_id.as_ref()?;
+    let target = call.target.as_ref()?;
+    let tool_id = target.tool_id();
     let call_id = &call.call_id;
     let approval_decision = state
         .runs
@@ -1286,12 +1319,17 @@ pub fn remote_mcp_call_runtime(
         })
         .flatten();
 
-    if let Some((spec, remote_tool_name)) =
-        resolve_injected_runtime_mcp(state, tool_id, &call.tool_name)
-    {
+    if let ResolvedToolTarget::Mcp { remote_name, .. } = target {
+        let tool = state.tooling.tools.get(tool_id)?;
+        let ToolKind::RemoteMcp(spec) = &tool.kind else {
+            return None;
+        };
+        if !tool.admits_call(target) {
+            return None;
+        }
         return Some(crate::RemoteMcpCallRuntime::Injected {
             target: remote_mcp_target(spec),
-            remote_tool_name,
+            remote_tool_name: remote_name.clone(),
             approval_decision,
         });
     }
@@ -1319,32 +1357,6 @@ pub fn remote_mcp_call_runtime(
         targets,
         approval_decision,
     })
-}
-
-fn resolve_injected_runtime_mcp<'a>(
-    state: &'a CoreAgentState,
-    tool_id: &ToolId,
-    exposed_name: &ToolName,
-) -> Option<(&'a RemoteMcpToolSpec, String)> {
-    let tool = state.tooling.tools.get(tool_id)?;
-    let ToolKind::RemoteMcp(spec) = &tool.kind else {
-        return None;
-    };
-    if spec.execution != RemoteMcpExecution::Runtime || spec.exposure != RemoteMcpExposure::Inject {
-        return None;
-    }
-    let prefix = format!("{tool_id}__");
-    let remote_name = exposed_name.as_str().strip_prefix(&prefix)?;
-    if remote_name.is_empty()
-        || spec
-            .allowed_tools
-            .as_ref()
-            .is_some_and(|allowed| !allowed.iter().any(|name| name == remote_name))
-    {
-        return None;
-    }
-    validate_remote_mcp_allowed_tool_name(remote_name).ok()?;
-    Some((spec, remote_name.to_owned()))
 }
 
 fn remote_mcp_target(spec: &RemoteMcpToolSpec) -> crate::RemoteMcpCallTarget {
@@ -2165,7 +2177,7 @@ mod tests {
     fn unavailable_tool_results_reference_the_well_known_constant_blob() {
         let call = ObservedToolCall {
             call_id: crate::ToolCallId::new("call_1"),
-            tool_id: Some(ToolId::new("missing_tool")),
+            target: Some(ToolId::new("missing_tool").into()),
             tool_name: ToolName::new("missing_tool"),
             provider_kind: None,
             arguments_ref: BlobRef::from_bytes(b"{}"),

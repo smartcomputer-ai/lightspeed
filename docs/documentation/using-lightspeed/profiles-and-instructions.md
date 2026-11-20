@@ -9,7 +9,7 @@ model that can call tools, and write access to the release workspace. A
 release reviewer can use the same files with read-only access and a different
 job. Separate profiles let you reuse each setup without configuring it again.
 
-Profiles belong to a universe. Use an Operator or Admin account to create or
+Profiles belong to a universe. Use Operator or Owner access to create or
 edit them. Contributors can select an existing profile when creating a session,
 but cannot customize its setup or save a new profile.
 
@@ -136,7 +136,7 @@ A new ordinary session receives the profile's setup at creation. Saving a
 later profile revision affects future sessions; existing conversations keep
 their current setup until you apply a change.
 
-For a one-off change in the Platform, an Operator or Admin opens the idle
+For a one-off change in the Platform, an Operator or Owner opens the idle
 session's **Session settings**, edits the setup, and chooses **Apply setup**.
 Contributors can inspect these settings but cannot change them, including
 custom instructions or the active environment. To apply a saved profile to an
@@ -194,8 +194,8 @@ See [Environments](../environments/overview.md) for setup and cleanup.
 Metadata and retention settings supply defaults for newly created sessions.
 Use metadata for organization, such as `project=acorn`, and retention to
 choose when a closed session tree is soft-deleted from ordinary views; history
-remains stored until a Platform admin purges it. Through Platform, only Admins
-can create sessions with a deletion schedule. Non-admin creation and bot
+remains stored until a Platform admin purges it. Through Platform, only Owners
+can create sessions with a deletion schedule. Creation by other roles and bot
 conversations do not inherit profile deletion schedules. Neither metadata nor
 retention supplies instructions to the agent.
 

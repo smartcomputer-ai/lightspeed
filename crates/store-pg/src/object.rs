@@ -8,7 +8,47 @@ use crate::{
     shared::{object_store_error, sha256_hex},
 };
 
+/// Wait for admitted uploads before clearing a universe's object namespace.
+/// Hold the transaction until object cleanup and universe finalization finish.
+/// The deletion fence itself deliberately does not acquire this lock.
+pub async fn lock_universe_objects_for_deletion(
+    pool: &sqlx::PgPool,
+    universe_id: Uuid,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, crate::PgStoreError> {
+    let mut guard = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("universe-objects/{universe_id}"))
+        .execute(&mut *guard)
+        .await?;
+    Ok(guard)
+}
+
 impl PgStore {
+    /// Keep the upload and its catalog publication ahead of final deletion.
+    /// Admission is checked after locking, so a waiter cannot upload into an
+    /// already swept namespace. Catalog writes use this same transaction.
+    pub(crate) async fn object_write_guard(
+        &self,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, crate::PgStoreError> {
+        let mut guard = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))")
+            .bind(format!("universe-objects/{}", self.config.universe_id))
+            .execute(&mut *guard)
+            .await?;
+        let active: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NULL)",
+        )
+        .bind(self.config.universe_id)
+        .fetch_one(&mut *guard)
+        .await?;
+        if !active {
+            return Err(crate::PgStoreError::Store {
+                message: format!("unknown universe: {}", self.config.universe_id),
+            });
+        }
+        Ok(guard)
+    }
+
     pub(crate) async fn put_object(
         &self,
         key: &str,

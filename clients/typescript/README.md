@@ -1,13 +1,93 @@
 # Lightspeed TypeScript SDK
 
 Start and inspect Lightspeed agent sessions from TypeScript. The SDK is a typed
-JSON-RPC client generated from the Lightspeed API contract, with helpers for
+HTTP client generated from the Lightspeed API contract, with helpers for
 starting runs, waiting for them to finish, inspecting what they did, and serving a
 browser UI.
 
-An API key with the `session` group can read and control every session in its
-universe, including private ones, so keep it on your server. The client itself also
-runs in a browser; [give it a proxy](#serve-a-browser-ui) instead of a key.
+A runtime token can call every method in every universe, including reading private
+sessions, so keep it on your server. The client itself also
+runs in a browser; use a same-origin Platform session or [give it a proxy](#serve-a-browser-ui) instead of a runtime token.
+
+## Connect through Platform
+
+Use the deployment origin or `/api/v1` URL with a user or service-user API
+key. Runtime resources and native Platform operations share `client.call` and
+one credential. Platform derives the principal; omit `actor`.
+
+```ts
+import { LightspeedClient } from "@lightspeed-ai/sdk";
+
+const client = new LightspeedClient({
+  endpoint: "https://lightspeed.example",
+  token: process.env.LIGHTSPEED_PLATFORM_KEY!,
+});
+const { organizations } = await client.platform.listOrganizations();
+const { universe } = await client.platform.createUniverse({
+  organizationId: organizations[0]!.id,
+  universeId: crypto.randomUUID(), // Keep this ID if retrying creation.
+  name: "Experiment",
+  handle: "experiment",
+});
+// The same typed operation is available through the common dispatcher.
+const organization = await client.call("platform/organizations/read", {
+  organizationId: organizations[0]!.id,
+});
+```
+
+Creation requires an organization Creator or Admin and a credential that permits
+creation. Native helpers under `client.platform` are generated from the same
+contract as their routes and types. Each accepts a typed parameter object and
+optional `CallOptions`; helpers without required parameters accept no arguments.
+Organization IDs remain explicit parameters. Key-management routes require a human
+browser or CLI session; API keys cannot mint broader credentials.
+
+`ClientOperationId`, `ClientOperationParams`, and `ClientOperationResult` describe
+the composed client. `OperationId` and the corresponding runtime metadata remain
+runtime-only for server adapters. `client.initialize()` returns a discriminated
+`ClientConnectionResponse`: when `runtime === "platform"`, `platform` contains
+the authenticated principal, credential kind, accessible organizations, and restrictions.
+
+Origins, trailing slashes, and deployment base paths normalize consistently:
+`https://example.test/team/` becomes `https://example.test/team/api/v1`.
+Credential-bearing URLs, queries, fragments, and redirects are refused.
+Ordinary construction performs no discovery or implicit universe selection;
+set `universe` explicitly for runtime resource calls. A same-origin browser
+client can use its Platform session cookies without embedding a key.
+
+## Use a saved CLI connection in Node.js
+
+First save a deployment with `lightspeed connect add`, or sign in with
+`lightspeed connect login --url https://lightspeed.example --name work`.
+Then import the Node-only factory:
+
+```ts
+import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
+
+const client = await createClientFromConnection({ name: "work" });
+const { organizations } = await client.platform.listOrganizations();
+if (client.organizationId) {
+  const serviceUsers = await client.platform.listServiceUsers({
+    organizationId: client.organizationId,
+  });
+}
+```
+
+The factory defaults to the CLI's selected connection. `configDir` overrides the
+configuration directory; otherwise it uses `LIGHTSPEED_CONFIG_DIR`, then
+`XDG_CONFIG_HOME/lightspeed` or `~/.config/lightspeed`. It verifies the saved
+server and credential kinds, reads private credential files for each request,
+and persists renewal of CLI-owned sessions atomically, including renewals on
+denied operations. Imported credential files and API keys are never rewritten.
+It neither logs in automatically nor borrows environment tokens or endpoint
+overrides. Saved HTTPS requirements and explicit CLI development exceptions apply.
+
+`universe` and `organization` factory options override selections for this client
+without editing the saved connection. Changing organizations clears the inherited
+universe unless you also supply `universe`. The selected organization is available
+as read-only `client.organizationId`; helpers still require explicit organization IDs.
+Removing or rebinding the named connection stops subsequent authenticated calls.
+This factory is separate from the browser-safe main package entry.
 
 ## Install
 
@@ -26,16 +106,16 @@ npm install --save-exact @lightspeed-ai/sdk@<release-version>
 
 ## Start a session and run a task
 
-You need the gateway's `/rpc` URL, an
-[API key](https://ls.bot/docs/access-and-security/api-keys-and-service-access/) with the
-`session` group, and a universe with a default model or a profile to start from.
+You need the gateway's `/api/v1` URL, a
+[runtime token](https://ls.bot/docs/access-and-security/api-keys-and-service-access/), and a universe with a default model or a profile to start from.
 
 ```ts
 import { LightspeedClient } from "@lightspeed-ai/sdk";
 
 const client = new LightspeedClient({
   endpoint: process.env.LIGHTSPEED_API_URL!,
-  apiKey: process.env.LIGHTSPEED_API_KEY!,
+  token: process.env.LIGHTSPEED_API_TOKEN!,
+  universe: process.env.LIGHTSPEED_UNIVERSE!,
 });
 
 const { session } = await client.startSession({
@@ -68,26 +148,26 @@ and `submissionId` so a retry finds the same session and run. See
 
 | Option | Use |
 | --- | --- |
-| `endpoint` | The gateway's `/rpc` URL. |
-| `apiKey` | Sent as the bearer credential. |
-| `universe` | The universe's UUID or handle, for a deployment key only. A universe key must leave it out. |
-| `actor` | An opaque user ID to attribute requests to. The key must be created with `assertActor`. |
+| `endpoint` | Deployment origin or `/api/v1` base URL, for runtime or Platform. |
+| `token` | Sent as the bearer credential. |
+| `universe` | The universe's UUID or handle; required for universe methods in authenticated mode. |
+| `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
 | `headers` | Extra headers, or a function returning them for each request. These override the options above. |
 | `fetch` | A replacement `fetch`, for tests or custom transports. |
 
 To act for several users from one client, use `client.withActor(userId)`. Attribution
-records who asked, but it does not limit what the key can do, so your application
+records who asked, but it does not limit what the token can do, so your application
 must check each user's access itself.
 
 ## Helpers and `call`
 
 The client has two layers, and you can mix them freely:
 
-- **Named helpers** such as `client.readSession(id)` cover what most applications need.
+- **Named helpers** cover all 148 runtime operations and all 26 native Platform operations.
 - **`client.call(method, params)`** reaches every method in the API, typed, by its name.
 
-A helper and its `call` do the same thing. Prefer the helper when there is one, and use
-`call` for everything else, mainly administration. The two differ in shape:
+Use named helpers for discoverable, typed arguments, or `call` when selecting an
+operation by its stable ID. Authorization is the same for both. The shapes differ:
 
 ```ts
 // A helper: IDs of the target come first, everything else goes in options, and you
@@ -95,45 +175,101 @@ A helper and its `call` do the same thing. Prefer the helper when there is one, 
 const { session } = await client.readSession(sessionId, { runLimit: 5 });
 await client.closeSession(sessionId, { force: true, signal });
 
-// call: one params object and one options object, and you get the whole envelope.
-const outcome = await client.call("session/read", { sessionId, runLimit: 5 }, { signal });
-console.log(outcome.result.session, outcome.notifications);
+// call: one params object and one options object, returning the same direct DTO.
+const result = await client.call("session/read", { sessionId, runLimit: 5 }, { signal });
+console.log(result.session);
 
-// Administration has no helper.
-const keys = await client.call("deployment/api-keys/list", {});
+// Administration also has named helpers.
+const universes = await client.listUniverses();
+await client.putUniverseExpiry("universe-id", { expiresAtMs: null });
 ```
 
-Use `call` if you need the `notifications` returned with a method; helpers leave them out.
-The durable session event stream is the same either way. Both layers reject with the same
+Use `watch` for live list changes and `readEvents` for durable session events.
+Both layers reject with the same
 [errors](#handle-errors), and every option also accepts `signal` and `headers`.
 
-| Area | Helpers |
+Helper availability describes the client surface; the deployment still decides
+which operations your credential may use. Platform exposes permitted runtime
+and deployment operations through its policy checks. For organization-qualified
+universe creation on Platform, use `client.platform.createUniverse({ organizationId,
+... })`; `client.createUniverse(id, options)` addresses the runtime deployment
+operation without adding organization ownership.
+
+| Area | Runtime helpers |
 | --- | --- |
-| Connection | `initialize` |
-| Sessions | `startSession`, `readSession`, `listSessions`, `renameSession`, `putSessionMetadata`, `putSessionConfig`, `shareSession`, `restartSession`, `closeSession`, `deleteSession` |
-| Runs | `startRun`, `awaitRun`, `readRun`, `listRuns`, `cancelRun`, `steerRun`, `decideApprovals`, `readEvents` |
-| Session setup | `appendContext`, `compactContext`, `applyProfile`, `listSessionSkills`, `activateEnvironment`, `deactivateEnvironment` |
-| Content | `putBlob`, `readBlobText`, `readBlobBytes` |
-| Profiles | `createProfile`, `readProfile`, `listProfiles`, `putProfile`, `deleteProfile` |
-| Models | `listModels`, `readModelDefaults` |
-| Environments | `createEnvironment`, `readEnvironment`, `listEnvironments`, `closeEnvironment`, `listEnvironmentTemplates` |
-| Workspaces | `createWorkspace`, `readWorkspace`, `listWorkspaces`, `deleteWorkspace`, `readWorkspaceFile` |
-| MCP servers | `readMcpServer`, `listMcpServers` |
-| Bots | `readBot`, `listBots`, `listBotEvents`, `admitBotEvent` |
+| initialize | `initialize` |
+| Sessions | `startSession`, `readSession`, `listSessions`, `renameSession`, `shareSession`, `restartSession`, `closeSession`, `deleteSession` |
+| session/metadata | `putSessionMetadata` |
+| session/config | `putSessionConfig` |
+| session/runs | `listRuns`, `readRun`, `cancelRun`, `decideApprovals`, `startRun`, `steerRun` |
+| session/context | `appendContext`, `compactContext`, `removeContext`, `replaceContext` |
+| session/profiles | `applyProfile` |
+| session/skills | `listSessionSkills` |
+| session/environments | `activateEnvironment`, `deactivateEnvironment` |
+| profiles | `createProfile`, `readProfile`, `listProfiles`, `putProfile`, `deleteProfile` |
+| models | `listModels`, `readModelDefaults`, `putModelDefaults` |
+| Environments | `createEnvironment`, `readEnvironment`, `listEnvironments`, `closeEnvironment`, `updateEnvironment` |
+| environments/templates | `listEnvironmentTemplates`, `readEnvironmentTemplate` |
+| vfs | `createWorkspace`, `readWorkspace`, `listWorkspaces`, `deleteWorkspace`, `readWorkspaceFile`, `commitSnapshot`, `readSnapshot`, `updateWorkspace` |
+| mcp | `readMcpServer`, `listMcpServers`, `putMcpServer`, `discoverMcpServerAuth`, `discoverMcpServerTools`, `deleteMcpServer` |
+| Bots | `readBot`, `listBots`, `createBot`, `putBot`, `closeBot`, `deleteBot` |
+| bots/events | `listBotEvents`, `admitBotEvent`, `replayBotEvent`, `readBotEvent` |
+| session/retention | `putSessionRetention` |
+| environments/credentials | `bindEnvironmentCredential`, `listEnvironmentCredentials`, `unbindEnvironmentCredential` |
+| environments/external | `createExternalEnvironment` |
+| environments/registered | `putRegisteredEnvironment`, `releaseRegisteredEnvironment` |
+| environments/ingress | `putEnvironmentIngress` |
+| environments/power | `putEnvironmentPower` |
+| environments/providers | `listAvailableEnvironmentProviders`, `readAvailableEnvironmentProvider` |
+| environments/jobs | `createEnvironmentJobs`, `readEnvironmentJobs`, `cancelEnvironmentJobs` |
+| environments/registration-keys | `createEnvironmentRegistrationKey`, `putEnvironmentRegistrationKey`, `readEnvironmentRegistrationKey`, `listEnvironmentRegistrationKeys`, `updateEnvironmentRegistrationKey`, `rotateEnvironmentRegistrationKey`, `revokeEnvironmentRegistrationKey` |
+| transcriptions | `startTranscription`, `readTranscription`, `cancelTranscription` |
+| blobs | `putBlobs`, `hasBlobs`, `readBlobBytes`, `uploadBlob` |
+| credentials/grants | `importCredentialGrant`, `leaseCredentialGrant`, `readCredentialGrant`, `listCredentialGrants`, `putCredentialGrant`, `revokeCredentialGrant` |
+| credentials/clients | `createCredentialClient`, `readCredentialClient`, `listCredentialClients`, `deleteCredentialClient` |
+| credentials/flows | `startCredentialFlow`, `readCredentialFlow` |
+| credentials/providers | `createCredentialProvider`, `putCredentialProvider`, `readCredentialProvider`, `listCredentialProviders`, `deleteCredentialProvider` |
+| credentials/github | `listGithubInstallations`, `grantGithubInstallation` |
+| bots/state | `readBotState` |
+| bots/sessions | `rotateBotSession` |
+| bots/triggers | `putBotTrigger`, `readBotTrigger`, `listBotTriggers`, `readBotTriggerSecrets`, `deleteBotTrigger` |
+| bots/filters | `testBotFilter` |
+| deployment/universes | `listDeletedUniverses`, `createUniverse`, `listUniverses`, `readUniverse`, `putUniverseConfiguration`, `putUniverseExpiry`, `putUniverseHandle`, `deleteUniverse` |
+| deployment/sessions | `listDeletedSessions`, `purgeSession` |
+| deployment/environment-provider-bindings | `listDeploymentEnvironmentProviderBindings` |
+| deployment/environment-providers | `putEnvironmentProvider`, `listEnvironmentProviders`, `readEnvironmentProvider`, `deleteEnvironmentProvider`, `putUniverseEnvironmentProviderBinding`, `deleteUniverseEnvironmentProviderBinding` |
+| universe | `watch` |
+| session/events | `readEvents` |
 
-Everything else stays on `call`: auth grants and providers, deployment and universe
-management, channels, registration keys, transcription, and the remaining bot, MCP, and
-environment operations. A few helpers do more than wrap one method:
+Native Platform helpers use `client.platform` and typed parameter objects:
 
-- `startRun` and `steerRun` accept plain text and generate a submission ID if you give none.
+| Area | Platform helpers |
+| --- | --- |
+| session | `readCurrentSession`, `revokeCurrentSession` |
+| settings | `listPlatformSettings`, `putPlatformSetting` |
+| credentials | `listPersonalApiKeys`, `createPersonalApiKey`, `replacePersonalApiKey`, `revokePersonalApiKey` |
+| service-users | `listServiceUserApiKeys`, `createServiceUserApiKey`, `putServiceUserApiKey`, `replaceServiceUserApiKey`, `revokeServiceUserApiKey` |
+| organizations | `listOrganizations`, `enrollOrganization`, `createOrganization`, `readOrganization`, `updateOrganization`, `listOrganizationMembers`, `putOrganizationMember`, `removeOrganizationMember`, `listOrganizationApiKeys`, `listServiceUsers`, `createServiceUser`, `updateServiceUser`, `listFederatedCredentials`, `putFederatedCredential`, `deleteFederatedCredential` |
+| universes | `adoptUniverse`, `createUniverse`, `readPlatformUniverse`, `updateUniverse`, `listUniverseGrants`, `putUniverseGrant`, `removeUniverseGrant`, `readUniverseAccessPolicy`, `putUniverseAccessPolicy` |
+
+Additional conveniences include `awaitRun`, `readBlobText`, `putBlob`,
+`openWatch`, and `openDownload`. They compose operations or expose their streams:
+
+- `startRun` accepts plain text, input items, or a full `RunStartSource`; its options
+  include `notifyOnTerminal`. `steerRun` accepts plain text or input items. Both
+  generate a submission ID if you give none.
+- `readEvents` supports forward reads and backward pagination with `direction`
+  and `before`, preserving the complete event-read parameter set.
 - `awaitRun` has no single method behind it. It follows events, checks run state, retries
   reads, and returns the finished run.
-- `putBlob`, `readBlobText`, and `readBlobBytes` handle the base64 encoding.
+- `putBlob` sends a JSON batch upload; `readBlobText` and `readBlobBytes` download raw bytes.
+- `uploadBlob` uploads bytes or a stream to an expected content digest. `openDownload` returns a streaming response that the caller consumes or cancels.
 
-`METHOD_INFO` describes every method, `CLIENT_HELPERS` maps each generated helper to its
-method, and the
+`OPERATION_INFO` describes every operation. `CLIENT_HELPERS` maps every canonical
+runtime helper, generated or handwritten, to its operation;
+`PLATFORM_CLIENT_HELPERS` maps the native namespace. The
 [API reference](https://github.com/smartcomputer-ai/lightspeed/blob/main/crates/api/contract/api-reference.md)
-covers them in full. Types are named by the API, and `MethodData<"session/read">` and
+covers them in full. Types are named by the API, and `OperationResult<"session/read">` and
 `SessionEventKindOf<"runFailed">` cover the common cases.
 
 ## Wait for a run
@@ -213,65 +349,28 @@ for Platform integration and live list updates.
 
 ## Serve a browser UI
 
-Mount `createRpcProxy` on your server. It holds the key, and the browser uses an
-ordinary client pointed at it:
+Use the shared HTTP route descriptors on your server. `HTTP_OPERATIONS` from
+`@lightspeed-ai/sdk/server` contains each operation's HTTP method, path, access
+classification, and parameter bindings. Register those routes in your framework,
+authenticate the caller, authorize the URL target, then stream requests to the
+runtime with the server's bearer token and actor attribution. The runtime validates
+request bodies; decode them in the proxy only when a policy needs to inspect or
+rewrite a field.
 
-```ts
-// On your server. This import is separate so it stays out of browser bundles.
-import { LightspeedClient } from "@lightspeed-ai/sdk";
-import { createRpcProxy } from "@lightspeed-ai/sdk/server";
+`prepareHttpRequest(operation, params, { endpoint, universe })` constructs a resource
+URL and partitions logical parameters between its query and body. Both SDKs use
+the same generated contract. Browser clients use a client pointed at your proxy's
+base URL with the selected `universe`.
 
-export const handler = createRpcProxy({
-  client: new LightspeedClient({
-    endpoint: process.env.LIGHTSPEED_API_URL!,
-    apiKey: process.env.LIGHTSPEED_API_KEY!,
-  }),
-  methods: ["session/list", "session/read", "session/runs/list", "session/runs/read"],
-  authorize: async ({ request }) => {
-    const user = await getUser(request);
-    if (!user) return { deny: "unauthenticated" };
-    return { actor: user.id };
-  },
-});
-```
-
-```ts
-// In the browser.
-const client = new LightspeedClient({ endpoint: new URL("/api/lightspeed", location.origin) });
-```
-
-The handler takes a standard `Request` and returns a `Response`, so it fits Next, Hono,
-and similar frameworks.
-
-- **Only listed methods are forwarded.** Everything else is refused before `authorize`
-  runs, so add methods as your UI needs them. List them by API name, because that is what
-  reaches the proxy even when the browser calls a helper: `listSessions` needs
-  `session/list`, and `CLIENT_HELPERS` has the full mapping. Mutations such as
-  `session/runs/cancel` are worth checking per user.
-- **`authorize` decides every call.** It can deny, name the `actor`, or return `params`
-  to replace what the browser sent, for example to force a `metadata` filter onto
-  `session/list`. The params it receives are untrusted and not yet validated.
-- **The browser supplies no identity.** Its key, universe, and actor headers are ignored.
-  Only POST with a JSON body is accepted, and no CORS headers are sent, so serve the
-  proxy from the same origin as your page.
-- **Refusals look like any other API error.** A denial reaches the browser's client as a
-  `LightspeedRpcError` with kind `unauthenticated` or `forbidden`.
-
-A universe is one readable namespace for a key allowed to read it. `blobs/read` takes
-only a blob reference and is not tied to a session, so anyone you allow that method can
-read any blob in the universe whose reference they hold. If an application must not see
-some work, give it a separate universe and key.
-
-A long `awaitRun` from the browser holds a request open for up to 30 seconds at a time.
-Some serverless hosts and proxies cut these off; the wait retries, but check your host's
-limit. The [run inspector example](https://github.com/smartcomputer-ai/lightspeed/tree/main/clients/typescript/examples/run-inspector)
-puts all of this together in a small working page.
+The [run inspector example](examples/run-inspector/README.md) demonstrates a small
+route allowlist, application login, server-owned credentials and streamed downloads.
+Platform adds its organization and role policies around these shared routes.
 
 ## Handle errors
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid API key is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
+| `LightspeedApiError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `cause` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | The signal's reason | You aborted, or your timeout passed. Check `error.name` for `AbortError` or `TimeoutError`. |
 
@@ -301,6 +400,13 @@ npm run check --workspace @lightspeed-ai/sdk
 `npm run check:generated` regenerates the types and packaged schemas, and fails if the
 committed output is stale.
 
+The [cross-SDK live validation](../python/README.md#develop-this-package) uses the
+real Platform, runtime and CLI to verify saved sessions/API keys, JSON and binary
+requests, scope restrictions and revocation. It requires dedicated fixtures and
+revokes their credentials after the check.
+
 ## License
 
 Apache-2.0
+
+HTTP paths, query encoding, and response types are generated from `http.json`. Universe requests require the `universe` client option. Discover a single-mode runtime's default with `initialize()` and use its `defaultUniverse` when creating the scoped client. Errors expose an HTTP `status` and structured `kind`; `payload` retains the complete problem document.

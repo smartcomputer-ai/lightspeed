@@ -1,210 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AccessScope": {
-      "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "deployment",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "universe",
-              "type": "string"
-            },
-            "universeId": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "universeId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "ApiKeyGroups": {
-      "anyOf": [
-        {
-          "const": "all",
-          "type": "string"
-        },
-        {
-          "items": {
-            "$ref": "#/definitions/MethodGroup"
-          },
-          "type": "array",
-          "uniqueItems": true
-        }
-      ],
-      "description": "The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups."
-    },
-    "ApiKeysEntry": {
-      "additionalProperties": false,
-      "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
-      "properties": {
-        "assertActor": {
-          "default": false,
-          "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
-          "type": "boolean"
-        },
-        "displayName": {
-          "description": "Human-readable purpose shown in key-management interfaces.",
-          "type": "string"
-        },
-        "groups": {
-          "$ref": "#/definitions/ApiKeyGroups",
-          "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. An existing key's groups are replaced\nby these, and `\"all\"` is resolved again on every call, so repeating a\ndeclaration after an upgrade gives the key the groups added since."
-        },
-        "keyId": {
-          "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
-          "type": "string"
-        },
-        "secretFrom": {
-          "$ref": "#/definitions/SecretSource",
-          "description": "Where `secret` comes from. The value itself is never written in a document."
-        }
-      },
-      "required": [
-        "keyId",
-        "groups",
-        "displayName",
-        "secretFrom"
-      ],
-      "type": "object"
-    },
-    "AuthGrantExposure": {
-      "description": "Where a credential's plain value may go, fixed when it is created.",
-      "oneOf": [
-        {
-          "const": "brokered",
-          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
-          "type": "string"
-        },
-        {
-          "const": "retrievable",
-          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
-          "type": "string"
-        }
-      ]
-    },
-    "AuthProviderConfigInput": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "apiBaseUrl": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "appId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "githubApp",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "appId"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
-          "properties": {
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": {
-              "const": "modelApiKey",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
-          "properties": {
-            "audience": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "grantId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "modelOAuth",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "grantId"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Register an endpoint that requires no provider credential.",
-          "properties": {
-            "endpoint": {
-              "$ref": "#/definitions/ModelEndpointConfig"
-            },
-            "type": {
-              "const": "modelEndpoint",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "endpoint"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "CodeModeFeature": {
       "additionalProperties": false,
       "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
@@ -392,6 +188,124 @@
       },
       "type": "object"
     },
+    "CredentialGrantExposure": {
+      "description": "Where a credential's plain value may go, fixed when it is created.",
+      "oneOf": [
+        {
+          "const": "brokered",
+          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+          "type": "string"
+        },
+        {
+          "const": "retrievable",
+          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+          "type": "string"
+        }
+      ]
+    },
+    "CredentialProviderConfigInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "apiBaseUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "appId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "githubApp",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "modelApiKey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+          "properties": {
+            "audience": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "modelOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Register an endpoint that requires no provider credential.",
+          "properties": {
+            "endpoint": {
+              "$ref": "#/definitions/ModelEndpointConfig"
+            },
+            "type": {
+              "const": "modelEndpoint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "endpoint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CredentialsEntry": {
       "additionalProperties": false,
       "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
@@ -417,7 +331,7 @@
           ]
         },
         "exposure": {
-          "$ref": "#/definitions/AuthGrantExposure",
+          "$ref": "#/definitions/CredentialGrantExposure",
           "default": "brokered",
           "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
         },
@@ -454,68 +368,6 @@
       "required": [
         "grantId",
         "tokenFrom"
-      ],
-      "type": "object"
-    },
-    "DeclaredUniverseMember": {
-      "additionalProperties": false,
-      "properties": {
-        "email": {
-          "description": "Select by verified email, or by issuer and subject, never both.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "issuer": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "role": {
-          "$ref": "#/definitions/UniverseMemberRole"
-        },
-        "subject": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "role"
-      ],
-      "type": "object"
-    },
-    "DeploymentDocument": {
-      "additionalProperties": false,
-      "description": "Resources that belong to the deployment and not to one universe.",
-      "properties": {
-        "apiKeys": {
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ApiKeysEntry"
-              },
-              {
-                "$ref": "#/definitions/Include"
-              }
-            ]
-          },
-          "type": "array"
-        },
-        "kind": {
-          "const": "deployment"
-        },
-        "schemaVersion": {
-          "const": 1,
-          "description": "The layout of this file. It is not a revision of the configuration."
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "kind"
       ],
       "type": "object"
     },
@@ -677,16 +529,12 @@
     "EnvironmentProvidersEntry": {
       "additionalProperties": false,
       "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
         "providerId": {
           "type": "string"
         }
       },
       "required": [
-        "providerId",
-        "enabled"
+        "providerId"
       ],
       "type": "object"
     },
@@ -1201,7 +1049,7 @@
       ]
     },
     "McpServerCredential": {
-      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the auth subsystem and is never returned.",
+      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the credentials subsystem and is never returned.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -1324,75 +1172,6 @@
       ],
       "type": "object"
     },
-    "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
-      "oneOf": [
-        {
-          "enum": [
-            "vfs",
-            "profiles",
-            "transcriptions",
-            "models",
-            "mcp",
-            "bots",
-            "deployment/universes",
-            "deployment/api-keys",
-            "deployment/sessions"
-          ],
-          "type": "string"
-        },
-        {
-          "const": "session",
-          "description": "`session/*`, `blobs/read` and `blobs/has`.",
-          "type": "string"
-        },
-        {
-          "const": "session/delete",
-          "description": "Destructive session operations and deletion retention.",
-          "type": "string"
-        },
-        {
-          "const": "blobs/put",
-          "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
-          "type": "string"
-        },
-        {
-          "const": "environments",
-          "description": "`environments/*`, including jobs and registration keys.",
-          "type": "string"
-        },
-        {
-          "const": "channels",
-          "description": "Channel accounts, pairings and conversations.",
-          "type": "string"
-        },
-        {
-          "const": "channels/inbound",
-          "description": "`channels/inbound/admit`: what a connector delivers.",
-          "type": "string"
-        },
-        {
-          "const": "auth",
-          "description": "`auth/*` except leasing.",
-          "type": "string"
-        },
-        {
-          "const": "auth/lease",
-          "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
-          "type": "string"
-        },
-        {
-          "const": "deployment/environment-providers",
-          "description": "Environment providers and their universe bindings.",
-          "type": "string"
-        },
-        {
-          "const": "deployment/channels",
-          "description": "`deployment/channels/accounts/list`: a connector host's discovery.",
-          "type": "string"
-        }
-      ]
-    },
     "ModelConfig": {
       "additionalProperties": false,
       "properties": {
@@ -1467,6 +1246,342 @@
         "flex"
       ],
       "type": "string"
+    },
+    "OrganizationDocument": {
+      "additionalProperties": false,
+      "description": "Platform only. The configuration of one organization. A field left out is not managed by the document.",
+      "properties": {
+        "baseUniverseRole": {
+          "anyOf": [
+            {
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The default universe access: the role every member person holds in every universe of the organization. `null` gives members only what they are granted."
+        },
+        "defaultProtected": {
+          "description": "New universes start with deletion protection.",
+          "type": "boolean"
+        },
+        "handle": {
+          "description": "The organization's deployment-unique handle. apply finds the organization by it and creates it when none has it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "organization"
+        },
+        "membershipPolicy": {
+          "additionalProperties": false,
+          "description": "People and company directory groups declared to hold organization roles. When present, it replaces the organization's policy.",
+          "properties": {
+            "directoryGroupMappings": {
+              "items": {
+                "additionalProperties": false,
+                "description": "Everyone in a company directory group holds the role.",
+                "properties": {
+                  "group": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "issuer": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "member",
+                      "creator",
+                      "admin"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "members": {
+              "items": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "email": {
+                        "format": "email",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "issuer": {
+                        "format": "uri",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "subject": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "description": "A person declared by verified email, or by their company sign-in issuer and subject."
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "name": {
+          "description": "Required to create the organization.",
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "requireProtected": {
+          "description": "Every universe must stay protected and cannot expire.",
+          "type": "boolean"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The layout of this file. It is not a revision of the configuration."
+        },
+        "serviceUsers": {
+          "description": "Service users, by their name in the organization. Credentials are additive. A service user or credential left out is kept.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "federatedCredentials": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "issuer": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "restrictions": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "allowServiceUserKeys": {
+                          "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                          "type": "boolean"
+                        },
+                        "allowUniverseCreation": {
+                          "type": "boolean"
+                        },
+                        "operations": {
+                          "items": {
+                            "maxLength": 200,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "maxItems": 1000,
+                          "type": "array"
+                        },
+                        "organizationIds": {
+                          "items": {
+                            "maxLength": 200,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "maxItems": 1000,
+                          "type": "array"
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        },
+                        "universeIds": {
+                          "items": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string"
+                          },
+                          "maxItems": 1000,
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "serviceAccountUid": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "subject": {
+                      "maxLength": 1024,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "issuer",
+                    "subject"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "keys": {
+                "description": "Keys whose secret comes from outside, by name. The document is each key's desired state: restrictions left out mean none, an expiry left out means never. A changed secret replaces the old one at once. A key left out is kept.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "expiresAt": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "maxLength": 120,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "restrictions": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "allowServiceUserKeys": {
+                          "type": "boolean"
+                        },
+                        "allowUniverseCreation": {
+                          "type": "boolean"
+                        },
+                        "operations": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "organizationIds": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        },
+                        "universeIds": {
+                          "items": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "secretFrom": {
+                      "$ref": "#/definitions/SecretSource"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "secretFrom"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "universeQuota": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The organization's own universe limit; `null` follows the deployment default. Only a Platform Admin changes it."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "handle"
+      ],
+      "type": "object"
     },
     "ProfileId": {
       "type": "string"
@@ -1594,7 +1709,7 @@
       "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
       "properties": {
         "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
+          "$ref": "#/definitions/CredentialProviderConfigInput"
         },
         "credentialFrom": {
           "$ref": "#/definitions/SecretSource",
@@ -1965,42 +2080,136 @@
         }
       ]
     },
-    "UniverseDirectoryGroupMapping": {
+    "UniverseAccess": {
       "additionalProperties": false,
+      "description": "Platform only. Who may use the universe beyond the organization's default access. `members` and `directoryGroupMappings` are its declared access policy; each one present replaces its part. Service users are granted their role by name; one left out keeps its grant.",
       "properties": {
-        "group": {
-          "type": "string"
+        "directoryGroupMappings": {
+          "items": {
+            "additionalProperties": false,
+            "description": "Everyone in a company directory group holds the role.",
+            "properties": {
+              "group": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "issuer": {
+                "format": "uri",
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "operator",
+                  "owner"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "group",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
         },
-        "issuer": {
-          "type": "string"
+        "members": {
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "email": {
+                    "format": "email",
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email",
+                  "role"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "issuer": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ],
+                    "type": "string"
+                  },
+                  "subject": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject",
+                  "role"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "A person declared by verified email, or by their company sign-in issuer and subject."
+          },
+          "type": "array"
         },
-        "role": {
-          "$ref": "#/definitions/UniverseMemberRole"
+        "serviceUsers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "operator",
+                  "owner"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
         }
       },
-      "required": [
-        "issuer",
-        "group",
-        "role"
-      ],
       "type": "object"
     },
     "UniverseDocument": {
       "additionalProperties": false,
       "description": "The configuration of one universe. A section left out is not managed by the document.",
       "properties": {
-        "apiKeys": {
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ApiKeysEntry"
-              },
-              {
-                "$ref": "#/definitions/Include"
-              }
-            ]
-          },
-          "type": "array"
+        "access": {
+          "$ref": "#/definitions/UniverseAccess"
         },
         "credentials": {
           "items": {
@@ -2015,18 +2224,7 @@
           },
           "type": "array"
         },
-        "directoryGroupMappings": {
-          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-          "items": {
-            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
         "displayName": {
-          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
           "type": [
             "string",
             "null"
@@ -2079,13 +2277,13 @@
           },
           "type": "array"
         },
-        "members": {
-          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-          "items": {
-            "$ref": "#/definitions/DeclaredUniverseMember"
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
           },
+          "description": "Replaces the complete metadata map; omission leaves it unchanged.",
           "type": [
-            "array",
+            "object",
             "null"
           ]
         },
@@ -2116,6 +2314,11 @@
           },
           "type": "object"
         },
+        "organization": {
+          "description": "Platform only. The handle of the organization holding the universe: apply creates a missing universe there, and an existing universe must already be there. Left out, creation uses the selected organization.",
+          "minLength": 1,
+          "type": "string"
+        },
         "profiles": {
           "items": {
             "anyOf": [
@@ -2128,6 +2331,13 @@
             ]
           },
           "type": "array"
+        },
+        "protected": {
+          "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "providers": {
           "items": {
@@ -2166,15 +2376,6 @@
         "handle"
       ],
       "type": "object"
-    },
-    "UniverseMemberRole": {
-      "enum": [
-        "viewer",
-        "contributor",
-        "operator",
-        "admin"
-      ],
-      "type": "string"
     },
     "VfsFeature": {
       "additionalProperties": false,
@@ -2355,13 +2556,13 @@
       "type": "object"
     }
   },
-  "description": "A document that `lightspeed config apply` makes a universe, or the deployment, match. Generated from the API's input types; do not edit.",
+  "description": "A document that `lightspeed config apply` makes a universe or a Platform organization match. Generated from the API's input types; do not edit.",
   "oneOf": [
     {
       "$ref": "#/definitions/UniverseDocument"
     },
     {
-      "$ref": "#/definitions/DeploymentDocument"
+      "$ref": "#/definitions/OrganizationDocument"
     }
   ],
   "title": "Lightspeed configuration document"

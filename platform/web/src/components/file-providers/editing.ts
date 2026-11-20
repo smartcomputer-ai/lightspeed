@@ -96,7 +96,7 @@ export function useWorkspaceFileEditing({
     }) =>
       api<{ workspace: WorkspaceRow }>(
         "PUT",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
+        `/api/ui/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
         {
           contentText: submission.contentText,
           expectedRevision: submission.revision,

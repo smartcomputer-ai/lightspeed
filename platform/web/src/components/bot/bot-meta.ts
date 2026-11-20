@@ -156,8 +156,8 @@ export function creatorLabel(createdBy: Attribution, viewerId: string | null | u
   switch (createdBy.kind) {
     case "actor":
       return viewerId && createdBy.id === viewerId ? "you" : "a member";
-    case "key":
-      return "an API key";
+    case "token":
+      return createdBy.name;
     case "local":
       return "a local operator";
     default:

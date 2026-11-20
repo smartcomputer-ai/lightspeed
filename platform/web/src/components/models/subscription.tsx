@@ -67,7 +67,7 @@ export function SubscriptionForm({
     mutationFn: () =>
       api<SubscriptionImportResult>(
         "POST",
-        `/api/v1/universes/${universeId}/integrations/subscriptions`,
+        `/api/ui/universes/${universeId}/integrations/subscriptions`,
         { provider, credential, ...(displayName.trim() ? { displayName: displayName.trim() } : {}) },
       ),
     onSuccess: (result) => {
@@ -155,7 +155,7 @@ export function SubscriptionDetails({
     mutationFn: () =>
       api<SecretGrant>(
         "DELETE",
-        `/api/v1/universes/${universeId}/integrations/subscriptions/${encodeURIComponent(grant.grantId)}`,
+        `/api/ui/universes/${universeId}/integrations/subscriptions/${encodeURIComponent(grant.grantId)}`,
       ),
     onSuccess: onDisconnected,
   });

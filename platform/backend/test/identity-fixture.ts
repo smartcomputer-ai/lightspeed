@@ -11,9 +11,8 @@ export const identityEnv: ServerEnv = {
   databaseUrl: "postgres://unused", authSecret: "identity-test-secret-at-least-thirty-two-characters",
   baseUrl: "http://localhost:3030", trustedOrigins: [], port: 3030,
   adminEmail: "emergency@example.test", adminPassword: "emergency-test-password",
-  github: null, lightspeedApiUrl: null, configuratorMcpUrl: null,
-  configuratorMcpAllowPrivateNetwork: false, configuratorMcpInternalTrustedHeader: false,
-  channelsHealthUrls: [], devEnvdEndpoint: null,
+  github: null, lightspeedApiUrl: null,
+  devEnvdEndpoint: null,
   oidc: {
     issuer: "https://identity.example.test", discoveryUrl: "https://identity.example.test/.well-known/openid-configuration",
     clientId: "lightspeed", clientSecret: "synthetic-client-secret", scopes: ["openid", "profile", "email"],
@@ -22,11 +21,46 @@ export const identityEnv: ServerEnv = {
   },
 };
 
-export async function identityFixture(env: ServerEnv = identityEnv) {
+/// Booting PGlite takes a second or two; emptying its tables takes
+/// milliseconds. A fixture's `postgres.close()` therefore hands the instance
+/// back for the next fixture in the same test file, which starts from empty,
+/// freshly migrated tables. A fixture opened while another is still open gets
+/// an instance of its own.
+const idle: PGlite[] = [];
+
+async function migratedDatabase(): Promise<PGlite> {
+  const reused = idle.pop();
+  if (reused) {
+    const { rows } = await reused.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
+    await reused.exec(`TRUNCATE ${rows.map(row => `"${row.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`);
+    return reused;
+  }
   const postgres = new PGlite();
   const journal = JSON.parse(await readFile(new URL("../../db/migrations/meta/_journal.json", import.meta.url), "utf8"));
   for (const entry of journal.entries) await postgres.exec(await readFile(new URL(`../../db/migrations/${entry.tag}.sql`, import.meta.url), "utf8"));
+  return postgres;
+}
+
+/// The instance, with `close()` returning it to the pool instead of
+/// shutting it down.
+function pooled(instance: PGlite): PGlite {
+  let released = false;
+  return new Proxy(instance, {
+    get(target, property) {
+      if (property === "close") return async () => { if (!released) { released = true; idle.push(target); } };
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+export async function identityFixture(env: ServerEnv = identityEnv) {
+  const postgres = pooled(await migratedDatabase());
   const db = drizzle(postgres, { schema, casing: "snake_case" }) as unknown as Db;
+  return { postgres, ...await identityTestApp(db, env) };
+}
+
+export async function identityTestApp(db: Db, env: ServerEnv) {
   await bootstrapAdmin(db, env);
   const auth = createAuth(db, env);
   const app = buildApp({ db, auth, env, pool: {} as never });
@@ -34,7 +68,7 @@ export async function identityFixture(env: ServerEnv = identityEnv) {
     method, headers: { origin: env.baseUrl, cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }));
-  return { db, postgres, auth, app, request, env };
+  return { db, auth, app, request, env };
 }
 
 export function responseCookies(response: Response): string {

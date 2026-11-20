@@ -4,7 +4,7 @@
 -- Design notes:
 -- - A provider is reached at one validated controller endpoint URL (ws://,
 --   wss:// or unix://). Its bearer credential is optional; when present it is
---   sealed with AES-256-GCM by the store adapter, exactly like auth_secrets.
+--   sealed with AES-256-GCM by the store adapter, exactly like credentials_secrets.
 --   data_route_base is optional operator configuration; without it the data
 --   routes derive from the controller endpoint.
 -- - A binding is a universe's use of one provider, keyed by the provider.
@@ -22,7 +22,7 @@
 --   closed rows too, so a closed environment's daemon cannot register again
 --   without a fresh local identity.
 
-CREATE TABLE IF NOT EXISTS environment_providers (
+CREATE TABLE environment_providers (
     provider_id text PRIMARY KEY,
     display_name text,
     controller_endpoint text NOT NULL,
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS environment_providers (
     credential_ciphertext bytea,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
+    available_to_all_universes boolean NOT NULL DEFAULT false,
     CONSTRAINT environment_providers_provider_id_format
         CHECK (provider_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
     CONSTRAINT environment_providers_display_name_not_empty
@@ -60,10 +61,9 @@ CREATE TABLE IF NOT EXISTS environment_providers (
     )
 );
 
-CREATE TABLE IF NOT EXISTS environment_provider_bindings (
+CREATE TABLE environment_provider_bindings (
     universe_id uuid NOT NULL REFERENCES universes (universe_id) ON DELETE CASCADE,
     provider_id text NOT NULL REFERENCES environment_providers (provider_id) ON DELETE RESTRICT,
-    enabled boolean NOT NULL,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
     PRIMARY KEY (universe_id, provider_id),
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS environment_provider_bindings (
     )
 );
 
-CREATE TABLE IF NOT EXISTS environment_registration_keys (
+CREATE TABLE environment_registration_keys (
     universe_id uuid NOT NULL REFERENCES universes (universe_id) ON DELETE CASCADE,
     registration_key_id text NOT NULL,
     display_name text NOT NULL,
@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS environment_registration_keys (
     revoked_at_ms bigint,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
+    declared_only boolean NOT NULL DEFAULT false,
     PRIMARY KEY (universe_id, registration_key_id),
     CONSTRAINT environment_registration_keys_id_format
         CHECK (registration_key_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
@@ -98,6 +99,8 @@ CREATE TABLE IF NOT EXISTS environment_registration_keys (
     ),
     CONSTRAINT environment_registration_keys_offline_close_persistent
         CHECK (offline_close_after_ms IS NULL OR identity_mode = 'persistent'),
+    CONSTRAINT environment_registration_keys_declared_only_persistent
+        CHECK (NOT declared_only OR identity_mode = 'persistent'),
     CONSTRAINT environment_registration_keys_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
         AND (expires_at_ms IS NULL OR expires_at_ms >= 0)
@@ -109,7 +112,7 @@ CREATE TABLE IF NOT EXISTS environment_registration_keys (
 -- group, allowlists and identity mode survive. secret_hash is SHA-256 of the
 -- server-generated secret; it is unique deployment-wide, retired secrets
 -- included.
-CREATE TABLE IF NOT EXISTS environment_registration_key_secrets (
+CREATE TABLE environment_registration_key_secrets (
     secret_hash text PRIMARY KEY,
     universe_id uuid NOT NULL,
     registration_key_id text NOT NULL,
@@ -128,11 +131,11 @@ CREATE TABLE IF NOT EXISTS environment_registration_key_secrets (
     )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS environment_registration_key_secrets_live_idx
+CREATE UNIQUE INDEX environment_registration_key_secrets_live_idx
     ON environment_registration_key_secrets (universe_id, registration_key_id)
     WHERE retired_at_ms IS NULL;
 
-CREATE TABLE IF NOT EXISTS environments (
+CREATE TABLE environments (
     universe_id uuid NOT NULL REFERENCES universes (universe_id) ON DELETE CASCADE,
     environment_id text NOT NULL,
     source_kind text NOT NULL,
@@ -169,6 +172,10 @@ CREATE TABLE IF NOT EXISTS environments (
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
     closed_at_ms bigint,
+    registration_name text,
+    -- The accepted control connection and the runtime replica that owns it.
+    owner_instance_id uuid,
+    control_connection_id text,
     PRIMARY KEY (universe_id, environment_id),
     -- Deferrable so a universe delete can check at commit, after its
     -- cascade has removed the environments too.
@@ -200,7 +207,7 @@ CREATE TABLE IF NOT EXISTS environments (
             close_reason IS NULL
             OR close_reason IN (
                 'requested', 'key_revoked', 'ephemeral_grace',
-                'departed', 'offline_timeout', 'provider_ended'
+                'departed', 'offline_timeout', 'provider_ended', 'universe_deleted'
             )
         )
     ),
@@ -224,7 +231,8 @@ CREATE TABLE IF NOT EXISTS environments (
             source_kind = 'provisioned'
             AND request_id IS NOT NULL AND provider_id IS NOT NULL AND template_id IS NOT NULL
             AND daemon_endpoint IS NULL
-            AND registration_key_id IS NULL AND daemon_public_key IS NULL
+            AND registration_key_id IS NULL AND registration_name IS NULL
+            AND daemon_public_key IS NULL
             AND connected IS NULL AND connection_changed_at_ms IS NULL AND last_seen_at_ms IS NULL
         )
         OR (
@@ -236,7 +244,8 @@ CREATE TABLE IF NOT EXISTS environments (
             AND daemon_endpoint IS NOT NULL
             AND daemon_endpoint ~ '^(wss?|unix)://[^[:space:][:cntrl:]]+$'
             AND octet_length(daemon_endpoint) <= 2048
-            AND registration_key_id IS NULL AND daemon_public_key IS NULL
+            AND registration_key_id IS NULL AND registration_name IS NULL
+            AND daemon_public_key IS NULL
             AND connected IS NULL AND connection_changed_at_ms IS NULL AND last_seen_at_ms IS NULL
         )
         OR (
@@ -247,8 +256,17 @@ CREATE TABLE IF NOT EXISTS environments (
             AND observed_phase IS NULL AND public_endpoint IS NULL
             AND daemon_endpoint IS NULL
             AND registration_key_id IS NOT NULL
-            AND daemon_public_key IS NOT NULL AND daemon_public_key ~ '^[0-9a-f]{64}$'
+            AND (daemon_public_key IS NOT NULL OR registration_name IS NOT NULL)
+            AND (daemon_public_key IS NULL OR daemon_public_key ~ '^[0-9a-f]{64}$')
+            AND (
+                registration_name IS NULL
+                OR (
+                    octet_length(registration_name) BETWEEN 1 AND 128
+                    AND registration_name !~ '[[:cntrl:]]'
+                )
+            )
             AND connected IS NOT NULL
+            AND (daemon_public_key IS NOT NULL OR NOT connected)
             AND connection_changed_at_ms IS NOT NULL AND connection_changed_at_ms >= 0
             AND last_seen_at_ms IS NOT NULL AND last_seen_at_ms >= 0
         )
@@ -279,6 +297,10 @@ CREATE TABLE IF NOT EXISTS environments (
         jsonb_typeof(metadata_json) = 'object'
         AND (create_idle_json IS NULL OR jsonb_typeof(create_idle_json) = 'object')
     ),
+    CONSTRAINT environments_connection_owner_pair
+        CHECK ((owner_instance_id IS NULL) = (control_connection_id IS NULL)),
+    CONSTRAINT environments_connection_owner_kind
+        CHECK (owner_instance_id IS NULL OR source_kind = 'registered'),
     CONSTRAINT environments_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
         AND state_changed_at_ms >= created_at_ms
@@ -286,52 +308,62 @@ CREATE TABLE IF NOT EXISTS environments (
     )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS environments_request_id_idx
+CREATE UNIQUE INDEX environments_request_id_idx
     ON environments (universe_id, request_id)
     WHERE request_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS environments_provider_state_idx
+CREATE INDEX environments_provider_state_idx
     ON environments (universe_id, provider_id, state)
     WHERE provider_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS environments_registration_key_state_idx
+CREATE INDEX environments_registration_key_state_idx
     ON environments (universe_id, registration_key_id, state)
     WHERE registration_key_id IS NOT NULL;
 
 -- The reconciler's work queue (provisioning and closing provisioned rows).
-CREATE INDEX IF NOT EXISTS environments_work_idx
+CREATE INDEX environments_work_idx
     ON environments (next_attempt_at_ms)
     WHERE next_attempt_at_ms IS NOT NULL;
 
 -- Deployment-wide: one daemon identity, one environment, ever (closed rows included).
-CREATE UNIQUE INDEX IF NOT EXISTS environments_daemon_public_key_idx
+CREATE UNIQUE INDEX environments_daemon_public_key_idx
     ON environments (daemon_public_key)
     WHERE daemon_public_key IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS environments_provider_target_idx
+CREATE UNIQUE INDEX environments_provider_target_idx
     ON environments (provider_id, provider_target_id)
     WHERE provider_target_id IS NOT NULL AND state <> 'closed';
 
-CREATE INDEX IF NOT EXISTS environments_registered_open_idx
+CREATE INDEX environments_registered_open_idx
     ON environments (universe_id, connected, connection_changed_at_ms)
     WHERE source_kind = 'registered' AND state = 'open';
 
 -- The display sweep's scan set.
-CREATE INDEX IF NOT EXISTS environments_provisioned_open_idx
+CREATE INDEX environments_provisioned_open_idx
     ON environments (universe_id)
     WHERE source_kind = 'provisioned' AND state = 'open';
 
-CREATE INDEX IF NOT EXISTS environments_metadata_idx
+CREATE INDEX environments_metadata_idx
     ON environments USING gin (metadata_json jsonb_path_ops);
 
-CREATE TABLE IF NOT EXISTS environment_credentials (
+-- A name selects one environment of its key. A closed environment gives its
+-- name back.
+CREATE UNIQUE INDEX environments_registration_name_idx
+    ON environments (universe_id, registration_key_id, registration_name)
+    WHERE registration_name IS NOT NULL AND state <> 'closed';
+
+CREATE INDEX environments_owner_instance_idx ON environments (owner_instance_id)
+    WHERE owner_instance_id IS NOT NULL;
+
+-- Values reach the environment's commands. Sources are retrievable grants
+-- and stored API keys of model API key providers.
+CREATE TABLE environment_credentials (
     universe_id uuid NOT NULL,
     environment_id text NOT NULL,
     env_name text NOT NULL,
     source_kind text NOT NULL,
     grant_id text,
     auth_provider_id text,
-    secret_id text,
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
     PRIMARY KEY (universe_id, environment_id, env_name),
@@ -340,22 +372,18 @@ CREATE TABLE IF NOT EXISTS environment_credentials (
     -- Deferrable so a universe delete can check at commit, after its
     -- cascade has removed the bindings too.
     FOREIGN KEY (universe_id, grant_id)
-        REFERENCES auth_grants (universe_id, grant_id)
+        REFERENCES credentials_grants (universe_id, grant_id)
         ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE,
     FOREIGN KEY (universe_id, auth_provider_id)
-        REFERENCES auth_providers (universe_id, provider_id)
-        ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE,
-    FOREIGN KEY (universe_id, secret_id)
-        REFERENCES auth_secrets (universe_id, secret_id)
+        REFERENCES credentials_providers (universe_id, provider_id)
         ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT environment_credentials_env_name_format
         CHECK (env_name ~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$'),
     CONSTRAINT environment_credentials_source_kind_known
-        CHECK (source_kind IN ('auth_grant', 'auth_provider_credential', 'direct_secret')),
+        CHECK (source_kind IN ('auth_grant', 'auth_provider_credential')),
     CONSTRAINT environment_credentials_source_exactly_one CHECK (
-        (source_kind = 'auth_grant' AND grant_id IS NOT NULL AND auth_provider_id IS NULL AND secret_id IS NULL)
-        OR (source_kind = 'auth_provider_credential' AND grant_id IS NULL AND auth_provider_id IS NOT NULL AND secret_id IS NULL)
-        OR (source_kind = 'direct_secret' AND grant_id IS NULL AND auth_provider_id IS NULL AND secret_id IS NOT NULL)
+        (source_kind = 'auth_grant' AND grant_id IS NOT NULL AND auth_provider_id IS NULL)
+        OR (source_kind = 'auth_provider_credential' AND grant_id IS NULL AND auth_provider_id IS NOT NULL)
     ),
     CONSTRAINT environment_credentials_times_valid CHECK (
         created_at_ms >= 0 AND updated_at_ms >= created_at_ms
@@ -368,8 +396,10 @@ COMMENT ON COLUMN environment_providers.data_route_base IS
     'Operator-configured ws:// or wss:// base of the provider data routes; null derives it from the controller endpoint.';
 COMMENT ON COLUMN environment_providers.credential_ciphertext IS
     'AES-256-GCM sealed bearer credential for the controller and data routes, AAD = provider id; all three credential columns are null without a credential.';
+COMMENT ON COLUMN environment_providers.available_to_all_universes IS
+    'Every universe may use the provider; otherwise only universes with a binding.';
 COMMENT ON TABLE environment_provider_bindings IS
-    'A universe''s use of one provider; enabled admits creates, template listing and data routes.';
+    'Universes allowed to use a provider that is not available to all universes.';
 COMMENT ON TABLE environment_registration_keys IS
     'Reusable universe-scoped admission policies for outbound envd registration; each key is also the group of the environments it admitted.';
 COMMENT ON TABLE environment_registration_key_secrets IS
@@ -383,4 +413,4 @@ COMMENT ON COLUMN environments.daemon_public_key IS
 COMMENT ON COLUMN environments.last_seen_at_ms IS
     'Coarse registered liveness: written at connect, at disconnect, and at most every 5 minutes while connected.';
 COMMENT ON TABLE environment_credentials IS
-    'Universe-owned credential bindings for an environment.';
+    'Universe-owned credential bindings for an environment: a retrievable grant or the API key of a model API key provider.';

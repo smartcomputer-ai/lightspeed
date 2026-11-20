@@ -84,6 +84,7 @@ impl Config {
 #[derive(Clone, Debug)]
 pub struct Client {
     http: HttpClient,
+    base_url: Url,
     transcriptions_url: Url,
     auth: Option<HeaderValue>,
 }
@@ -103,6 +104,7 @@ impl Client {
         )?;
 
         Ok(Self {
+            base_url,
             http: HttpClient::with_headers(config.http, headers)?,
             transcriptions_url,
             auth,
@@ -112,6 +114,7 @@ impl Client {
     fn auth_header(
         &self,
         auth: Option<crate::RequestAuth<'_>>,
+        endpoint: Option<&EndpointOverride>,
     ) -> Result<HeaderValue, LlmApiError> {
         match auth {
             Some(crate::RequestAuth::None) => {
@@ -119,6 +122,10 @@ impl Client {
             }
             Some(crate::RequestAuth::ApiKey(value)) | Some(crate::RequestAuth::Bearer(value)) => {
                 bearer_auth_value(value)
+            }
+            Some(crate::RequestAuth::ScopedBearer(bearer)) => {
+                let target = endpoint.map_or(&self.base_url, EndpointOverride::base_url);
+                bearer_auth_value(bearer.token_for(target)?)
             }
             None => self.auth.clone().ok_or_else(|| {
                 ConfigurationError::new(
@@ -153,7 +160,7 @@ impl Client {
     ) -> Result<ApiResponse<Transcription>, LlmApiError> {
         let auth = match auth {
             Some(crate::RequestAuth::None) if endpoint.is_some() => None,
-            other => Some(self.auth_header(other)?),
+            other => Some(self.auth_header(other, endpoint)?),
         };
         let file_part = reqwest::multipart::Part::bytes(request.file.bytes)
             .file_name(request.file.filename)

@@ -84,6 +84,7 @@ impl Config {
 #[derive(Clone, Debug)]
 pub struct Client {
     http: HttpClient,
+    base_url: Url,
     completions_url: Url,
     models_url: Url,
     auth: Option<HeaderValue>,
@@ -106,6 +107,7 @@ impl Client {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         Ok(Self {
+            base_url,
             http: HttpClient::with_headers(config.http, headers)?,
             completions_url,
             models_url,
@@ -116,6 +118,7 @@ impl Client {
     fn auth_header(
         &self,
         auth: Option<crate::RequestAuth<'_>>,
+        endpoint: Option<&EndpointOverride>,
     ) -> Result<HeaderValue, LlmApiError> {
         match auth {
             Some(crate::RequestAuth::None) => Err(ConfigurationError::new(
@@ -124,6 +127,10 @@ impl Client {
             .into()),
             Some(crate::RequestAuth::ApiKey(value)) | Some(crate::RequestAuth::Bearer(value)) => {
                 bearer_auth_value(value)
+            }
+            Some(crate::RequestAuth::ScopedBearer(bearer)) => {
+                let target = endpoint.map_or(&self.base_url, EndpointOverride::base_url);
+                bearer_auth_value(bearer.token_for(target)?)
             }
             None => self.auth.clone().ok_or_else(|| {
                 ConfigurationError::new(
@@ -145,7 +152,7 @@ impl Client {
                 "anonymous auth requires an explicit endpoint override",
             )
             .into()),
-            other => self.auth_header(other).map(Some),
+            other => self.auth_header(other, endpoint).map(Some),
         }
     }
 
@@ -267,7 +274,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.completions_url.clone())
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .json(&request)
             .send()
             .await
@@ -870,12 +877,12 @@ mod tests {
         let client = Client::new(Config::new("deployment-key")).expect("client");
 
         let api_key = client
-            .auth_header(Some(RequestAuth::ApiKey("universe-key")))
+            .auth_header(Some(RequestAuth::ApiKey("universe-key")), None)
             .expect("api-key auth");
         let bearer = client
-            .auth_header(Some(RequestAuth::Bearer("oauth-token")))
+            .auth_header(Some(RequestAuth::Bearer("oauth-token")), None)
             .expect("bearer auth");
-        let default = client.auth_header(None).expect("default auth");
+        let default = client.auth_header(None, None).expect("default auth");
 
         assert_eq!(api_key.to_str().expect("header"), "Bearer universe-key");
         assert_eq!(bearer.to_str().expect("header"), "Bearer oauth-token");
@@ -887,7 +894,7 @@ mod tests {
         let client = Client::new(Config::without_api_key()).expect("client");
 
         let error = client
-            .auth_header(None)
+            .auth_header(None, None)
             .expect_err("missing auth must fail");
 
         assert!(matches!(error, LlmApiError::Configuration(_)));

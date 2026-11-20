@@ -1,7 +1,7 @@
 //! OAuth client and authorization flow API helpers.
 //!
 //! Maps between `api` DTOs and `auth` records. The client secret in
-//! `auth/clients/create` params is the second deliberate inbound-plaintext
+//! `credentials/clients/create` params is the second deliberate inbound-plaintext
 //! path: it is drafted into an encrypted secret record here and never appears
 //! in views or logs.
 
@@ -9,40 +9,45 @@ use super::*;
 
 pub(super) fn parse_oauth_client_id(
     client_id: String,
-) -> Result<auth::OAuthClientId, AgentApiError> {
-    auth::OAuthClientId::try_new(client_id).map_err(|error| {
+) -> Result<credentials::OAuthClientId, AgentApiError> {
+    credentials::OAuthClientId::try_new(client_id).map_err(|error| {
         AgentApiError::invalid_request(format!("invalid oauth client id: {error}"))
     })
 }
 
-pub(super) fn parse_auth_flow_id(flow_id: String) -> Result<auth::AuthFlowId, AgentApiError> {
-    auth::AuthFlowId::try_new(flow_id)
-        .map_err(|error| AgentApiError::invalid_request(format!("invalid auth flow id: {error}")))
+pub(super) fn parse_credential_flow_id(
+    flow_id: String,
+) -> Result<credentials::CredentialFlowId, AgentApiError> {
+    credentials::CredentialFlowId::try_new(flow_id).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid credential flow id: {error}"))
+    })
 }
 
 #[derive(Debug)]
-pub(super) struct AuthClientCreateDraft {
-    pub(super) secret: Option<auth::PutSecretRecord>,
-    pub(super) client: auth::CreateOAuthClientRecord,
+pub(super) struct CredentialClientCreateDraft {
+    pub(super) secret: Option<credentials::PutSecretRecord>,
+    pub(super) client: credentials::CreateOAuthClientRecord,
 }
 
-pub(super) fn auth_client_create_draft(
-    params: AuthClientCreateParams,
+pub(super) fn credential_client_create_draft(
+    params: CredentialClientCreateParams,
     now_ms: i64,
-) -> Result<AuthClientCreateDraft, AgentApiError> {
-    let client_id =
-        match params.client_id {
-            Some(client_id) => parse_oauth_client_id(client_id)?,
-            None => auth::OAuthClientId::try_new(auth::random_auth_id("authclient_")).map_err(
-                |error| AgentApiError::internal(format!("generate oauth client id: {error}")),
-            )?,
-        };
+) -> Result<CredentialClientCreateDraft, AgentApiError> {
+    let client_id = match params.client_id {
+        Some(client_id) => parse_oauth_client_id(client_id)?,
+        None => {
+            credentials::OAuthClientId::try_new(credentials::random_credential_id("authclient_"))
+                .map_err(|error| {
+                    AgentApiError::internal(format!("generate oauth client id: {error}"))
+                })?
+        }
+    };
     let auth_method = params.token_endpoint_auth_method.map_or_else(
         || {
             if params.client_secret.is_some() {
-                auth::TokenEndpointAuthMethod::ClientSecretBasic
+                credentials::TokenEndpointAuthMethod::ClientSecretBasic
             } else {
-                auth::TokenEndpointAuthMethod::None
+                credentials::TokenEndpointAuthMethod::None
             }
         },
         registry_token_endpoint_auth_method,
@@ -50,23 +55,26 @@ pub(super) fn auth_client_create_draft(
     let secret = params
         .client_secret
         .map(|client_secret| {
-            let secret_id = auth::SecretId::try_new(auth::random_auth_id("authsec_"))
-                .map_err(|error| AgentApiError::internal(format!("generate secret id: {error}")))?;
-            Ok::<_, AgentApiError>(auth::PutSecretRecord {
+            let secret_id =
+                credentials::SecretId::try_new(credentials::random_credential_id("authsec_"))
+                    .map_err(|error| {
+                        AgentApiError::internal(format!("generate secret id: {error}"))
+                    })?;
+            Ok::<_, AgentApiError>(credentials::PutSecretRecord {
                 secret_id,
-                secret_kind: auth::SECRET_KIND_OAUTH_CLIENT_SECRET.to_owned(),
-                value: auth::SecretValue::new(client_secret),
+                secret_kind: credentials::SECRET_KIND_OAUTH_CLIENT_SECRET.to_owned(),
+                value: credentials::SecretValue::new(client_secret),
                 created_at_ms: now_ms,
             })
         })
         .transpose()?;
 
-    let client = auth::CreateOAuthClientRecord {
+    let client = credentials::CreateOAuthClientRecord {
         client_id: client_id.clone(),
         provider_id: params
             .provider_id
             .unwrap_or_else(|| client_id.as_str().to_owned()),
-        provider_kind: registry_auth_provider_kind(params.provider_kind),
+        provider_kind: registry_credential_provider_kind(params.provider_kind),
         display_name: params.display_name,
         authorization_endpoint: params.authorization_endpoint,
         token_endpoint: params.token_endpoint,
@@ -82,21 +90,21 @@ pub(super) fn auth_client_create_draft(
         created_at_ms: now_ms,
     };
     if let Some(secret) = &secret {
-        secret.validate().map_err(map_auth_error)?;
+        secret.validate().map_err(map_credential_error)?;
     }
     client
         .clone()
         .into_record()
         .validate()
-        .map_err(map_auth_error)?;
-    Ok(AuthClientCreateDraft { secret, client })
+        .map_err(map_credential_error)?;
+    Ok(CredentialClientCreateDraft { secret, client })
 }
 
-pub(super) fn oauth_client_view(record: auth::OAuthClientRecord) -> api::OAuthClientView {
+pub(super) fn oauth_client_view(record: credentials::OAuthClientRecord) -> api::OAuthClientView {
     api::OAuthClientView {
         client_id: record.client_id.as_str().to_owned(),
         provider_id: record.provider_id,
-        provider_kind: api_auth_provider_kind(record.provider_kind),
+        provider_kind: api_credential_provider_kind(record.provider_kind),
         display_name: record.display_name,
         authorization_endpoint: record.authorization_endpoint,
         token_endpoint: record.token_endpoint,
@@ -116,12 +124,15 @@ pub(super) fn oauth_client_view(record: auth::OAuthClientRecord) -> api::OAuthCl
     }
 }
 
-pub(super) fn auth_flow_view(record: auth::AuthFlowRecord, now_ms: i64) -> api::AuthFlowView {
-    api::AuthFlowView {
+pub(super) fn credential_flow_view(
+    record: credentials::CredentialFlowRecord,
+    now_ms: i64,
+) -> api::CredentialFlowView {
+    api::CredentialFlowView {
         flow_id: record.flow_id.as_str().to_owned(),
         client_id: record.client_id.as_str().to_owned(),
         provider_id: record.provider_id.clone(),
-        status: api_auth_flow_status(record.status(now_ms)),
+        status: api_credential_flow_status(record.status(now_ms)),
         grant_id: record
             .grant_id
             .as_ref()
@@ -133,58 +144,73 @@ pub(super) fn auth_flow_view(record: auth::AuthFlowRecord, now_ms: i64) -> api::
     }
 }
 
-pub(super) fn registry_auth_provider_kind(value: api::AuthProviderKind) -> auth::AuthProviderKind {
+pub(super) fn registry_credential_provider_kind(
+    value: api::CredentialProviderKind,
+) -> credentials::CredentialProviderKind {
     match value {
-        api::AuthProviderKind::StaticToken => auth::AuthProviderKind::StaticToken,
-        api::AuthProviderKind::McpOAuth => auth::AuthProviderKind::McpOAuth,
-        api::AuthProviderKind::GitHubApp => auth::AuthProviderKind::GitHubApp,
-        api::AuthProviderKind::CustomOAuth => auth::AuthProviderKind::CustomOAuth,
-        api::AuthProviderKind::ModelApiKey => auth::AuthProviderKind::ModelApiKey,
-        api::AuthProviderKind::ModelOAuth => auth::AuthProviderKind::ModelOAuth,
-        api::AuthProviderKind::ModelEndpoint => auth::AuthProviderKind::ModelEndpoint,
+        api::CredentialProviderKind::StaticToken => {
+            credentials::CredentialProviderKind::StaticToken
+        }
+        api::CredentialProviderKind::McpOAuth => credentials::CredentialProviderKind::McpOAuth,
+        api::CredentialProviderKind::GitHubApp => credentials::CredentialProviderKind::GitHubApp,
+        api::CredentialProviderKind::CustomOAuth => {
+            credentials::CredentialProviderKind::CustomOAuth
+        }
+        api::CredentialProviderKind::ModelApiKey => {
+            credentials::CredentialProviderKind::ModelApiKey
+        }
+        api::CredentialProviderKind::ModelOAuth => credentials::CredentialProviderKind::ModelOAuth,
+        api::CredentialProviderKind::ModelEndpoint => {
+            credentials::CredentialProviderKind::ModelEndpoint
+        }
     }
 }
 
 fn registry_token_endpoint_auth_method(
     value: api::TokenEndpointAuthMethod,
-) -> auth::TokenEndpointAuthMethod {
+) -> credentials::TokenEndpointAuthMethod {
     match value {
         api::TokenEndpointAuthMethod::ClientSecretBasic => {
-            auth::TokenEndpointAuthMethod::ClientSecretBasic
+            credentials::TokenEndpointAuthMethod::ClientSecretBasic
         }
         api::TokenEndpointAuthMethod::ClientSecretPost => {
-            auth::TokenEndpointAuthMethod::ClientSecretPost
+            credentials::TokenEndpointAuthMethod::ClientSecretPost
         }
-        api::TokenEndpointAuthMethod::None => auth::TokenEndpointAuthMethod::None,
+        api::TokenEndpointAuthMethod::None => credentials::TokenEndpointAuthMethod::None,
     }
 }
 
 fn api_token_endpoint_auth_method(
-    value: auth::TokenEndpointAuthMethod,
+    value: credentials::TokenEndpointAuthMethod,
 ) -> api::TokenEndpointAuthMethod {
     match value {
-        auth::TokenEndpointAuthMethod::ClientSecretBasic => {
+        credentials::TokenEndpointAuthMethod::ClientSecretBasic => {
             api::TokenEndpointAuthMethod::ClientSecretBasic
         }
-        auth::TokenEndpointAuthMethod::ClientSecretPost => {
+        credentials::TokenEndpointAuthMethod::ClientSecretPost => {
             api::TokenEndpointAuthMethod::ClientSecretPost
         }
-        auth::TokenEndpointAuthMethod::None => api::TokenEndpointAuthMethod::None,
+        credentials::TokenEndpointAuthMethod::None => api::TokenEndpointAuthMethod::None,
     }
 }
 
-fn api_auth_flow_status(value: auth::AuthFlowStatus) -> api::AuthFlowStatus {
+fn api_credential_flow_status(
+    value: credentials::CredentialFlowStatus,
+) -> api::CredentialFlowStatus {
     match value {
-        auth::AuthFlowStatus::Pending => api::AuthFlowStatus::Pending,
-        auth::AuthFlowStatus::Completed => api::AuthFlowStatus::Completed,
-        auth::AuthFlowStatus::Failed => api::AuthFlowStatus::Failed,
-        auth::AuthFlowStatus::Expired => api::AuthFlowStatus::Expired,
+        credentials::CredentialFlowStatus::Pending => api::CredentialFlowStatus::Pending,
+        credentials::CredentialFlowStatus::Completed => api::CredentialFlowStatus::Completed,
+        credentials::CredentialFlowStatus::Failed => api::CredentialFlowStatus::Failed,
+        credentials::CredentialFlowStatus::Expired => api::CredentialFlowStatus::Expired,
     }
 }
 
 /// The gateway-hosted redirect URI for authorization callbacks.
 pub(super) fn oauth_redirect_uri(public_base_url: &str) -> String {
-    format!("{}/auth/callback", public_base_url.trim_end_matches('/'))
+    format!(
+        "{}/ingress/credentials/callback",
+        public_base_url.trim_end_matches('/')
+    )
 }
 
 /// The gateway-hosted Client ID Metadata Document URL. CIMD client ids must
@@ -192,15 +218,15 @@ pub(super) fn oauth_redirect_uri(public_base_url: &str) -> String {
 /// when the deployment has a public https base URL.
 pub(super) fn cimd_client_id_url(public_base_url: &str) -> String {
     format!(
-        "{}/auth/client-metadata.json",
+        "{}/ingress/credentials/client-metadata.json",
         public_base_url.trim_end_matches('/')
     )
 }
 
-pub(super) fn cimd_config(public_base_url: &str) -> Option<auth::CimdConfig> {
+pub(super) fn cimd_config(public_base_url: &str) -> Option<credentials::CimdConfig> {
     public_base_url
         .starts_with("https://")
-        .then(|| auth::CimdConfig {
+        .then(|| credentials::CimdConfig {
             client_id_url: cimd_client_id_url(public_base_url),
         })
 }
@@ -225,7 +251,7 @@ pub(super) fn cimd_document(public_base_url: &str) -> serde_json::Value {
 /// catalog record. Bearer/no-auth servers cannot be logged into.
 pub(super) fn mcp_oauth_target_from_record(
     record: &mcp::McpServerRecord,
-) -> Result<auth::McpOAuthTarget, AgentApiError> {
+) -> Result<credentials::McpOAuthTarget, AgentApiError> {
     match &record.auth_policy {
         mcp::McpServerAuthPolicy::OptionalOAuth {
             resource,
@@ -238,7 +264,7 @@ pub(super) fn mcp_oauth_target_from_record(
             scopes_default,
             protected_resource_metadata_url,
             authorization_server,
-        } => Ok(auth::McpOAuthTarget {
+        } => Ok(credentials::McpOAuthTarget {
             server_id: record.server_id.as_str().to_owned(),
             server_url: resource.clone(),
             scopes_default: scopes_default.clone(),
@@ -246,16 +272,16 @@ pub(super) fn mcp_oauth_target_from_record(
             authorization_server_hint: authorization_server.clone(),
         }),
         other => Err(AgentApiError::rejected(format!(
-            "MCP server {} auth policy {:?} does not use OAuth; use `auth grant import` \
+            "MCP server {} auth policy {:?} does not use OAuth; use `credential grant import` \
              for bearer servers",
             record.server_id, other
         ))),
     }
 }
 
-pub(super) fn map_mcp_oauth_error(error: auth::McpOAuthError) -> AgentApiError {
+pub(super) fn map_mcp_oauth_error(error: credentials::McpOAuthError) -> AgentApiError {
     match error {
-        auth::McpOAuthError::Registry(error) => map_auth_error(error),
+        credentials::McpOAuthError::Registry(error) => map_credential_error(error),
         other => AgentApiError::rejected(other.to_string()),
     }
 }

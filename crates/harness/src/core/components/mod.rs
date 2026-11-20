@@ -24,7 +24,7 @@ pub mod turn;
 pub mod workflow_tool;
 
 pub use approval::*;
-pub use attribution::{AttributedKeyScope, Attribution};
+pub use attribution::Attribution;
 pub use code_tool::*;
 pub use command::*;
 pub use config::*;
@@ -79,13 +79,14 @@ pub use tooling::{
     FAILED_WITHOUT_DETAIL_CONTENT, FunctionToolSpec, ObservedToolCall,
     PROMISE_DEADLINE_EXCEEDED_CONTENT, ProviderNativeToolExecution, ProviderNativeToolSpec,
     RECEIVER_CANCELLED_CONTENT, RemoteMcpApprovalPolicy, RemoteMcpExecution, RemoteMcpExposure,
-    RemoteMcpToolSpec, TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT, ToolCallResult, ToolCallState,
-    ToolCallStatus, ToolChoice, ToolConfigEvent, ToolEvent, ToolExecutionClass, ToolExecutionSpec,
-    ToolKind, ToolParallelism, ToolPatch, ToolSpec, ToolingState, UNAVAILABLE_TOOL_RESULT_CONTENT,
-    await_batch_conflict_ref, await_rejected_ref, cancelled_tool_result_ref, empty_success_ref,
-    failed_without_detail_ref, promise_deadline_exceeded_ref, receiver_cancelled_ref,
-    remote_mcp_call_runtime, tool_runtime_boundary_failure_ref, tools_frozen,
-    unavailable_tool_result_ref, validate_tool_map,
+    RemoteMcpToolSpec, ResolvedToolTarget, TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT, ToolCallResult,
+    ToolCallState, ToolCallStatus, ToolChoice, ToolConfigEvent, ToolEvent, ToolExecutionClass,
+    ToolExecutionSpec, ToolKind, ToolParallelism, ToolPatch, ToolSpec, ToolingState,
+    UNAVAILABLE_TOOL_RESULT_CONTENT, await_batch_conflict_ref, await_rejected_ref,
+    cancelled_tool_result_ref, empty_success_ref, failed_without_detail_ref,
+    promise_deadline_exceeded_ref, receiver_cancelled_ref, remote_mcp_call_runtime,
+    tool_runtime_boundary_failure_ref, tools_frozen, unavailable_tool_result_ref,
+    validate_tool_map,
 };
 pub use turn::{
     LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, PlannedRequestState, TurnEvent,

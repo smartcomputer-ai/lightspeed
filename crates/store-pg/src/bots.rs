@@ -42,7 +42,6 @@ const EVENT_COLUMN_NAMES: &[&str] = &[
     "document_ref",
     "prompt_ref",
     "session_json",
-    "media_json",
     "sender_bot_id",
     "hops",
     "in_reply_to_json",
@@ -73,6 +72,20 @@ fn prefixed_event_columns(table: &'static str, prefix: &'static str) -> String {
 // ── Bots ────────────────────────────────────────────────────────────────────
 
 impl PgStore {
+    /// Retained session IDs seed routing across controller restarts and bot
+    /// recreation. Per-event sessions have their own IDs and need no seed.
+    pub async fn previous_bot_session_ids(&self, bot_id: &BotId) -> Result<Vec<String>, BotError> {
+        sqlx::query_scalar(
+            "SELECT root_session_id FROM bot_sessions
+             WHERE universe_id = $1 AND bot_id = $2 AND root_session_id NOT LIKE '%:e-%'",
+        )
+        .bind(self.config.universe_id)
+        .bind(bot_id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| bot_sql_error("read previous bot sessions", error))
+    }
+
     /// The roster, optionally only bots this actor created, each with the
     /// access summary its view carries: shared, and who created it.
     pub async fn list_bot_roster_for(
@@ -107,19 +120,22 @@ impl PgStore {
                 b.closed_sessions_json, b.created_at_ms, b.updated_at_ms,
                 tc.trigger_count,
                 pc.pending_count,
-                act.working,
-                act.waiting,
+                counts.active_count > 0 AS working,
+                counts.waiting,
                 counts.open_count, counts.active_count, b.controller_status_json AS status_json,
                 {last_event_columns},
                 b.created_by
             FROM bots b
             LEFT JOIN LATERAL (
                 SELECT count(*) FILTER (WHERE s.lifecycle_status <> 'closed') AS open_count,
-                       count(*) FILTER (WHERE a.activity <> 'idle') AS active_count
-                FROM sessions s
-                LEFT JOIN sessions r ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id)
+                       count(*) FILTER (WHERE a.activity <> 'idle') AS active_count,
+                       COALESCE(bool_or(a.activity = 'waiting'), false) AS waiting
+                FROM bot_sessions owner
+                JOIN sessions s ON s.universe_id = owner.universe_id
+                    AND COALESCE(s.origin_root_session_id, s.session_id) = owner.root_session_id
                 LEFT JOIN session_summary a ON a.universe_id=s.universe_id AND a.session_id=s.session_id
-                WHERE s.universe_id=b.universe_id AND s.deleted_at_ms IS NULL AND COALESCE(r.bot_id,s.bot_id)=b.bot_id
+                WHERE owner.universe_id = b.universe_id AND owner.bot_id = b.bot_id
+                  AND s.deleted_at_ms IS NULL
             ) counts ON true
             LEFT JOIN LATERAL (
                 SELECT count(*) AS trigger_count
@@ -139,16 +155,6 @@ impl PgStore {
                 ORDER BY e.received_at_ms DESC, e.seq DESC
                 LIMIT 1
             ) le ON true
-            LEFT JOIN LATERAL (
-                SELECT count(*) > 0 AS working, COALESCE(bool_or(a.activity = 'waiting'), false) AS waiting
-                FROM session_summary a
-                JOIN sessions s ON s.universe_id = a.universe_id AND s.session_id = a.session_id
-                LEFT JOIN sessions r ON r.universe_id = s.universe_id
-                    AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)
-                WHERE a.universe_id = b.universe_id AND a.activity <> 'idle'
-                  AND s.deleted_at_ms IS NULL
-                  AND COALESCE(r.bot_id, s.bot_id) = b.bot_id
-            ) act ON true
             WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match}) AND ($3::text[] IS NULL OR b.bot_id=ANY($3))
             ORDER BY b.bot_id
             "#
@@ -250,7 +256,7 @@ impl BotStore for PgStore {
         document: BotDocument,
         now_ms: i64,
     ) -> Result<BotRecord, BotError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| bot_store_error("ensure universe", error))?;
         validate_bot_document(&document)?;
@@ -287,7 +293,7 @@ impl BotStore for PgStore {
         expected_revision: Option<u64>,
         now_ms: i64,
     ) -> Result<BotRecord, BotError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| bot_store_error("ensure universe", error))?;
         validate_bot_document(&document)?;
@@ -1000,14 +1006,14 @@ impl BotEventStore for PgStore {
             INSERT INTO bot_events (
                 universe_id, bot_id, event_id, seq,
                 trigger_id, kind, summary, occurred_at_ms, received_at_ms, document_ref,
-                prompt_ref, session_json, media_json,
+                prompt_ref, session_json,
                 sender_bot_id, hops, in_reply_to_json,
                 receiver_json,
                 outcome, outcome_detail, run_id, resolved_at_ms
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                $18, $19, $20, $21
+                $18, $19, $20
             )
             ON CONFLICT (universe_id, bot_id, event_id) DO NOTHING
             RETURNING {columns}
@@ -1033,7 +1039,6 @@ impl BotEventStore for PgStore {
                         .map(|session| json_value("serialize routed session", session))
                         .transpose()?,
                 )
-                .bind(json_value("serialize event media", &record.media)?)
                 .bind(record.sender_bot_id.as_ref().map(BotId::as_str))
                 .bind(i32::try_from(record.hops).map_err(|_| {
                     BotError::invalid(format!("hops {} exceeds i32::MAX", record.hops))
@@ -1062,20 +1067,6 @@ impl BotEventStore for PgStore {
         if let Some(row) = row {
             let mut refs = std::collections::BTreeSet::from([record.document_ref.clone()]);
             refs.extend(record.prompt_ref.iter().cloned());
-            refs.extend(record.media.iter().map(|media| media.blob_ref.clone()));
-            refs.extend(
-                record
-                    .media
-                    .iter()
-                    .filter_map(|media| media.text_ref.clone()),
-            );
-            refs.extend(
-                record
-                    .receiver
-                    .as_ref()
-                    .and_then(|receiver| receiver.tools_ref())
-                    .map(str::to_owned),
-            );
             let digests = refs
                 .iter()
                 .map(|value| {
@@ -1384,7 +1375,6 @@ fn event_from_row(row: &sqlx::postgres::PgRow, prefix: &str) -> Result<BotEventR
         document_ref: column(row, &name("document_ref"))?,
         prompt_ref: column(row, &name("prompt_ref"))?,
         session: optional_json_column(row, &name("session_json"))?,
-        media: json_column(row, &name("media_json"))?,
         sender_bot_id: sender_bot_id.map(parse_bot_id).transpose()?,
         hops: u32::try_from(hops).map_err(|_| store_message("hops is negative"))?,
         in_reply_to: optional_json_column(row, &name("in_reply_to_json"))?,
@@ -1555,8 +1545,6 @@ impl PgStore {
 mod tests {
     use super::*;
 
-    const MIGRATION: &str = include_str!("../migrations/013_camel_case_bot_values.sql");
-
     #[test]
     fn stored_trigger_reasons_are_the_api_spelling_and_pass_the_check() {
         for reason in [
@@ -1569,7 +1557,10 @@ mod tests {
             let stored = disabled_reason_to_str(reason);
             assert_eq!(serde_json::to_value(reason).unwrap(), stored);
             assert_eq!(disabled_reason_from_str(stored).unwrap(), reason);
-            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+            assert!(
+                crate::BOTS_SCHEMA_SQL.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
         }
     }
 
@@ -1589,7 +1580,10 @@ mod tests {
             let stored = outcome.as_str();
             assert_eq!(serde_json::to_value(outcome).unwrap(), stored);
             assert_eq!(outcome_from_str(stored).unwrap(), outcome);
-            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+            assert!(
+                crate::BOTS_SCHEMA_SQL.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
         }
     }
 }

@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, RequestHeaderError, RequestHeaderPolicy, RequestHeaders};
+use credentials::{CredentialGrantId, RequestHeaderError, RequestHeaderPolicy, RequestHeaders};
 use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
@@ -260,7 +260,7 @@ pub struct McpServerRecord {
     pub auth_policy: McpServerAuthPolicy,
     /// Universe-owned grant used to authenticate this configured server.
     /// Sessions select only `server_id` and never override this binding.
-    pub auth_grant_id: Option<AuthGrantId>,
+    pub auth_grant_id: Option<CredentialGrantId>,
     /// Extra request headers sent on every request to the server, keyed by
     /// lowercased name. Independent of `auth_policy`, which governs only
     /// `Authorization`.
@@ -283,16 +283,12 @@ impl McpServerRecord {
         validate_remote_mcp_server_label(&self.default_server_label)?;
         validate_nonempty_optional("description", self.description.as_deref())?;
         validate_allowed_tools(self.allowed_tools.as_deref())?;
-        validate_execution_policy(
-            &self.default_server_label,
-            self.execution,
-            self.exposure,
-            self.allowed_tools.as_deref(),
-        )?;
+        validate_execution_policy(self.execution, self.exposure, self.allowed_tools.as_deref())?;
         self.auth_policy.validate()?;
         if matches!(self.auth_policy, McpServerAuthPolicy::None) && self.auth_grant_id.is_some() {
             return Err(McpRegistryError::InvalidInput {
-                message: "MCP servers with auth policy none cannot bind an auth grant".to_owned(),
+                message: "MCP servers with auth policy none cannot bind a credential grant"
+                    .to_owned(),
             });
         }
         MCP_SERVER_HEADER_POLICY.validate(&self.headers)?;
@@ -335,7 +331,7 @@ pub struct PutMcpServerRecord {
     pub defer_loading: Option<bool>,
     pub allow_private_network: bool,
     pub auth_policy: McpServerAuthPolicy,
-    pub auth_grant_id: Option<AuthGrantId>,
+    pub auth_grant_id: Option<CredentialGrantId>,
     pub headers: RequestHeaders,
     pub status: McpServerStatus,
     pub now_ms: i64,
@@ -706,7 +702,6 @@ fn validate_allowed_tools(values: Option<&[String]>) -> Result<(), McpRegistryEr
 }
 
 fn validate_execution_policy(
-    server_label: &str,
     execution: McpExecution,
     exposure: McpExposure,
     allowed_tools: Option<&[String]>,
@@ -722,7 +717,6 @@ fn validate_execution_policy(
     let Some(allowed_tools) = allowed_tools else {
         return Ok(());
     };
-    let prefix = runtime_tool_prefix(server_label);
     for remote_name in allowed_tools {
         validate_mcp_component(
             "runtime injected MCP tool",
@@ -730,29 +724,8 @@ fn validate_execution_policy(
             "ASCII letters, digits, '_', '-'",
             |ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'),
         )?;
-        let combined = format!("{prefix}{remote_name}");
-        if combined.len() > 64 {
-            return Err(McpRegistryError::InvalidInput {
-                message: format!(
-                    "runtime MCP tool name {combined:?} exceeds the 64-byte provider limit; shorten the server label or remote tool name, or use search exposure"
-                ),
-            });
-        }
     }
     Ok(())
-}
-
-pub fn runtime_tool_prefix(server_label: &str) -> String {
-    let mut prefix = String::from("mcp_");
-    for ch in server_label.chars() {
-        prefix.push(if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
-            ch
-        } else {
-            '_'
-        });
-    }
-    prefix.push_str("__");
-    prefix
 }
 
 fn validate_scope_defaults(values: &[String]) -> Result<(), McpRegistryError> {
@@ -906,7 +879,7 @@ fn validate_mcp_component(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auth::RequestHeaderValue;
+    use credentials::RequestHeaderValue;
 
     fn put_request(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
         PutMcpServerRecord {
@@ -949,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_inject_selected_tools_must_fit_provider_function_names() {
+    fn runtime_inject_selected_tools_accept_long_names_and_require_provider_characters() {
         let mut record =
             put_request("durable-runtime-server-identifier", McpServerStatus::Active).into_record();
         record.execution = McpExecution::Runtime;
@@ -960,11 +933,11 @@ mod tests {
             .validate()
             .expect("the compact server label determines the injected tool name");
 
-        record.allowed_tools = Some(vec!["x".repeat(60)]);
-        assert!(matches!(
-            record.validate(),
-            Err(McpRegistryError::InvalidInput { .. })
-        ));
+        record.default_server_label = "s".repeat(128);
+        record.allowed_tools = Some(vec!["x".repeat(128)]);
+        record
+            .validate()
+            .expect("long names are aliased at injection");
 
         record.allowed_tools = Some(vec!["not/a/function".to_owned()]);
         assert!(matches!(
@@ -993,7 +966,7 @@ mod tests {
     #[test]
     fn no_auth_servers_reject_grant_bindings() {
         let mut record = put_request("echo", McpServerStatus::Active).into_record();
-        record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
+        record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
 
         let error = record
             .validate()
@@ -1016,7 +989,7 @@ mod tests {
 
     fn credential(grant_id: &str) -> RequestHeaderValue {
         RequestHeaderValue::Credential {
-            grant_id: auth::AuthGrantId::new(grant_id),
+            grant_id: credentials::CredentialGrantId::new(grant_id),
         }
     }
 
@@ -1149,7 +1122,7 @@ mod tests {
         }
 
         let mut record = runtime_record();
-        for index in 0..=auth::REQUEST_HEADERS_MAX {
+        for index in 0..=credentials::REQUEST_HEADERS_MAX {
             record
                 .headers
                 .insert(format!("x-header-{index}"), literal("v"));

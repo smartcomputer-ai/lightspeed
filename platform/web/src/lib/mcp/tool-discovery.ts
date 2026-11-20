@@ -15,7 +15,7 @@ export function useMcpToolDiscoverySource(
       discover: (serverId: string) =>
         api<McpToolDiscovery>(
           "POST",
-          `/api/v1/universes/${universeId}/mcp-servers/${encodeURIComponent(serverId)}/tools/discover`,
+          `/api/ui/universes/${universeId}/mcp-servers/${encodeURIComponent(serverId)}/tools/discover`,
         ),
     }),
     [universeId],

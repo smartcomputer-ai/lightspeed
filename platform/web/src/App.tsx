@@ -1,3 +1,9 @@
+import { AdminGate, AdminIndexRedirect } from "@/components/admin/admin-gate";
+import { OrganizationMembersPage } from "@/pages/OrganizationMembersPage";
+import { OrganizationApiKeysPage } from "@/pages/OrganizationApiKeysPage";
+import { OrganizationSettingsPage } from "@/pages/OrganizationSettingsPage";
+import { PlatformOrganizationsPage } from "@/pages/PlatformOrganizationsPage";
+import { PlatformSettingsPage } from "@/pages/PlatformSettingsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { lazy, Suspense, useEffect } from "react";
@@ -9,28 +15,26 @@ import { authClient, isPlatformAdmin, useLoginConfig } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
 import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
-import { AccountPage } from "@/pages/AccountPage";
-import { ApiKeysPage } from "@/pages/ApiKeysPage";
-import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
+import { UnclaimedUniversesPage } from "@/pages/UnclaimedUniversesPage";
 import { AdminAuditPage } from "@/pages/AdminAuditPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
-import { AdminChannelsPage } from "@/pages/AdminChannelsPage";
 import { AdminEnvironmentProvidersPage } from "@/pages/AdminEnvironmentProvidersPage";
 import { BotsPage } from "@/pages/BotsPage";
-import { ChannelsPage } from "@/pages/ChannelsPage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
-import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
+import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { LoginPage } from "@/pages/LoginPage";
+import { DevicePage } from "@/pages/DevicePage";
+import { deviceLoginPath, loginReturnPath } from "@/lib/login-return";
 import { McpServersPage } from "@/pages/McpServersPage";
-import { MembersPage } from "@/pages/MembersPage";
+import { UniverseMembersPage } from "@/pages/UniverseMembersPage";
+import { UniverseRedirect } from "@/components/universe-redirect";
 import { ModelsPage } from "@/pages/ModelsPage";
-import { PreferencesPage } from "@/pages/PreferencesPage";
+import { SettingsPage, SettingsRedirect } from "@/pages/SettingsPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SessionsPage } from "@/pages/SessionsPage";
-import { SetupsPage } from "@/pages/SetupsPage";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
@@ -51,6 +55,7 @@ function UniverseIndexRedirect() {
 }
 
 export function App() {
+  const location = useLocation();
   const session = authClient.useSession();
   const loginConfig = useLoginConfig();
   const automaticSignIn = loginConfig.data?.sso === true && loginConfig.data.autoSignIn;
@@ -60,13 +65,14 @@ export function App() {
   useEffect(() => {
     const expiresAt = session.data?.session.expiresAt;
     if (!expiresAt) return;
-    const timer = setTimeout(() => window.location.assign(`${import.meta.env.BASE_URL}login?expired=1`),
+    const timer = setTimeout(() => window.location.assign(location.pathname === "/device"
+      ? `${import.meta.env.BASE_URL.replace(/\/$/, "")}${deviceLoginPath(location.search)}&expired=1`
+      : `${import.meta.env.BASE_URL}login?expired=1`),
       Math.min(Math.max(new Date(expiresAt).getTime() - Date.now(), 0), 2_147_483_647));
     return () => clearTimeout(timer);
-  }, [session.data?.session.expiresAt]);
-  const location = useLocation();
+  }, [session.data?.session.expiresAt, location.pathname, location.search]);
   const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
-    queryFn: () => api<{ user: SessionUser }>("GET", "/api/v1/me"), retry: false,
+    queryFn: () => api<{ user: SessionUser }>("GET", "/api/ui/me"), retry: false,
   });
 
   if (DebugRoutes && location.pathname.startsWith("/debug/")) {
@@ -95,8 +101,12 @@ export function App() {
   }
 
   if (!session.data) {
+    if (location.pathname === "/device") return <Navigate to={deviceLoginPath(location.search, automaticSignIn)} replace />;
     return <Navigate to={automaticSignIn ? "/login?auto=1" : "/login"} replace />;
   }
+
+  if (location.pathname === "/login") return <Navigate to={loginReturnPath(location.search)} replace />;
+  if (location.pathname === "/device") return <DevicePage key={location.search} user={session.data.user} />;
 
   if (!me.data) return <div className="p-8">{me.error ? me.error.message : "Loading permissions…"}</div>;
   const user = me.data.user;
@@ -107,74 +117,88 @@ export function App() {
       <Route element={
         <UserPreferencesProvider userId={user.id}>
           <PermissionIdentityProvider userId={user.id} platformAdmin={admin}>
-            <UniverseWatchProvider><AppShell user={user} admin={admin} /></UniverseWatchProvider>
+            <UniverseWatchProvider><AppShell user={user} /></UniverseWatchProvider>
           </PermissionIdentityProvider>
         </UserPreferencesProvider>
       }>
-        <Route index element={<HomeRedirect admin={admin} />} />
+        <Route index element={<HomeRedirect />} />
         <Route path="u/:handle" element={<UniverseIndexRedirect />} />
-        <Route path="u/:handle/sessions" element={<SessionsPage admin={admin} />} />
+        <Route path="u/:handle/sessions" element={<SessionsPage />} />
         <Route
           path="u/:handle/sessions/:sessionId"
-          element={<SessionsPage admin={admin} />}
+          element={<SessionsPage />}
         />
-        <Route path="u/:handle/workspaces" element={<WorkspacesPage admin={admin} />} />
+        <Route path="u/:handle/workspaces" element={<WorkspacesPage />} />
         <Route
           path="u/:handle/workspaces/:workspaceId"
-          element={<WorkspacesPage admin={admin} />}
+          element={<WorkspacesPage />}
         />
         <Route
           path="u/:handle/workspaces/:workspaceId/files/*"
-          element={<WorkspacesPage admin={admin} />}
+          element={<WorkspacesPage />}
         />
-        <Route path="u/:handle/bots" element={<FeatureGate feature="bots"><BotsPage admin={admin} /></FeatureGate>} />
-        <Route path="u/:handle/bots/:botId" element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>} />
+        <Route path="u/:handle/bots" element={<FeatureGate feature="bots"><BotsPage /></FeatureGate>} />
+        <Route path="u/:handle/bots/:botId" element={<FeatureGate feature="bots"><BotsPage view="chat" /></FeatureGate>} />
         <Route
           path="u/:handle/bots/:botId/chat/:sessionId"
-          element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>}
+          element={<FeatureGate feature="bots"><BotsPage view="chat" /></FeatureGate>}
         />
         <Route
           path="u/:handle/bots/:botId/activity"
-          element={<FeatureGate feature="bots"><BotsPage admin={admin} view="activity" /></FeatureGate>}
+          element={<FeatureGate feature="bots"><BotsPage view="activity" /></FeatureGate>}
         />
-        <Route path="u/:handle/blobs/:digest" element={<BlobPage admin={admin} />} />
-        <Route path="u/:handle/profiles" element={<ProfilesPage admin={admin} />} />
+        <Route path="u/:handle/blobs/:digest" element={<BlobPage />} />
+        <Route path="u/:handle/profiles" element={<ProfilesPage />} />
         <Route
           path="u/:handle/profiles/:profileId"
-          element={<ProfilesPage admin={admin} />}
+          element={<ProfilesPage />}
         />
-        <Route path="u/:handle/models" element={<ModelsPage admin={admin} />} />
-        <Route path="u/:handle/environments" element={<EnvironmentsPage admin={admin} />} />
-        <Route path="u/:handle/mcp-servers" element={<McpServersPage admin={admin} />} />
-        <Route path="u/:handle/members" element={<MembersPage admin={admin} />} />
-        <Route path="u/:handle/api-keys" element={<ApiKeysPage admin={admin} />} />
-        <Route path="u/:handle/credentials" element={<CredentialsPage admin={admin} />} />
+        <Route path="u/:handle/models" element={<ModelsPage />} />
+        <Route path="u/:handle/environments" element={<EnvironmentsPage />} />
+        <Route path="u/:handle/mcp-servers" element={<McpServersPage />} />
+        <Route path="u/:handle/credentials" element={<CredentialsPage />} />
         <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
-        <Route
-          path="u/:handle/settings/general"
-          element={<GeneralSettingsPage admin={admin} />}
-        />
-        <Route
-          path="u/:handle/settings/channels"
-          element={<FeatureGate feature="channels"><ChannelsPage admin={admin} /></FeatureGate>}
-        />
-        <Route
-          path="u/:handle/settings/templates"
-          element={<SetupsPage admin={admin} />}
-        />
-        {admin && (
-          <>
-            <Route path="admin" element={<Navigate to="/admin/users" replace />} />
-            <Route path="admin/audit" element={<AdminAuditPage />} />
-            <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
-            <Route path="admin/universes" element={<AdminUniversesPage />} />
-            <Route path="admin/api-keys" element={<AdminApiKeysPage />} />
-            <Route path="admin/channels" element={<AdminChannelsPage />} />
-            <Route path="admin/environment-providers" element={<AdminEnvironmentProvidersPage />} />
-          </>
-        )}
-        <Route path="account" element={<AccountPage user={user} />} />
-        <Route path="preferences" element={<PreferencesPage />} />
+        <Route path="u/:handle/settings/general" element={<UniverseGeneralSettingsPage />} />
+        <Route path="u/:handle/settings/members" element={<UniverseMembersPage />} />
+        <Route element={<AdminGate />}>
+          <Route path="admin" element={<AdminIndexRedirect />} />
+          <Route element={<AdminGate universes />}>
+            <Route path="admin/organizations/:organizationId/universes" element={<AdminUniversesPage />} />
+            {/* A universe's settings and members live in the universe itself. */}
+            <Route path="admin/organizations/:organizationId/universes/:handle" element={<UniverseRedirect to="settings/general" />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/access" element={<UniverseRedirect to="settings/members" />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<UniverseRedirect to="settings/general" />} />
+          </Route>
+          <Route element={<AdminGate organizationAction="manageMembers" />}>
+            <Route path="admin/organizations/:organizationId/members" element={<OrganizationMembersPage />} />
+            <Route path="admin/organizations/:organizationId/api-keys" element={<OrganizationApiKeysPage />} />
+            {["people", "service-users"].map((path) => (
+              <Route key={path} path={`admin/organizations/:organizationId/${path}`} element={<Navigate to="../members" relative="path" replace />} />
+            ))}
+          </Route>
+          <Route element={<AdminGate organizationAction="managePolicy" />}>
+            <Route path="admin/organizations/:organizationId/settings" element={<OrganizationSettingsPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="administerOrganizations" />}>
+            <Route path="admin/platform/organizations" element={<PlatformOrganizationsPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="manageUnclaimedUniverses" />}>
+            <Route path="admin/platform/unclaimed-universes" element={<UnclaimedUniversesPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="readAudit" />}>
+            <Route path="admin/platform/audit" element={<AdminAuditPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="manageUsers" />}>
+            <Route path="admin/platform/users" element={<AdminUsersPage currentUser={user} />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="configureDeployment" />}>
+            <Route path="admin/platform/environment-providers" element={<AdminEnvironmentProvidersPage />} />
+            <Route path="admin/platform/settings" element={<PlatformSettingsPage />} />
+          </Route>
+        </Route>
+        <Route path="settings" element={<SettingsPage user={user} />} />
+        <Route path="account" element={<SettingsRedirect />} />
+        <Route path="preferences" element={<SettingsRedirect />} />
         <Route path="login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

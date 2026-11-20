@@ -1,114 +1,60 @@
-# Access and security
+# How access works
 
-Lightspeed gives a team a universe in which to run agents and keep their work.
-The Platform decides which people belong to that universe and what they may
-do. The runtime authenticates API keys, keeps each request inside its universe,
-and records who asked for the work. Those responsibilities meet at the API
-boundary, so the runtime can also serve applications that supply their own
-sign-in and access rules.
+Sign in to the Platform to work in a universe. A **universe** holds the
+sessions, bots, workspaces, and other resources a team uses. An
+**organization** groups universes and manages access for people and service
+users. A deployment can host several organizations, including personal
+organizations for individual work.
 
-Suppose Acorn uses Lightspeed to investigate incidents. An investigator can
-start a private session, ask an agent to examine a problem, and share the
-conversation when it is useful to the team. Acorn's administrators can read
-private sessions too. Meanwhile, a bot can keep handling incoming incidents
-without depending on the investigator staying signed in.
+Suppose the Acorn organization has separate universes for release work and
+incident response. Its members can see both as Viewers by default. A release
+engineer with Contributor access in the release universe can run an agent
+there, keep the conversation private while investigating, and share it with
+the rest of the universe when it is ready. An Acorn Organization Admin can
+read it at any stage.
 
-## The pieces of the access model
+## Who can request work
 
-Each part answers a different question:
+The Platform checks the caller's permissions on every request to the web app,
+CLI, or API. What a caller can do depends on their organization and universe
+roles, the resource they want to reach, and any restrictions on their API key.
+A service user is an identity for automation with its own roles and keys.
 
-| Part | What it establishes |
-| --- | --- |
-| Universe | Which team's resources a request addresses. The Platform maps one organization to one runtime universe. |
-| Account and membership | Who signed in, and their role in each universe. These records live in the Platform. |
-| Role | Which operations a person may request: Viewer, Contributor, Operator, or Admin. |
-| API key | Which universe or deployment a client can address and which groups of runtime methods it may call. |
-| Actor | Who a trusted client says requested an operation. The Platform supplies the signed-in user's ID. |
-| Session visibility | Whether a session is private to its creator and admins, or shared with the universe through the Platform. |
+Once admitted, a run uses the tools and credentials configured for the
+session. If someone leaves Acorn, their next request requires current access.
+Acorn can separately stop their existing work.
 
-An actor is attribution, not a role or an execution identity. Core stores the
-identifier without looking up a person. It can compare that identifier when
-filtering session lists, but the Platform decides which filter a person must
-use and whether they may act on a particular session.
-
-## Follow a request
-
-When the investigator starts a run, the browser sends the request to the
-Platform. The Platform reads their universe membership, checks that their role
-allows starting runs, and checks that they can access the session. It then
-calls the runtime with its service key, the universe UUID, and the person's
-actor ID.
-
-The two entry paths matter when deciding who should receive a runtime key:
-
-```mermaid
-flowchart TD
-  Person[Signed-in person] --> Platform[Platform: membership, role, session access]
-  Platform -->|Service key, universe, actor| Core[Runtime API: key scope and method groups]
-  Client[CLI or integration] -->|Own API key| Core
-  Core --> Work[Universe-scoped work and requester attribution]
-```
-
-The runtime checks the key and its method groups before executing the request.
-A direct API client reaches this boundary without passing through the
-Platform's role and session checks. A key with the `session` group can therefore
-read private sessions in its universe. Use the Platform for people whose
-access must follow their membership and role; treat direct runtime keys as
-integration credentials. [API keys and service access](api-keys-and-service-access.md)
-explains their scope and lifecycle.
-
-## People requesting work and agents carrying it out
-
-Sessions execute using their configured tools and resources within the
-universe. A run does not inherit the requesting person's role, and the runtime
-does not recheck that person's membership before each model call. Removing an
-investigator from Acorn blocks their next Platform request; it does not stop
-an investigation they already started or a bot they created.
-
-Internal bot and delegation controllers have a separate, narrow set of rules
-for the sessions they manage. External tools use their configured credentials.
-For example, Configurator MCP acts with its runtime API key, even when an agent
-calls it. [Agent and tool access](agent-and-tool-access.md) follows both paths
-and explains what each check protects.
+The Platform forwards admitted requests to the runtime with a universe and an
+**actor**, the ID of the person or service user requesting the operation. The
+actor is recorded with the work. A direct runtime token has deployment-wide
+authority and belongs only to trusted components and operators. Direct runtime
+requests use the universe to select the resource partition.
 
 ## What is recorded today
 
-Session and bot records identify their creator. Session events identify who
-requested a run, steering, or cancellation, and who decided a tool approval.
-An attribution can name an asserted actor, an API key, a local caller, or the
-runtime controller responsible for internal work. An API key is named by its
-key id and by whether it is a deployment key or a key of that universe, so
-the record still names the same key after its secret is rotated.
+Sessions and bots record their creator. Session events record who requested a
+run, steered or cancelled it, or decided a tool approval. Requests through the
+Platform identify the authenticated actor. For a change requested directly,
+the runtime attributes it to the asserted actor or the configured token name.
 
-The Platform also keeps a durable access history for company admission and
-admin-status changes, emergency sign-ins, suspension, session revocation,
-local membership edits, key creation/revocation, and successful permanent session
-deletion through Platform routes. Platform admins can view the latest 100 records
-under **Platform admin → Audit log**. Records contain identifiers, action, time,
-outcome and safe details; permanent deletion includes the actor, universe, target
-session and all removed session IDs. Records survive deletion of users and
-sessions. Provider tokens and passwords are never included.
+Platform Admins can review sign-in and access changes under **Admin →
+Platform → Audit log**. The log includes company admission changes, account
+suspension and session revocation, administrative changes to memberships,
+universes and API keys, and permanent session deletion through the Platform.
+It records identifiers, times, outcomes, and selected details. For everyday
+run activity, open the session itself.
 
-For sessions, only permanent deletion is audited: creation, sharing, closing,
-force-closing, retention changes and soft deletion are not. Automatic retention
-work appears in runtime operational logs, not this audit log. Core operations
-made directly with an API key do not pass through this trail. Comprehensive
-gateway-operation auditing, audit retention controls and export are deferred.
-Core session attribution remains subject to session retention and deletion.
-Company OIDC sign-in is
-supported; directory synchronization, SCIM and member invitations are deferred.
+## Find the right guide
 
-## Choose the next detail
-
-- [People and roles](people-and-roles.md): sign in, add members, assign roles,
-  and understand the effect of removing access.
-- [Company sign-in (SSO)](single-sign-on.md): configure your identity provider,
-  emergency access, and session renewal and revocation.
-- [Private and shared work](private-and-shared-work.md): investigate privately,
-  share a session, and understand access to bots and delegated work.
-- [API keys and service access](api-keys-and-service-access.md): configure
-  gateway authentication and connect clients and services.
-- [Agent and tool access](agent-and-tool-access.md): understand tools,
-  controller authority, credentials, approvals, and stopping work.
-- [Tenant isolation and data protection](tenant-isolation-and-data-protection.md):
-  evaluate the storage, infrastructure, and compute boundaries of a universe.
+- [Organizations, members, and roles](people-and-roles.md) explains how to
+  give people access and what each role can do.
+- [Company sign-in (SSO)](single-sign-on.md) covers connecting an identity
+  provider and managing company access.
+- [Private and shared work](private-and-shared-work.md) explains who can see
+  a conversation and what happens when you share it.
+- [API keys and runtime tokens](api-keys-and-service-access.md) covers
+  connecting scripts, integrations, and trusted components.
+- [Agent and tool access](agent-and-tool-access.md) describes the permissions
+  a session uses to carry out work.
+- [Tenant isolation and data protection](tenant-isolation-and-data-protection.md)
+  describes where the universe boundary applies across storage and compute.

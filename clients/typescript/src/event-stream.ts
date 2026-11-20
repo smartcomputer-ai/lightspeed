@@ -1,14 +1,17 @@
 import { LightspeedTransportError } from "./errors.js";
 
-/** Decode SSE data fields, including chunked UTF-8, CRLF and multiline data.
+export interface ServerSentEvent { event: string; data: string }
+
+/** Decode named SSE data fields, including chunked UTF-8, CRLF and multiline data.
  * Cancelling iteration cancels the response body and releases its connection.
  */
-export async function* readEventStream(body: ReadableStream<Uint8Array>, idleTimeoutMs = 45_000): AsyncGenerator<string> {
+export async function* readEventStream(body: ReadableStream<Uint8Array>, idleTimeoutMs = 45_000): AsyncGenerator<ServerSentEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
   let data: string[] = [];
   let size = 0;
+  let event = "message";
   let swallowLf = false;
   try {
     while (true) {
@@ -35,8 +38,10 @@ export async function* readEventStream(body: ReadableStream<Uint8Array>, idleTim
           else if (!pending.length) swallowLf = true;
         }
         if (!line) {
-          if (data.length) yield data.join("\n");
-          data = []; size = 0;
+          if (data.length) yield { event, data: data.join("\n") };
+          data = []; size = 0; event = "message";
+        } else if (line.startsWith("event:")) {
+          event = line.slice(6).replace(/^ /, "") || "message";
         } else if (line === "data" || line.startsWith("data:")) {
           const field = line === "data" ? "" : line.slice(5).replace(/^ /, "");
           data.push(field); size += field.length;

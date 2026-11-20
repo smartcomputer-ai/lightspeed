@@ -147,7 +147,7 @@ async fn freeform_patches_normalize_for_execution_and_replay_original_call_types
         "vfs.apply_patch",
         "env.apply_patch",
     ]) {
-        assert_eq!(call.tool_id, Some(ToolId::new(id)));
+        assert_eq!(call.tool_id(), Some(&ToolId::new(id)));
         assert_eq!(
             read_json(blobs.as_ref(), &call.arguments_ref)
                 .await

@@ -10,12 +10,13 @@ const WatchContext = createContext<{ universeId?: string; connected: boolean }>(
 export function UniverseWatchProvider({ children }: { children: ReactNode }) {
   const { universe } = useActiveUniverse();
   const universeId = universe?.id;
+  const runtimeUniverse = universe?.lightspeedUniverseId;
   const features = JSON.stringify(universe?.features);
   const role = universe?.role;
   const client = useQueryClient();
   const [connection, setConnection] = useState<{ universeId?: string; connected: boolean }>({ connected: false });
   useEffect(() => {
-    if (!universeId) { setConnection({ connected: false }); return; }
+    if (!universeId || !runtimeUniverse) { setConnection({ connected: false }); return; }
     const controller = new AbortController();
     const cache = new WatchCache(client, universeId);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -24,7 +25,7 @@ export function UniverseWatchProvider({ children }: { children: ReactNode }) {
       try {
         const admission = new AbortController();
         const deadline = setTimeout(() => admission.abort(), 15_000);
-        const response = await fetch(`/api/v1/universes/${encodeURIComponent(universeId)}/watch`, {
+        const response = await fetch(`/api/v1/universes/${encodeURIComponent(runtimeUniverse)}/events`, {
           credentials: "same-origin", headers: { accept: "text/event-stream" }, signal: AbortSignal.any([controller.signal, admission.signal]),
         }).finally(() => clearTimeout(deadline));
         if (!response.ok || !response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
@@ -37,7 +38,8 @@ export function UniverseWatchProvider({ children }: { children: ReactNode }) {
         }
         for await (const data of readEventStream(response.body)) {
           if (controller.signal.aborted) return;
-          const event = JSON.parse(data) as AgentNotification;
+          if (data.event === "watch/end") break;
+          const event = { method: data.event, params: JSON.parse(data.data) } as AgentNotification;
           if (event.method === "watch/reset") {
             attempts = 0;
             setConnection({ universeId, connected: true });
@@ -53,7 +55,7 @@ export function UniverseWatchProvider({ children }: { children: ReactNode }) {
     };
     void connect();
     return () => { controller.abort(); clearTimeout(timer); cache.dispose(); };
-  }, [client, universeId, features, role]);
+  }, [client, universeId, runtimeUniverse, features, role]);
   return <WatchContext.Provider value={connection}>{children}</WatchContext.Provider>;
 }
 

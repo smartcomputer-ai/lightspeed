@@ -1,19 +1,24 @@
 mod administration_cli;
 mod api_client;
-mod auth_cli;
 mod chat;
 mod config;
 mod connection;
+mod credentials_cli;
+mod device_login;
 mod env_cli;
 mod key_secrets;
 mod mcp_cli;
 mod model_defaults_cli;
 mod output;
+mod platform_api;
+mod platform_cli;
 mod profile_cli;
 mod request_headers;
 mod session_cli;
 mod session_resources;
 mod skills_cli;
+#[cfg(test)]
+mod test_http;
 mod vfs_cli;
 mod vfs_transfer;
 
@@ -27,12 +32,18 @@ use clap::{Parser, Subcommand};
     about = "Lightspeed command-line tools"
 )]
 struct Cli {
-    /// Runtime endpoint override; never forwards a saved key to a different endpoint.
+    /// Deployment URL override; never forwards a saved key to a different endpoint.
     #[arg(long, global = true)]
     api_url: Option<String>,
-    /// Use a saved runtime connection for this invocation.
+    /// Read the bearer token from this file on every request (or set LIGHTSPEED_API_TOKEN_FILE).
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
+    /// Use a saved runtime or Platform connection for this invocation.
     #[arg(long, global = true)]
     connection: Option<String>,
+    /// Platform organization for this invocation.
+    #[arg(long, global = true)]
+    organization: Option<String>,
     /// Universe UUID or handle for this invocation.
     #[arg(long, global = true)]
     universe: Option<String>,
@@ -42,15 +53,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Manage local runtime connections.
+    /// Manage saved runtime and Platform connections.
     #[command(visible_alias = "connections")]
     Connect(connection::ConnectArgs),
+    /// Manage Platform organizations, service users, and API keys.
+    Platform(platform_cli::PlatformArgs),
+    /// Call a runtime or Platform operation using JSON parameters.
+    Api(platform_cli::ApiArgs),
     /// Select and administer runtime universes.
     #[command(visible_alias = "universes")]
     Universe(administration_cli::UniverseArgs),
-    /// Administer Lightspeed gateway API keys.
-    #[command(visible_alias = "api-keys")]
-    ApiKey(administration_cli::ApiKeyArgs),
+    /// Generate a runtime token offline.
+    Token(administration_cli::TokenArgs),
     /// Keep universe configuration in files: export it, check what a file
     /// would change, and apply it.
     Config(config::ConfigArgs),
@@ -69,7 +83,7 @@ enum Command {
     Mcp(mcp_cli::McpArgs),
     /// Manage reusable external credentials, OAuth clients and GitHub Apps.
     #[command(name = "credential", visible_alias = "credentials")]
-    Auth(auth_cli::AuthArgs),
+    Credentials(credentials_cli::CredentialArgs),
     /// Provision and manage independent universe environments.
     #[command(name = "environment", visible_aliases = ["environments", "env"])]
     Env(env_cli::EnvArgs),
@@ -84,56 +98,94 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     if let Command::Connect(args) = cli.command {
         return connection::handle(
             args,
             cli.connection.as_deref(),
             cli.universe.as_deref(),
             cli.api_url.as_deref(),
+            cli.organization.as_deref(),
+            cli.token_file.as_deref(),
         )
         .await;
     }
     // Some commands are offline: they need no connection and must work
     // before a runtime exists.
     let offline = match &cli.command {
-        Command::ApiKey(args) => args.offline(),
+        Command::Token(_) => true,
         Command::Env(args) => args.offline(),
         Command::Config(args) => args.offline(),
+        Command::Platform(args) => args.offline(),
         _ => false,
     };
     if offline {
         return match cli.command {
-            Command::ApiKey(args) => administration_cli::api_key(args).await,
+            Command::Token(args) => administration_cli::token(args),
             Command::Env(args) => env_cli::handle(args).await,
             Command::Config(args) => config::handle(args).await,
+            Command::Platform(args) => platform_cli::handle(args).await,
             _ => unreachable!("only these commands have offline forms"),
         };
     }
-    let wait = match &cli.command {
-        Command::Config(args) => args.wait_seconds(),
+    let enrollment = match &mut cli.command {
+        Command::Config(args) => args.prepare_enrollment()?,
+        Command::Platform(args) => args.enrollment(),
         _ => None,
     };
-    let active = connection::resolve_wait(
+    let configured = connection::configured(
         cli.connection.as_deref(),
         cli.api_url.as_deref(),
         cli.universe.as_deref(),
-        wait,
-    )
-    .await?;
+        cli.token_file.as_deref(),
+    )?;
+    let wait = match &cli.command {
+        Command::Config(args) => args.wait_seconds().map(|seconds| {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+            (deadline, seconds)
+        }),
+        _ => None,
+    };
+    let mut enrolled_organization = None;
+    if let Some(params) = enrollment {
+        let client = api_client::HttpAgentApi::with_connection(configured.clone());
+        let result = connection::wait_for_startup(wait, || client.enroll(&params)).await?;
+        if matches!(cli.command, Command::Platform(_)) {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
+        let id = result["organizationId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("enrollment response omitted organization ID"))?;
+        if result["enrolled"] == true {
+            eprintln!("Enrolled organization {id}");
+        }
+        enrolled_organization = Some(id.to_owned());
+    }
+    let mut active =
+        connection::wait_for_startup(wait, || connection::verify(configured.clone())).await?;
+    connection::apply_organization_override(
+        &mut active,
+        cli.organization
+            .as_deref()
+            .or(enrolled_organization.as_deref()),
+        cli.universe.as_deref(),
+    )?;
     connection::ACTIVE
         .set(active)
         .map_err(|_| anyhow::anyhow!("connection already initialized"))?;
     match cli.command {
         Command::Connect(_) => unreachable!(),
+        Command::Platform(args) => platform_cli::handle(args).await,
+        Command::Api(args) => platform_cli::api(args).await,
         Command::Universe(args) => administration_cli::universe(args).await,
         Command::Config(args) => config::handle(args).await,
-        Command::ApiKey(args) => administration_cli::api_key(args).await,
+        Command::Token(args) => administration_cli::token(args),
         Command::Models(args) => administration_cli::models(args).await,
         Command::Chat(args) => chat::handle(args).await,
         Command::Workspace(args) => vfs_cli::workspace(args).await,
         Command::Mcp(args) => mcp_cli::handle(args).await,
-        Command::Auth(args) => auth_cli::handle(args).await,
+        Command::Credentials(args) => credentials_cli::handle(args).await,
         Command::Env(args) => env_cli::handle(args).await,
         Command::Profiles(args) => profile_cli::handle(args).await,
         Command::Session(args) => session_cli::handle(args).await,
@@ -151,7 +203,6 @@ mod tests {
         for (name, plural) in [
             ("connect", "connections"),
             ("universe", "universes"),
-            ("api-key", "api-keys"),
             ("model", "models"),
             ("chat", "chats"),
             ("workspace", "workspaces"),
@@ -170,8 +221,31 @@ mod tests {
             let error = Cli::try_parse_from(["lightspeed", plural, "--help"]).unwrap_err();
             assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
         }
-        for removed in ["auth", "skills"] {
+        for removed in [
+            "auth",
+            "skills",
+            "login",
+            "logout",
+            "organization",
+            "service-user",
+            "api-key",
+            "access",
+        ] {
             assert!(Cli::try_parse_from(["lightspeed", removed]).is_err());
+        }
+        for path in [
+            vec!["connect", "login"],
+            vec!["connect", "logout"],
+            vec!["platform", "organization", "show"],
+            vec!["platform", "service-user", "create"],
+            vec!["platform", "api-key", "create"],
+            vec!["universe", "access", "put"],
+            vec!["api"],
+        ] {
+            let error =
+                Cli::try_parse_from(std::iter::once("lightspeed").chain(path).chain(["--help"]))
+                    .unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
         }
     }
 
@@ -213,7 +287,7 @@ mod tests {
                 "--controller-endpoint",
                 "wss://provider.example/control",
             ],
-            vec!["environment", "binding", "put", "local", "--enable"],
+            vec!["environment", "binding", "put", "local"],
             vec!["environment", "template", "list", "--provider", "local"],
             vec!["profile", "--json", "read", "reviewer"],
             vec!["session", "restart", "s1"],
@@ -225,7 +299,7 @@ mod tests {
                 "--universe",
                 "one",
                 "--api-url",
-                "http://localhost/rpc",
+                "http://localhost/api/v1",
             ];
             command.extend(args);
             Cli::try_parse_from(&command).unwrap_or_else(|error| panic!("{command:?}: {error}"));
@@ -247,7 +321,7 @@ mod tests {
             "--effort",
             "medium",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "hello",
         ])
         .expect("parse chat");
@@ -261,7 +335,7 @@ mod tests {
             "chat",
             "--new",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "hello",
         ])
         .expect("parse api url");
@@ -305,7 +379,7 @@ mod tests {
             "chat",
             "--new",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--upload",
             ".",
             "--workspace-path",
@@ -337,7 +411,7 @@ mod tests {
             "chat",
             "--new",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--profile",
             "support",
             "hello",
@@ -353,7 +427,7 @@ mod tests {
             "session",
             "profile",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "apply",
             "session_1",
             "--profile",
@@ -369,7 +443,7 @@ mod tests {
             "lightspeed",
             "profiles",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "import",
             "./support-profile.json",
             "--no-check",
@@ -381,7 +455,7 @@ mod tests {
             "lightspeed",
             "profiles",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "export",
             "support",
             "--output",
@@ -394,7 +468,7 @@ mod tests {
             "lightspeed",
             "profiles",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "check",
             "-",
         ])
@@ -410,7 +484,7 @@ mod tests {
             "snapshot",
             "upload",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--put-batch-bytes",
             "1048576",
             ".",
@@ -427,7 +501,7 @@ mod tests {
             "snapshots",
             "download",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "./out",
         ])
@@ -442,7 +516,7 @@ mod tests {
             "workspace",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--id",
             "workspace_1",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -458,7 +532,7 @@ mod tests {
             "workspace",
             "read",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "workspace_1",
         ])
         .expect("parse vfs workspace read");
@@ -472,7 +546,7 @@ mod tests {
             "workspace",
             "update",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--expected-revision",
             "4",
             "workspace_1",
@@ -489,7 +563,7 @@ mod tests {
             "workspace",
             "update",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "workspace_1",
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         ])
@@ -504,7 +578,7 @@ mod tests {
             "workspace",
             "delete",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "workspace_1",
         ])
         .expect("parse vfs workspace delete");
@@ -518,7 +592,7 @@ mod tests {
             "env",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
         ])
         .expect("parse env list");
         assert!(matches!(cli.command, Command::Env(_)));
@@ -531,7 +605,7 @@ mod tests {
             "session",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--metadata",
             "source=harbor",
             "--metadata",
@@ -549,7 +623,7 @@ mod tests {
                 "session",
                 "close",
                 "--api-url",
-                "http://127.0.0.1:18080/rpc",
+                "http://127.0.0.1:18080/api/v1",
                 "--metadata",
                 "novalue",
             ])
@@ -564,7 +638,7 @@ mod tests {
             "env",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--metadata",
             "harborContextId=abc",
         ])
@@ -579,7 +653,7 @@ mod tests {
             "env",
             "close",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
         ])
         .expect("parse env close");
@@ -593,7 +667,7 @@ mod tests {
             "env",
             "power",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "paused",
         ])
@@ -604,7 +678,7 @@ mod tests {
             "env",
             "update",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--display-name",
             "Build box",
@@ -618,7 +692,7 @@ mod tests {
             "env",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--include-closed",
             "--limit",
             "50",
@@ -633,7 +707,7 @@ mod tests {
                 "env",
                 "idle-policy",
                 "--api-url",
-                "http://127.0.0.1:18080/rpc",
+                "http://127.0.0.1:18080/api/v1",
                 "local-host",
             ])
             .is_err()
@@ -661,7 +735,7 @@ mod tests {
                 "3",
             ],
             vec!["registration-key", "rotate", "registration_key_1"],
-            vec!["binding", "put", "incus", "--disable"],
+            vec!["binding", "put", "incus"],
             vec!["binding", "delete", "incus"],
             vec![
                 "provider",
@@ -681,8 +755,9 @@ mod tests {
             assert!(matches!(cli.command, Command::Env(_)));
         }
         assert!(
-            Cli::try_parse_from(["lightspeed", "env", "binding", "put", "incus"]).is_err(),
-            "a binding put states enabled or disabled"
+            Cli::try_parse_from(["lightspeed", "env", "binding", "put", "incus", "--enable"])
+                .is_err(),
+            "a binding has no on/off state"
         );
         assert!(
             Cli::try_parse_from([
@@ -709,7 +784,7 @@ mod tests {
             "credentials",
             "bind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -728,7 +803,7 @@ mod tests {
             "credentials",
             "bind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -749,7 +824,7 @@ mod tests {
             "credentials",
             "bind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -768,7 +843,7 @@ mod tests {
             "credentials",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
         ])
         .expect("parse env credentials list");
@@ -783,7 +858,7 @@ mod tests {
             "credentials",
             "unbind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -801,7 +876,7 @@ mod tests {
             "--expected-revision",
             "2",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "echo",
             "--label",
             "echo",
@@ -817,14 +892,14 @@ mod tests {
     }
 
     #[test]
-    fn auth_client_add_parse_accepts_endpoints_and_secret_env() {
+    fn credential_client_add_parse_accepts_endpoints_and_secret_env() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "credential",
             "oauth-client",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--id",
             "crm",
             "--kind",
@@ -840,19 +915,19 @@ mod tests {
             "--audience",
             "https://crm.example.com/mcp",
         ])
-        .expect("parse auth client add");
-        assert!(matches!(cli.command, Command::Auth(_)));
+        .expect("parse credential client add");
+        assert!(matches!(cli.command, Command::Credentials(_)));
     }
 
     #[test]
-    fn auth_client_add_rejects_multiple_secret_sources() {
+    fn credential_client_add_rejects_multiple_secret_sources() {
         let result = Cli::try_parse_from([
             "lightspeed",
             "credential",
             "oauth-client",
             "add",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--authorization-endpoint",
             "https://as.example.com/authorize",
             "--token-endpoint",
@@ -874,7 +949,7 @@ mod tests {
             "mcp",
             "put",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--label",
             "crm",
@@ -892,7 +967,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_github_app_add_parse_requires_a_key_source() {
+    fn credential_github_app_add_parse_requires_a_key_source() {
         let parsed = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -900,7 +975,7 @@ mod tests {
             "app",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--id",
             "lightspeed-github",
             "--app-id",
@@ -909,7 +984,7 @@ mod tests {
             "GH_APP_KEY",
         ])
         .expect("parse github app create");
-        assert!(matches!(parsed.command, Command::Auth(_)));
+        assert!(matches!(parsed.command, Command::Credentials(_)));
 
         let missing_key = Cli::try_parse_from([
             "lightspeed",
@@ -918,7 +993,7 @@ mod tests {
             "app",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--app-id",
             "12345",
         ]);
@@ -926,7 +1001,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_github_installation_grant_parse_accepts_app_and_id() {
+    fn credential_github_installation_grant_parse_accepts_app_and_id() {
         let parsed = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -934,38 +1009,38 @@ mod tests {
             "installation",
             "grant",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--app",
             "lightspeed-github",
             "--installation-id",
             "678",
         ])
         .expect("parse installation grant");
-        assert!(matches!(parsed.command, Command::Auth(_)));
+        assert!(matches!(parsed.command, Command::Credentials(_)));
     }
 
     #[test]
-    fn auth_login_parse_accepts_mcp_server_client_ids() {
+    fn credential_login_parse_accepts_mcp_server_client_ids() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "credential",
             "login",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "mcp:crm",
         ])
-        .expect("parse auth login mcp:");
-        assert!(matches!(cli.command, Command::Auth(_)));
+        .expect("parse credential login mcp:");
+        assert!(matches!(cli.command, Command::Credentials(_)));
     }
 
     #[test]
-    fn auth_login_parse_accepts_client_and_overrides() {
+    fn credential_login_parse_accepts_client_and_overrides() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "credential",
             "login",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--scope",
             "contacts.read",
@@ -973,8 +1048,8 @@ mod tests {
             "https://crm.example.com/mcp",
             "--no-wait",
         ])
-        .expect("parse auth login");
-        assert!(matches!(cli.command, Command::Auth(_)));
+        .expect("parse credential login");
+        assert!(matches!(cli.command, Command::Credentials(_)));
     }
 
     #[test]
@@ -985,7 +1060,7 @@ mod tests {
             "credential",
             "set",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--grant",
             "authgrant_1",
@@ -1001,7 +1076,7 @@ mod tests {
             "mcp",
             "login",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--scope",
             "contacts.read",

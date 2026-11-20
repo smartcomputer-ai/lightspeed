@@ -1,6 +1,6 @@
 # Lightspeed platform
 
-The first-party Lightspeed management plane, web UI, connector host, and
+The first-party Lightspeed management plane, web UI, and
 supporting TypeScript packages. The repository root is the npm workspace root;
 run Node commands from there.
 
@@ -9,16 +9,14 @@ run Node commands from there.
 - `backend/` — Hono API, better-auth integration, universe-scoped gateway
   passthrough, database migration startup, and static SPA hosting.
 - `web/` — Vite/React management UI served under `/app`.
-- `cli/` — `lightspeed-platform`, the platform administration CLI.
 - `shared/` — Zod input schemas and deterministic helpers shared by the server,
-  web UI, and CLI.
+  web UI, and generated clients. The Rust `lightspeed` CLI consumes the native
+  Platform route catalog alongside the runtime contract.
 - `db/` — Drizzle schemas, migrations, and the platform database adapter.
-- `connectors/` — the connector host: one process serving every enabled
-  Telegram and WhatsApp account across universes, discovered through the core
-  API, with grant-leased provider tokens and one Temporal activity worker per
-  account queue. Bot and channel workflows run in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
-  universe-scoped Lightspeed API.
+  universe-scoped Lightspeed API. The Platform setup and development process
+  use restricted Platform service-user keys, with the development process
+  targeting the Platform shared API.
 - `scripts/` — product-identity check and the generated profile configuration
   reference.
 - `web/src/demo/` — the in-browser demo backend: an in-memory stand-in for
@@ -49,7 +47,7 @@ Input `origin` is display metadata, not authorization. The Platform derives
 `user:<id>` from the signed-in user for messages and steering, and ignores
 body-supplied origin claims. Bot deliveries use `event`; other API clients
 may supply their own strings. Authorization and requester attribution are
-explained in [Access and security](../docs/documentation/access-and-security/overview.md).
+explained in [How access works](../docs/documentation/access-and-security/overview.md).
 
 The SDK [transcript metadata helpers and session-view data guide](../docs/documentation/integrating-and-extending/api-and-typescript.md#build-transcript-authors-and-times)
 describe author/time derivation, materialized list fields and watch integration.
@@ -82,142 +80,66 @@ for the user controls.
 
 The authoritative configuration reference is
 [environment-variable reference](../docs/documentation/reference/environment-variables.md), with separate sections for the
-Platform backend, connector host, Configurator MCP, and development-only
+Platform backend, Configurator MCP, and development-only
 settings.
 
-The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
-made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
-(Credentials, API keys, Members) and the universe's **Settings** (General,
-Channels, Templates) at flat `/u/:handle/...` routes; bare `/u/:handle/settings`
-opens the first settings page the caller may see. Models holds model provider keys,
-compatible endpoints and coding-agent subscriptions. Credentials lists reusable
-tokens, environment secrets, GitHub App installations and custom OAuth grants;
-model and MCP server logins stay on their own pages, while credential pickers
-still offer every grant, except that the environment picker offers only
-retrievable ones. Credentials, Channels and Templates are for Operators
-and Admins; API keys and General are for Admins.
-
-**Features.** A universe admin switches parts of the product on or off under
-General → Features; today Bots and Channels, where Channels need Bots. Both
-start off. The registry is `FEATURES` in `platform/shared`, and a universe
-stores only the switches set away from their default (`universes.features`).
-The universe list carries each feature's effective state, and the web hides a
-switched-off feature's pages, menu items and choices. The backend enforces the
-switch in the member gate: a member's `bots/*` or `channels/*` call is refused
-with a 403 while its feature is off, whatever their role. The switch covers
-what members do through the Platform. What already runs, such as a bot
-answering on its channels, keeps running, and a holder of a runtime key is
-bound by that key's groups, not by the switch.
+The browser uses `/u/:handle` for universe work and `/admin` for organization
+and deployment administration. An Owner enables **Bots** in
+the universe's **Settings → General → Features**. The Platform gate enforces
+the switch for member requests. Admitted work can continue after a
+switch changes.
 
 ## People, universes and access
 
-The Platform owns people; core knows universes, keys and opaque actors, and
-records who asked for each run, steer, cancellation and approval.
+Platform manages accounts, organizations, memberships, and API keys. See
+[Organizations, members, and roles](../docs/documentation/access-and-security/people-and-roles.md)
+for administrative procedures, [Company sign-in](../docs/documentation/access-and-security/single-sign-on.md)
+for identity setup, and [API keys and runtime tokens](../docs/documentation/access-and-security/api-keys-and-service-access.md)
+for integration credentials. For local identity development, use the
+[Keycloak fixture](../docs/documentation/development/local-development.md#company-sign-in-with-local-keycloak).
 
-**Accounts.** With a company OIDC provider configured, the browser offers company
-sign-in using authorization code + PKCE and nonce. Two exact entitlements
-control ordinary application access and Platform admin access. Company
-profiles and admin status follow the provider; universe memberships remain
-local. Users are bound to issuer and subject, with no email-based linking or
-stored provider tokens. Better Auth server and web consumers use `1.7.6` and
-the Generic OAuth plugin.
+The action catalog in [`shared/src/access.ts`](shared/src/access.ts) groups
+permissions by deployment, organization, and universe. A caller receives the
+combined permissions of their roles at each scope. An API key can narrow
+those permissions. The universe and organization views return the resulting
+actions for the web UI, and the backend enforces them.
 
-Local password login remains available to explicit emergency Platform admins,
-starting with the bootstrap account. `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN=off`
-disables it. Without OIDC, existing local account creation and password login
-remain available; signup stays closed and the server can still configure
-GitHub OAuth. See [Company sign-in (SSO)](../docs/documentation/access-and-security/single-sign-on.md)
-for provider registration and emergency access,
-[People and roles](../docs/documentation/access-and-security/people-and-roles.md)
-for user administration, and the
-[local OIDC fixture](../docs/documentation/development/local-development.md#company-sign-in-with-local-keycloak)
-for development.
+[`backend/src/runtime-client.ts`](backend/src/runtime-client.ts) applies the
+[generated operation actions](backend/src/routes/method-actions.ts), feature
+switches, and resource-specific checks before forwarding a member request.
+The forwarded call uses the Platform runtime token and the member's actor
+ID. See [Changing contracts](../docs/documentation/development/changing-contracts.md)
+for how to update and verify that metadata.
 
-**Revocation and history.** With OIDC, sessions expire absolutely after eight
-hours by default and activity cannot renew them. Every authenticated request
-checks current admission, suspension and permissions. **Users** supports
-suspension, reinstatement and signing out all sessions. **Audit log** shows the
-latest 100 durable access and permanent session deletion events. Membership
-changes apply on the next request; provider login preserves them. Core keys and already admitted work remain
-independent and require separate revocation or cancellation.
+The Platform backend reads its runtime credential from
+`LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`.
+Configure the same secret as one of the runtime's full-authority tokens.
+In local development, Configurator targets Platform using a restricted
+service-user key. See the [environment-variable reference](../docs/documentation/reference/environment-variables.md)
+for settings.
 
-**Universes and roles.** A universe is an organization. Its members hold one of
-four roles, least to most:
+## HTTP surfaces
 
-| Role | May |
-| --- | --- |
-| viewer | read shared work and their own private sessions |
-| contributor | also create sessions from defaults or an existing profile, continue runs, invoke bots, share their own sessions |
-| operator | also customize sessions and run options, and configure profiles, bots, environments, MCP servers, credentials and channels |
-| admin | also manage members and keys, read and share any session, soft-delete closed sessions and set deletion retention |
+`/api/v1` is the shared runtime resource API. Hono registrations come from the
+SDK's generated HTTP catalog, with a reviewed operation admission registry.
+Browser and CLI sessions and Platform API keys supply identity. The backend
+authorizes universe access, features, and session visibility before calling
+the runtime. The shared API exposes admitted universe operations and native
+Platform routes. Trusted services use the private runtime API for operations
+such as connector ingress and credential leases.
 
-A universe's creator is its admin, and a universe always keeps one. A platform
-admin acts as an admin in every universe. Universe admins manage members on
-**Members**; every member sees names and roles, and admins also see emails.
-The organization plugin's own endpoints are not served: membership changes only
-through the universe routes.
+Most request bodies stream unchanged to the runtime, which owns wire validation.
+Session creation and run overrides have bounded policy inspection; inspected
+JSON rejects unsafe integer values before rewriting. Responses, blobs and named
+SSE events stream with cancellation and backpressure. Runtime contract revision
+admission prevents forwarding to a mismatched deployment. Native universe
+creation, handle changes and deletion coordinate Platform records with runtime
+state rather than bypassing the existing lifecycle services.
 
-**The gate.** The server decides before a request reaches core. Every core call
-a route makes for a member goes through one client
-(`backend/src/runtime-client.ts`), which:
-
-- requires the member's role to meet the method's role, from
-  `backend/src/routes/method-roles.ts`. That table is generated from the core
-  method manifest by `node platform/scripts/generate-method-roles.mjs`, and
-  `npm run check` fails when it is stale;
-- limits contributor creation to ordinary sessions with universe defaults or a
-  named profile, without setup overrides; integrated creation and run configuration
-  overrides require an operator;
-- for a method that names a session, unless the member is an admin, requires the
-  session to be shared with the universe or created by the member; sharing
-  requires its creator;
-- limits closing to contributors' own unshared sessions, operators' own or
-  shared sessions, or any session for admins; soft deletion requires a closed
-  session and an admin, or an operator for shared sessions;
-- narrows a member's session list to shared work and their own; and
-- calls core with the Platform's deployment key, naming the universe and the
-  member as the actor.
-
-The Platform's own refusals are 403 and 404. Core refusing the Platform is a
-server fault (500 or 502), since the member was already admitted. The web's
-permission hints come from the same role and never replace these checks.
-Only platform admins can permanently delete soft-deleted session history,
-through the audited Platform purge route. See the
-[session lifecycle guide](../docs/documentation/using-lightspeed/sessions-and-runs.md#close-and-retain-a-session).
-
-`configureSession` is separate from `controlSession`: configuration, profile
-application, metadata, and active-environment changes require an operator,
-while ordinary run controls remain available to contributors. Profile creation
-and editing also require an operator. Readers use the same expandable
-configuration form in profiles and session settings, with protected controls
-and no save action; profile JSON remains available for inspection.
-
-**Private work.** Sessions start private: their creator and the universe's
-admins see them. **Share with universe…** in the session's ⋯ menu shares a
-session and its sub-agents, once and for good. The session header marks private
-work with a lock and shared work with people; lists mark only shared sessions.
-Bots and their conversations are always shared.
-
-**Keys.** `LIGHTSPEED_PLATFORM_API_KEY` is the Platform's deployment key, with
-every method group and permission to assert actors. Follow
-[Bootstrap the Platform](../docs/documentation/access-and-security/api-keys-and-service-access.md#bootstrap-the-platform)
-to create it.
-The runtime must run in `authenticated` mode, and connector hosts use their own
-`LIGHTSPEED_CONNECTOR_API_KEY`. Universe admins mint keys for their universe
-under **API keys**, choosing the method groups each key may call from presets
-(agent client, configuration, all groups) or one by one; they never assert
-actors, and credential leasing and channel delivery are opt-in. Platform admins see and
-mint every key under **Platform admin → API keys**, choosing what a key reaches (the
-deployment or one universe), the method groups it may call, and whether it
-speaks for people. A secret is shown once. Rotate it to replace it immediately
-while preserving authority. Keys are addressed by their key id within their scope;
-the page shows the id when its creator chose one, and the secret's prefix.
-The Configurator template asks which key its MCP server acts with:
-the current one, a new key with chosen groups (starting from the configuration
-groups), or an existing universe key whose secret the Admin pastes; it revokes
-only keys it minted. The server lists only the tools that key may call, and
-anyone who can attach it acts with that key. Operators see the template, and
-only Admins install it.
+`/api/ui` contains browser composition and management adapters. The web watch
+uses `/api/v1/universes/{universe}/events` directly. Better Auth retains
+`/api/auth`; login discovery retains `/api/login-config`. The demo follows the
+same URL separation and named event stream format.
 
 ## Development
 
@@ -307,29 +229,22 @@ The default full launcher also seeds a Test universe with Operator, Contributor,
 and Viewer logins using the same initial password; see
 [development logins](../docs/documentation/development/local-development.md#development-logins).
 
-The server accepts the following primary configuration names:
+Common server settings are listed below. The [Platform variable reference](../docs/documentation/reference/environment-variables.md#platform-backend) includes defaults and deployment-level access settings.
 
 - `LIGHTSPEED_PLATFORM_DATABASE_URL`;
 - `LIGHTSPEED_PLATFORM_AUTH_SECRET`;
+- `LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`;
 - `LIGHTSPEED_PLATFORM_BASE_URL`;
 - `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`;
 - `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
   `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`;
 - `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` and
   `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET`;
-- `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` and the optional
-  `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK`;
 - `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` and
-  `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES`; and
-- `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS`.
-
-Imported pre-release aliases were removed as part of the greenfield
-product-identity reset. Platform deployments must use the
-`LIGHTSPEED_PLATFORM_*` names above.
+  `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES`.
 
 Live database tests require explicit opt-in variables and are not part of the
-ordinary unit-test run. Never point a local connector host at production
-channel accounts.
+ordinary unit-test run.
 
 CI runs the migration boundary explicitly. To reproduce it:
 
@@ -337,14 +252,31 @@ CI runs the migration boundary explicitly. To reproduce it:
 LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 ```
 
-Release construction stages one platform runtime and one connector-host
-runtime (still published as the `platform-workers` image so image references
-and manifest keys stay stable). The connector host serves the providers named
-by `LIGHTSPEED_CONNECTOR_PROVIDERS` for every account the core reports; see
-`connectors/README.md`. The release manifest records one digest for each
-image.
-
 ### Testing & Visual Tests
+
+With `./dev.sh full` running and the Rust CLI built, exercise real Platform
+authentication, runtime forwarding, key restrictions, organization/service-user
+authority, CLI browser approval, and declarative universe creation:
+
+```bash
+source scripts/dev/env.sh
+live_connections=$(mktemp -d)
+LIGHTSPEED_PLATFORM_LIVE_URL=http://localhost:5173 \
+LIGHTSPEED_LIVE_CONNECTIONS_DIR="$live_connections" \
+LIGHTSPEED_PLATFORM_LIVE_RENEWAL_DATABASE_URL="$LIGHTSPEED_PLATFORM_DATABASE_URL" \
+  npm run test:runtime --workspace @lightspeed-ai/platform-backend
+(cd clients/python && LIGHTSPEED_TEST_CONNECTION_CONFIG="$live_connections" \
+  uv run pytest tests/live_platform_connections.py -v)
+```
+
+These opt-in checks use the seeded admin and operator logins and create
+`live-*` organizations and universes in the development database. Set
+`LIGHTSPEED_PLATFORM_LIVE_PASSWORD` when the seed password differs from the
+development default. The first check saves dedicated CLI/API-key connections
+in the private directory; the second exercises both SDKs and revokes those
+credentials. Test organizations and universes remain available for inspection.
+The renewal database option ages only the dedicated CLI session so the SDK
+check can prove real session renewal and credential-file persistence.
 
 The web UI's tests run in Vitest and are part of `npm test` and `npm run check`.
 Logic tests call page helpers with plain data; component tests mount pages in

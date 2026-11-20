@@ -1,92 +1,45 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { schema, type Db } from "@lightspeed-ai/platform-db";
-import type { ServerEnv } from "./env.js";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { schema } from "@lightspeed-ai/platform-db";
 import { seedDevelopment } from "./development-seed.js";
+import { identityEnv, identityFixture } from "../test/identity-fixture.js";
+import { decodeHttpRequest } from "../../test/http-fixture.js";
 
-vi.mock("better-auth/crypto", () => ({ hashPassword: vi.fn(async () => "hashed-password") }));
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
-
-const admin = { id: "admin-login", email: "admin@lightspeed.dev" };
-const env = {
-  devSeed: true, adminEmail: "admin@lightspeed.dev", adminPassword: "shared-custom-password",
-  lightspeedApiUrl: "http://localhost/rpc", lightspeedApiKey: "lsk_fixture",
-} as ServerEnv;
-
-/// A database answering each read, in order, with the next of `reads`, and a
-/// core that accepts universe creation with the deployment key alone.
-function setup(reads: unknown[][], runtimeHandle = "test") {
-  const creations: unknown[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const headers = new Headers(init.headers);
-    expect(headers.get("authorization")).toBe("Bearer lsk_fixture");
-    expect(headers.get("x-lightspeed-actor")).toBeNull();
-    const rpc = JSON.parse(String(init.body));
-    expect(rpc.method).toBe("deployment/universes/create");
-    creations.push(rpc.params);
-    return Response.json({ id: rpc.id, result: { result: { created: true, universe: { universeId: rpc.params.universeId, handle: runtimeHandle } }, notifications: [] } });
+vi.mock("better-auth/crypto", async importOriginal => ({ ...await importOriginal<typeof import("better-auth/crypto")>(), hashPassword: vi.fn(async () => "hashed-password") }));
+let fixture: Awaited<ReturnType<typeof identityFixture>>;
+let handle = "test";
+beforeEach(async () => {
+  fixture = await identityFixture({ ...identityEnv, oidc: null, personalOrganizations: false, devSeed: true, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "seed-runtime-token-12345678901234567890" });
+  handle = "test";
+  vi.stubGlobal("fetch", vi.fn(async (url: string | Request | URL, init?: RequestInit) => {
+    const request = decodeHttpRequest(url, init);
+    expect(request.operation).toBe("deployment/universes/create");
+    return Response.json({ created: true, universe: { universeId: request.params.universeId, handle } });
   }));
-  const inserts: { table: unknown; values: Record<string, unknown> }[] = [];
-  const updates: Record<string, unknown>[] = [];
-  const query = { from: () => query, where: () => query, limit: async () => {
-    const next = reads.shift();
-    if (!next) throw new Error("unexpected database read");
-    return next;
-  } };
-  const db = {
-    select: vi.fn(() => query),
-    insert: (table: unknown) => ({ values: async (values: Record<string, unknown>) => { inserts.push({ table, values }); } }),
-    update: () => ({ set: (values: Record<string, unknown>) => ({ where: async () => { updates.push(values); } }) }),
-    transaction: async (fn: (tx: Db) => Promise<void>) => fn(db as unknown as Db),
-  };
-  return { db: db as unknown as Db, inserts, updates, creations };
-}
-
-it("does nothing unless explicitly enabled", async () => {
-  const state = setup([]);
-  await seedDevelopment(state.db, { ...env, devSeed: false });
-  expect(state.db.select).not.toHaveBeenCalled();
+}, 30000);
+afterEach(async () => { vi.unstubAllGlobals(); await fixture?.postgres.close(); });
+it("does nothing unless development seeding is explicitly enabled", async () => {
+  await seedDevelopment(fixture.db, { ...fixture.env, devSeed: false });
   expect(fetch).not.toHaveBeenCalled();
+  expect(await fixture.db.select().from(schema.organization)).toEqual([]);
 });
-
-it("creates Test with the admin and three credential logins as members of their role", async () => {
-  // admin login, no universe row, no admin membership, then per fixture: no
-  // login and no membership.
-  const state = setup([[admin], [], [], [], [], [], [], [], []]);
-  await seedDevelopment(state.db, env);
-  expect(state.creations).toEqual([{ universeId: "6c696768-7473-4065-8064-000000000010", handle: "test" }]);
-  const values = (table: unknown) => state.inserts.filter((entry) => entry.table === table).map((entry) => entry.values);
-  expect(values(schema.organization)).toMatchObject([{ name: "Test", slug: "test" }]);
-  const organizationId = values(schema.organization)[0]!.id;
-  // The fixture universe exercises bots and channels, which are off by default.
-  expect(values(schema.universes)).toMatchObject([{ organizationId, name: "Test", features: { bots: true, channels: true } }]);
-  expect(values(schema.user).map((user) => user.email)).toEqual([
-    "operator@lightspeed.dev", "contributor@lightspeed.dev", "viewer@lightspeed.dev",
-  ]);
-  expect(values(schema.account)).toHaveLength(3);
-  expect(values(schema.member).map(({ userId, role }) => [userId, role])).toEqual([
-    ["admin-login", "admin"],
-    ["6c696768-7473-4065-8064-000000000011", "operator"],
-    ["6c696768-7473-4065-8064-000000000012", "contributor"],
-    ["6c696768-7473-4065-8064-000000000013", "viewer"],
-  ]);
+it("creates one shared development organization, Creator memberships and separate universe grants", async () => {
+  await seedDevelopment(fixture.db, fixture.env);
+  expect(await fixture.db.select().from(schema.organization)).toMatchObject([{ slug: "development", personalUserId: null, defaultProtected: false }]);
+  const memberships = await fixture.db.select().from(schema.member);
+  expect(memberships.map(member => member.role).sort()).toEqual(["admin", "creator", "creator", "creator"]);
+  expect((await fixture.db.select().from(schema.universeGrants)).map(grant => grant.role).sort()).toEqual(["contributor", "operator", "owner", "viewer"]);
+  expect(await fixture.db.select().from(schema.universes)).toMatchObject([{ handle: "test", features: { bots: true } }]);
 });
-
-it("reruns without duplicating and restores a changed role", async () => {
-  const universe = { organizationId: "org", gatewayUrl: null };
-  const state = setup([
-    [admin], [universe], [{ id: "a", role: "admin" }],
-    [{ id: "op" }], [{ id: "m-op", role: "viewer" }],
-    [{ id: "co" }], [{ id: "m-co", role: "contributor" }],
-    [{ id: "vi" }], [{ id: "m-vi", role: "viewer" }],
-  ]);
-  await seedDevelopment(state.db, env);
-  expect(state.inserts).toEqual([]);
-  expect(state.updates).toEqual([{ slug: "test" }, { role: "operator" }]);
+it("reruns without duplicating organizations, universe grants or credential logins", async () => {
+  await seedDevelopment(fixture.db, fixture.env); await seedDevelopment(fixture.db, fixture.env);
+  expect(await fixture.db.select().from(schema.organization)).toHaveLength(1);
+  expect(await fixture.db.select().from(schema.universes)).toHaveLength(1);
+  expect(await fixture.db.select().from(schema.universeGrants)).toHaveLength(4);
+  expect(await fixture.db.select().from(schema.account)).toHaveLength(4);
 });
-
-it("preserves a runtime rename when caching the development universe handle", async () => {
-  const state = setup([[admin], [], [], [], [], [], [], [], []], "renamed-test");
-  await seedDevelopment(state.db, env);
-  expect(state.inserts.find(entry => entry.table === schema.organization)?.values.slug).toBe("renamed-test");
-  expect(state.updates).toContainEqual({ slug: "renamed-test" });
+it("preserves runtime renames without changing the organization slug", async () => {
+  await seedDevelopment(fixture.db, fixture.env); handle = "renamed-test";
+  await seedDevelopment(fixture.db, fixture.env);
+  expect((await fixture.db.select().from(schema.universes))[0]?.handle).toBe("renamed-test");
+  expect((await fixture.db.select().from(schema.organization))[0]?.slug).toBe("development");
 });

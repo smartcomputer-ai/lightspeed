@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use auth::{PinnedHttpPolicy, PrivateNetworkAccess, SecretValue};
+use credentials::{PinnedHttpPolicy, PrivateNetworkAccess, SecretValue};
 use futures_util::{StreamExt, stream::BoxStream};
 use http::{HeaderName, HeaderValue};
 use llm_runtime::secrets::{
@@ -158,9 +158,9 @@ pub(crate) async fn resolve_mcp_request_headers(
         let header_name = HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| invalid(format!("MCP header name {name:?} is invalid")))?;
         let header_value = match value {
-            auth::RequestHeaderValue::Literal { value } => HeaderValue::from_str(value)
+            credentials::RequestHeaderValue::Literal { value } => HeaderValue::from_str(value)
                 .map_err(|_| invalid(format!("MCP header {name:?} value is invalid")))?,
-            auth::RequestHeaderValue::Credential { .. } => {
+            credentials::RequestHeaderValue::Credential { .. } => {
                 // The secret resolver reads the server's live record, so a
                 // tool call started before a change sends what is configured
                 // now. It hands the token back as text; this is the same
@@ -168,7 +168,7 @@ pub(crate) async fn resolve_mcp_request_headers(
                 let resolved = secrets
                     .resolve(&secret_ref, Some(&record.server_url))
                     .await?;
-                auth::credential_header_value(resolved.expose())
+                credentials::credential_header_value(resolved.expose())
                     .map_err(|error| invalid(format!("MCP header {name:?}: {error}")))?
             }
         };
@@ -183,7 +183,6 @@ pub(crate) trait McpToolDiscoverer: Send + Sync {
         &self,
         server_url: &str,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure>;
@@ -206,28 +205,6 @@ pub(crate) struct HttpMcpToolDiscoverer {
 pub(crate) struct McpToolCallRequest {
     pub tool_name: String,
     pub arguments: serde_json::Map<String, Value>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ConfiguratorTrustedHeaderPolicy;
-
-impl ConfiguratorTrustedHeaderPolicy {
-    pub(crate) fn from_env() -> Result<Self, String> {
-        Self::parse(
-            std::env::var("LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL")
-                .ok()
-                .as_deref(),
-        )
-    }
-    fn parse(value: Option<&str>) -> Result<Self, String> {
-        if value.is_some_and(|v| !v.trim().is_empty()) {
-            return Err("Configurator trusted-header authentication is retired; install a scoped service key".into());
-        }
-        Ok(Self)
-    }
-    pub(crate) fn permits(&self, _server_id: &str, _server_url: &str) -> bool {
-        false
-    }
 }
 
 #[derive(Clone)]
@@ -448,7 +425,9 @@ impl BoundedReqwestClient {
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default()
             .to_owned();
-        if let Ok(parsed) = auth::parse_mcp_oauth_challenge(&challenge, response.url().as_str()) {
+        if let Ok(parsed) =
+            credentials::parse_mcp_oauth_challenge(&challenge, response.url().as_str())
+        {
             if parsed.insufficient_scope && !parsed.required_scopes.is_empty() {
                 self.diagnostics.record(
                     failure(
@@ -688,7 +667,6 @@ impl HttpMcpToolDiscoverer {
         client: &reqwest::Client,
         endpoint: &Url,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         max_response_bytes: usize,
         operation: ResponseOperation,
     ) -> Result<(McpClientService, TransportDiagnostics), McpToolDiscoveryFailure> {
@@ -696,7 +674,6 @@ impl HttpMcpToolDiscoverer {
             client,
             endpoint,
             auth,
-            trusted_universe,
             max_response_bytes,
             operation,
             client_lifecycle(),
@@ -713,7 +690,6 @@ impl HttpMcpToolDiscoverer {
                     client,
                     endpoint,
                     auth,
-                    trusted_universe,
                     max_response_bytes,
                     operation,
                     ClientLifecycleMode::Initialize,
@@ -729,7 +705,6 @@ impl HttpMcpToolDiscoverer {
         &self,
         server_url: &str,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
         request: McpToolCallRequest,
@@ -752,7 +727,6 @@ impl HttpMcpToolDiscoverer {
                     &client,
                     &endpoint,
                     auth,
-                    trusted_universe,
                     limits.max_tool_call_response_bytes,
                     ResponseOperation::ToolCall,
                 )
@@ -781,7 +755,6 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
         &self,
         server_url: &str,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure> {
@@ -804,7 +777,6 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
                     &client,
                     &endpoint,
                     auth,
-                    trusted_universe,
                     limits.max_response_bytes,
                     ResponseOperation::Discovery,
                 )
@@ -843,7 +815,6 @@ async fn start_service_once(
     client: &reqwest::Client,
     endpoint: &Url,
     auth: &McpRequestAuth,
-    trusted_universe: Option<uuid::Uuid>,
     max_response_bytes: usize,
     operation: ResponseOperation,
     lifecycle: ClientLifecycleMode,
@@ -851,11 +822,7 @@ async fn start_service_once(
     let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.as_str())
         .max_sse_event_size(max_response_bytes)
         .reinit_on_expired_session(false);
-    config =
-        transport_auth(config, auth, trusted_universe).map_err(|failure| StartServiceFailure {
-            failure,
-            retry_legacy: false,
-        })?;
+    config = transport_auth(config, auth);
     let client = BoundedReqwestClient::new(client.clone(), max_response_bytes, operation);
     let diagnostics = client.diagnostics.clone();
     let transport = StreamableHttpClientTransport::with_client(client, config);
@@ -879,30 +846,16 @@ async fn start_service_once(
 fn transport_auth(
     mut config: StreamableHttpClientTransportConfig,
     auth: &McpRequestAuth,
-    trusted_universe: Option<uuid::Uuid>,
-) -> Result<StreamableHttpClientTransportConfig, McpToolDiscoveryFailure> {
-    if auth.bearer.is_some() && trusted_universe.is_some() {
-        return Err(failure(
-            FailureKind::InvalidResponse,
-            "MCP transport cannot combine bearer and trusted-header authentication",
-        ));
-    }
+) -> StreamableHttpClientTransportConfig {
     if let Some(token) = &auth.bearer {
         config = config.auth_header(token.expose());
     }
     // Configured header names exclude transport, auth and `x-lightspeed-*`
     // names, so nothing here overrides what the transport sets itself.
-    let mut headers = auth.headers.clone();
-    if let Some(universe_id) = trusted_universe {
-        headers.insert(
-            HeaderName::from_static("x-lightspeed-universe"),
-            HeaderValue::from_str(&universe_id.to_string()).expect("UUID is a valid header value"),
-        );
+    if !auth.headers.is_empty() {
+        config = config.custom_headers(auth.headers.clone());
     }
-    if !headers.is_empty() {
-        config = config.custom_headers(headers);
-    }
-    Ok(config)
+    config
 }
 
 fn client_lifecycle() -> ClientLifecycleMode {
@@ -1266,7 +1219,7 @@ fn failure(kind: FailureKind, message: impl Into<String>) -> McpToolDiscoveryFai
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use axum::{
         Json, Router,
@@ -1282,7 +1235,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[derive(Default)]
-    struct TestMcpState {
+    pub(crate) struct TestMcpState {
+        pub(crate) tool_names: Vec<String>,
+        pub(crate) called_names: Vec<String>,
         discover_count: usize,
         initialize_count: usize,
         initialized_count: usize,
@@ -1295,6 +1250,18 @@ mod tests {
         list_delay: Option<Duration>,
         oauth_challenge: Option<String>,
         tools_list_changed: bool,
+    }
+
+    pub(crate) async fn start_test_server(
+        state: Arc<Mutex<TestMcpState>>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}/mcp"), server)
     }
 
     async fn streamable_handler(
@@ -1399,7 +1366,14 @@ mod tests {
                     .into_response();
                 }
                 let cursor = request.pointer("/params/cursor").and_then(Value::as_str);
-                let result = if cursor.is_none() {
+                let result = if !state.tool_names.is_empty() {
+                    let tools: Vec<_> = state
+                        .tool_names
+                        .iter()
+                        .map(|name| json!({"name": name, "inputSchema": {"type": "object"}}))
+                        .collect();
+                    json!({"tools": tools})
+                } else if cursor.is_none() {
                     json!({
                         "tools": [{
                             "name": "search",
@@ -1429,6 +1403,9 @@ mod tests {
             }
             Some("tools/call") => {
                 state.tool_call_count += 1;
+                state
+                    .called_names
+                    .push(request["params"]["name"].as_str().unwrap().into());
                 Json(json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -1453,57 +1430,44 @@ mod tests {
 
     #[test]
     fn public_ip_filter_rejects_private_and_special_ranges() {
-        assert!(!auth::is_public_network_ip("127.0.0.1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("10.0.0.1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("169.254.1.1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("::1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("fe80::1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip(
+        assert!(!credentials::is_public_network_ip(
+            "127.0.0.1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip(
+            "10.0.0.1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip(
+            "169.254.1.1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip("::1".parse().unwrap()));
+        assert!(!credentials::is_public_network_ip(
+            "fe80::1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip(
             "::ffff:127.0.0.1".parse().unwrap()
         ));
-        assert!(auth::is_public_network_ip("1.1.1.1".parse().unwrap()));
-        assert!(auth::is_public_network_ip(
+        assert!(credentials::is_public_network_ip(
+            "1.1.1.1".parse().unwrap()
+        ));
+        assert!(credentials::is_public_network_ip(
             "2606:4700:4700::1111".parse().unwrap()
         ));
     }
 
     #[test]
-    fn retired_trusted_header_policy_fails_closed() {
-        assert!(
-            ConfiguratorTrustedHeaderPolicy::parse(Some("http://127.0.0.1:18081/mcp")).is_err()
+    fn transport_auth_sends_only_the_configured_bearer_and_headers() {
+        let mut auth = McpRequestAuth::bearer("configured-token");
+        auth.headers.insert(
+            HeaderName::from_static("x-tool-version"),
+            HeaderValue::from_static("current"),
         );
-        assert!(
-            !ConfiguratorTrustedHeaderPolicy
-                .permits("lightspeed-configurator", "http://127.0.0.1:18081/mcp")
-        );
-    }
-
-    #[test]
-    fn trusted_header_transport_auth_excludes_bearer() {
-        let universe_id = uuid::Uuid::from_u128(7);
         let config = transport_auth(
             StreamableHttpClientTransportConfig::with_uri("http://127.0.0.1:18081/mcp"),
-            &McpRequestAuth::none(),
-            Some(universe_id),
-        )
-        .expect("trusted header config");
-        let expected = universe_id.to_string();
-        assert_eq!(
-            config
-                .custom_headers
-                .get(&HeaderName::from_static("x-lightspeed-universe"))
-                .and_then(|value| value.to_str().ok()),
-            Some(expected.as_str())
+            &auth,
         );
-        assert!(config.auth_header.is_none());
-        assert!(
-            transport_auth(
-                StreamableHttpClientTransportConfig::with_uri("http://127.0.0.1:18081/mcp"),
-                &McpRequestAuth::bearer("not-sent"),
-                Some(universe_id),
-            )
-            .is_err()
-        );
+        assert_eq!(config.auth_header.as_deref(), Some("configured-token"));
+        assert_eq!(config.custom_headers, auth.headers);
+        assert!(!config.custom_headers.contains_key("x-lightspeed-universe"));
     }
 
     #[test]
@@ -1715,7 +1679,6 @@ mod tests {
                 .discover_tools(
                     &endpoint,
                     &auth,
-                    None,
                     PrivateNetworkAccess::Any,
                     McpToolDiscoveryLimits::default(),
                 )
@@ -1765,17 +1728,17 @@ mod tests {
     }
 
     fn header_record() -> mcp::McpServerRecord {
-        let mut headers = auth::RequestHeaders::new();
+        let mut headers = credentials::RequestHeaders::new();
         headers.insert(
             "x-upstream-url".to_owned(),
-            auth::RequestHeaderValue::Literal {
+            credentials::RequestHeaderValue::Literal {
                 value: "https://tracker.example.com".to_owned(),
             },
         );
         headers.insert(
             "x-upstream-token".to_owned(),
-            auth::RequestHeaderValue::Credential {
-                grant_id: auth::AuthGrantId::new("authgrant_upstream"),
+            credentials::RequestHeaderValue::Credential {
+                grant_id: credentials::CredentialGrantId::new("authgrant_upstream"),
             },
         );
         mcp::McpServerRecord {
@@ -1853,16 +1816,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn custom_headers_reach_every_discovery_and_tool_call_request() {
         let state = Arc::new(Mutex::new(TestMcpState::default()));
-        let app = Router::new()
-            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
-            .with_state(state.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind fixture");
-        let address = listener.local_addr().expect("fixture address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve fixture");
-        });
+        let (endpoint, server) = start_test_server(state.clone()).await;
         let mut auth = McpRequestAuth::bearer("bearer-token");
         auth.headers.insert(
             HeaderName::from_static("x-upstream-url"),
@@ -1872,14 +1826,12 @@ mod tests {
         token.set_sensitive(true);
         auth.headers
             .insert(HeaderName::from_static("x-upstream-token"), token);
-        let endpoint = format!("http://{address}/mcp");
         let transport = HttpMcpToolDiscoverer::new();
 
         transport
             .discover_tools(
                 &endpoint,
                 &auth,
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -1889,7 +1841,6 @@ mod tests {
             .call_tool(
                 &endpoint,
                 &auth,
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
@@ -1937,7 +1888,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -1973,7 +1923,6 @@ mod tests {
             .call_tool(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
@@ -2013,7 +1962,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -2049,7 +1997,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits {
                     max_response_bytes: 1024,
@@ -2085,7 +2032,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::bearer("expired-token"),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -2121,7 +2067,6 @@ mod tests {
         .discover_tools(
             &format!("http://{address}/mcp"),
             &McpRequestAuth::none(),
-            None,
             PrivateNetworkAccess::Any,
             McpToolDiscoveryLimits::default(),
         )
@@ -2160,7 +2105,6 @@ mod tests {
                     .discover_tools(
                         &endpoint,
                         &McpRequestAuth::none(),
-                        None,
                         access,
                         McpToolDiscoveryLimits::default(),
                     )
@@ -2180,7 +2124,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains(&auth::PinnedHttpError::NonPublicAddress.to_string()),
+                .contains(&credentials::PinnedHttpError::NonPublicAddress.to_string()),
             "{error}"
         );
         server.abort();

@@ -12,6 +12,7 @@ const metadata = Object.fromEntries(readFileSync(join(repository, 'release/metad
   .split(/\r?\n/).filter((line) => line && !line.startsWith('#'))
   .map((line) => line.split(/=(.*)/s).slice(0, 2)));
 const version = metadata.LIGHTSPEED_PRODUCT_VERSION;
+const contractFixture = (name) => name === 'http.json' ? JSON.stringify({ contractRevision: metadata.LIGHTSPEED_HTTP_CONTRACT_REVISION, operations: [] }) : `fixture ${name}`;
 const gitSha = 'a'.repeat(40);
 const digest = `sha256:${'b'.repeat(64)}`;
 const registry = 'ghcr.io/example/lightspeed';
@@ -29,8 +30,8 @@ function fixture(t) {
   write('release/metadata.env', readFileSync(join(repository, 'release/metadata.env')));
   write('Cargo.lock', readFileSync(join(repository, 'Cargo.lock')));
   write('dist/release-manifest.json', JSON.stringify({ rustVersion: `rustc ${metadata.LIGHTSPEED_RELEASE_RUST_VERSION}` }));
-  for (const contract of ['api.schema.json', 'methods.json', 'openrpc.json', 'api-reference.md']) {
-    write(`dist/contracts/${contract}`, `fixture ${contract}`);
+  for (const contract of ['api.schema.json', 'http.json', 'openapi.json', 'api-reference.md']) {
+    write(`dist/contracts/${contract}`, contractFixture(contract));
   }
   for (const component of ['runtime', 'provider-incus', 'cli', 'demo']) {
     write(`dist/archives/lightspeed-${component}-${version}.tar.gz`, `fixture ${component}`);
@@ -60,7 +61,7 @@ function fixture(t) {
     env[`LIGHTSPEED_ARTIFACT_URL_${name}`] = `oci://${registry}/${name.toLowerCase()}-bundle@${digest}`;
   }
   env.LIGHTSPEED_BINARY_URL_ENVD_X86_64_PC_WINDOWS_MSVC = `oci://${registry}/envd-x86_64-pc-windows-msvc-bundle@${digest}`;
-  for (const name of ['RUNTIME', 'CONFIGURATOR_MCP', 'PLATFORM', 'PLATFORM_WORKERS']) {
+  for (const name of ['RUNTIME', 'CONFIGURATOR_MCP', 'PLATFORM']) {
     env[`LIGHTSPEED_${name}_IMAGE`] = `${registry}/${name.toLowerCase().replaceAll('_', '-')}@${digest}`;
   }
   const create = () => execFileSync(process.execPath,
@@ -79,6 +80,8 @@ for (const channel of ['main', 'release']) {
     f.create();
     const manifest = f.manifest();
     assert.equal(manifest.typescriptClient.name, "@lightspeed-ai/sdk");
+    assert.equal(manifest.httpContractRevision, metadata.LIGHTSPEED_HTTP_CONTRACT_REVISION);
+    assert.equal(Object.hasOwn(manifest, 'protocolVersion'), false);
     assert.deepEqual(Object.keys(manifest.binaries).sort(), ['cli', 'envd', 'providerIncus', 'runtime']);
     assert.equal(manifest.binaries.runtime.file, `lightspeed-runtime-${version}.tar.gz`);
     assert.equal(manifest.binaries.runtime.url, `oci://${registry}/runtime-bundle@${digest}`);
@@ -102,6 +105,18 @@ test('local docs archives may be unpublished, but published manifests require an
   f.env.LIGHTSPEED_ARTIFACT_URL_DOCS = `oci://${registry}/docs-bundle:latest`;
   f.create();
   assert.notEqual(f.verify('--published').status, 0);
+});
+
+test('release contract checksum covers HTTP routing and OpenAPI artifacts', (t) => {
+  const f = fixture(t);
+  f.create();
+  assert.equal(f.verify().status, 0);
+  for (const name of ['http.json', 'openapi.json']) {
+    f.write(`dist/contracts/${name}`, 'changed contract');
+    assert.notEqual(f.verify().status, 0);
+    f.write(`dist/contracts/${name}`, contractFixture(name));
+  }
+  assert.equal(f.verify().status, 0);
 });
 
 test('manifest verification rejects missing, misplaced, or corrupted documentation', (t) => {
@@ -280,4 +295,25 @@ test('Windows import verifies the uploaded bytes before adding them to the relea
   assert.throws(run, /checksum mismatch/);
   // A rejected upload leaves the previously verified archive intact.
   assert.equal(hash(readFileSync(join(f.cwd, 'dist/archives', build.file))), build.sha256);
+});
+
+test('manifest verification requires the current resource HTTP contract revision', (t) => {
+  const f = fixture(t);
+  f.create();
+  const original = f.manifest();
+  for (const revision of [undefined, 'future']) {
+    const manifest = { ...original, httpContractRevision: revision };
+    f.write('dist/release-manifest.json', JSON.stringify(manifest));
+    const result = f.verify();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /HTTP contract revision/);
+  }
+});
+
+test('release identity matches the packaged HTTP catalog', (t) => {
+  const f = fixture(t);
+  f.create();
+  f.write('dist/contracts/http.json', JSON.stringify({ contractRevision: 'different', operations: [] }));
+  assert.throws(f.create, /packaged HTTP contract revision/);
+  assert.match(f.verify().stderr, /packaged HTTP contract revision/);
 });

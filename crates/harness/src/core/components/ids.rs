@@ -4,7 +4,8 @@ use std::fmt;
 
 pub use crate::session::{EventSeq, SessionId, StringIdError, validate_general_string_id};
 
-const TOOL_NAME_MAX_LEN: usize = 64;
+/// Shared wire-name budget across provider adapters. OpenAI function names allow 64 ASCII characters.
+pub const TOOL_NAME_MAX_LEN: usize = 64;
 
 macro_rules! numeric_id {
     ($name:ident) => {

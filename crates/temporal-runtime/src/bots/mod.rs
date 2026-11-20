@@ -2,7 +2,7 @@
 //! Temporal Schedule reconciliation for schedule/poll triggers, the
 //! controller-facing session operations, tool execution, receipts, and the
 //! trigger fires. Everything here runs in-process against the universe's
-//! `GatewayAgentApi` and `PgStore` — no JSON-RPC hop.
+//! `GatewayAgentApi` and `PgStore` — no HTTP hop.
 //!
 //! - [`admission`] — store-then-wake: allocate `#N`, render, CAS, insert,
 //!   signal-with-start the controller, compensate on wake failure.

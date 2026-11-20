@@ -21,11 +21,10 @@ controller coordinates the session itself, including when to submit new runs
 or replace a closed session. The lifecycle controller and tool receiver can
 be different workflows.
 
-`session/start` with an `integration` creates an integrated session, whose
-workflow connections are immutable. The integration lives outside ordinary
-`SessionConfig`. They identify the
-function the model sees, its schema, its receiver or start recipe, and the
-meaning of completion.
+`session/start` with an `integration` connects the session to its receiver or
+start recipe and declares what completion means. Those connections are fixed
+when the session is created. Through Platform, use a service user with
+Operator access or above, and allow the required operations on its key.
 
 The current combinations are:
 
@@ -59,9 +58,9 @@ worker implements `ReleaseReviewWorkflow` on a `release-integrations` task
 queue in the deployment's Temporal namespace. The runtime can start that
 workflow through its generic start adapter.
 
-First store the input schema and start recipe in the same universe's CAS.
-The following function runs in an application process or Temporal activity,
-using a `LightspeedClient` with `session` and `blobs/put` access in that universe:
+Store the input schema and start recipe in the same universe's content store.
+Run the following function in an application process or Temporal activity.
+The client needs `blobs/put` and `session/start` in that universe.
 
 ```ts
 import { LightspeedClient } from "@lightspeed-ai/sdk";
@@ -190,11 +189,11 @@ export async function ReleaseReviewWorkflow(args: WorkflowToolStartArgs) {
 }
 ```
 
-The activity must select credentials for an authorized universe and verify
-that its request belongs there. Do not place a runtime key in workflow inputs
-or histories. Use `invocationId` to deduplicate the domain operation: Temporal
-can retry an activity after an ambiguous outcome, even though workflow replay
-itself is deterministic.
+Check that the request belongs to a universe the activity serves. Load its
+credential from the worker's protected configuration so it stays out of
+workflow inputs and history. A Platform key restricted to that universe and
+`blobs/read` and `blobs/put` can read the invocation and store the result.
+Use `invocationId` to deduplicate the domain operation when Temporal retries.
 
 The skeleton demonstrates the successful path. Add domain-specific failure
 results, cancellation, and resource cleanup to the activity/workflow. Store
@@ -247,7 +246,7 @@ the sender is authorized for your business operation.
 
 For `bound` + `pull`, consume `workflowToolInvoked` through the public session
 event stream, maintaining a cursor and deduplication state. This mode supports
-`accepted` completion only. There is no public receiver-filtered RPC.
+`accepted` completion only. There is no public receiver-filtered API operation.
 
 ## Add lifecycle coordination when needed
 
@@ -338,7 +337,7 @@ missing completion signal with recovery results available.
 
 The [generated workflow contract](../../../crates/temporal-workflow/contract/workflow-contract.md)
 and the workflow helpers for [TypeScript](../../../clients/typescript/src/workflow.ts)
-and [Python](../../../clients/python/src/lightspeed_ai/workflow.py)
+and [Python](../../../clients/python/src/lightspeed/workflow.py)
 own the exact envelopes, identifiers, and signal/query names. Use those helpers
 instead of copying hashing or workflow-ID rules into your integration. The
 [Python client README](../../../clients/python/README.md#write-workflow-code) has the

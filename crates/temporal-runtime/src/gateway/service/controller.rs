@@ -1,6 +1,6 @@
 //! What the runtime's own work may do. A bot or a delegated session acts
 //! under a controller context and is held to these rules, decided from the
-//! facts of the target's own row; requests are gated by their key's groups
+//! facts of the target's own row; requests arrive from trusted components
 //! and never decided here.
 use api::{ResourceRef, UniverseAction, Visibility};
 use store_pg::ResourceAccess;

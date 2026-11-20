@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 use sha2::{Digest as _, Sha256};
 use sqlx::{Acquire as _, Executor as _, PgPool, Postgres, Transaction};
 
-use crate::PgStoreError;
+use crate::{
+    BOTS_SCHEMA_SQL, CORE_SCHEMA_SQL, CREDENTIALS_SCHEMA_SQL, ENVIRONMENT_SCHEMA_SQL,
+    MCP_SCHEMA_SQL, PROFILE_SCHEMA_SQL, PgStoreError, VFS_SCHEMA_SQL,
+};
 
 /// Serializes every Lightspeed schema inspection and migration in a database.
 const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
@@ -18,14 +21,8 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
     "agent_profiles",
-    "api_keys",
-    "auth_clients",
-    "auth_flows",
-    "auth_grants",
-    "auth_provider_headers",
-    "auth_providers",
-    "auth_secrets",
     "bot_events",
+    "bot_sessions",
     "bot_triggers",
     "bots",
     "cas_blob_edges",
@@ -33,8 +30,12 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "cas_bot_event_roots",
     "cas_session_roots",
     "cas_sweep_cursors",
-    "channel_accounts",
-    "channel_pairings",
+    "credentials_clients",
+    "credentials_flows",
+    "credentials_grants",
+    "credentials_provider_headers",
+    "credentials_providers",
+    "credentials_secrets",
     "environment_credentials",
     "environment_provider_bindings",
     "environment_providers",
@@ -50,6 +51,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "sessions",
     "universe_model_defaults",
     "universes",
+    "universes_deleted",
     "vfs_snapshots",
     "vfs_workspaces",
 ];
@@ -64,127 +66,42 @@ pub struct EmbeddedMigration {
 pub const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 1,
-        name: "core",
-        sql: include_str!("../migrations/001_core.sql"),
+        name: "initial_core",
+        sql: CORE_SCHEMA_SQL,
     },
     EmbeddedMigration {
         version: 2,
         name: "vfs",
-        sql: include_str!("../migrations/002_vfs.sql"),
+        sql: VFS_SCHEMA_SQL,
     },
     EmbeddedMigration {
         version: 3,
-        name: "mcp",
-        sql: include_str!("../migrations/003_mcp.sql"),
+        name: "credentials",
+        sql: CREDENTIALS_SCHEMA_SQL,
     },
     EmbeddedMigration {
         version: 4,
-        name: "auth",
-        sql: include_str!("../migrations/004_auth.sql"),
+        name: "mcp",
+        sql: MCP_SCHEMA_SQL,
     },
     EmbeddedMigration {
         version: 5,
         name: "environments",
-        sql: include_str!("../migrations/005_environments.sql"),
+        sql: ENVIRONMENT_SCHEMA_SQL,
     },
     EmbeddedMigration {
         version: 6,
         name: "agent_profiles",
-        sql: include_str!("../migrations/006_agent_profiles.sql"),
+        sql: PROFILE_SCHEMA_SQL,
     },
     EmbeddedMigration {
         version: 7,
-        name: "api_keys",
-        sql: include_str!("../migrations/007_api_keys.sql"),
-    },
-    EmbeddedMigration {
-        version: 8,
         name: "bots",
-        sql: include_str!("../migrations/008_bots.sql"),
-    },
-    EmbeddedMigration {
-        version: 9,
-        name: "channels",
-        sql: include_str!("../migrations/009_channels.sql"),
-    },
-    EmbeddedMigration {
-        version: 10,
-        name: "model_defaults",
-        sql: include_str!("../migrations/010_model_defaults.sql"),
-    },
-    EmbeddedMigration {
-        version: 11,
-        name: "session_deletion",
-        sql: include_str!("../migrations/011_session_deletion.sql"),
-    },
-    EmbeddedMigration {
-        version: 12,
-        name: "cas_sweep_cursors",
-        sql: include_str!("../migrations/012_cas_sweep_cursors.sql"),
-    },
-    EmbeddedMigration {
-        version: 13,
-        name: "camel_case_bot_values",
-        sql: include_str!("../migrations/013_camel_case_bot_values.sql"),
-    },
-    EmbeddedMigration {
-        version: 14,
-        name: "runtime_and_lifecycle_vocabulary",
-        sql: include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql"),
-    },
-    EmbeddedMigration {
-        version: 15,
-        name: "mcp_headers_and_static_tokens",
-        sql: include_str!("../migrations/015_mcp_headers_and_static_tokens.sql"),
-    },
-    EmbeddedMigration {
-        version: 16,
-        name: "universe_handles",
-        sql: include_str!("../migrations/016_universe_handles.sql"),
-    },
-    EmbeddedMigration {
-        version: 17,
-        name: "api_key_ids",
-        sql: include_str!("../migrations/017_api_key_ids.sql"),
-    },
-    EmbeddedMigration {
-        version: 18,
-        name: "declared_registered_environments",
-        sql: include_str!("../migrations/018_declared_registered_environments.sql"),
-    },
-    EmbeddedMigration {
-        version: 19,
-        name: "environment_credential_sources",
-        sql: include_str!("../migrations/019_environment_credential_sources.sql"),
-    },
-    EmbeddedMigration {
-        version: 20,
-        name: "auth_provider_headers",
-        sql: include_str!("../migrations/020_auth_provider_headers.sql"),
-    },
-    EmbeddedMigration {
-        version: 21,
-        name: "api_key_attribution",
-        sql: include_str!("../migrations/021_api_key_attribution.sql"),
-    },
-    EmbeddedMigration {
-        version: 22,
-        name: "universe_configuration",
-        sql: include_str!("../migrations/022_universe_configuration.sql"),
-    },
-    EmbeddedMigration {
-        version: 23,
-        name: "session_summaries",
-        sql: include_str!("../migrations/023_session_summaries.sql"),
-    },
-    EmbeddedMigration {
-        version: 24,
-        name: "environment_gateway_replicas",
-        sql: include_str!("../migrations/024_environment_gateway_replicas.sql"),
+        sql: BOTS_SCHEMA_SQL,
     },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 24;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 7;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {
@@ -466,6 +383,13 @@ mod tests {
                 .or_else(|| line.strip_prefix("DROP TABLE "))
             {
                 migrated_tables.remove(name.trim_end_matches(';'));
+            } else if let Some((old_name, new_name)) = line
+                .strip_prefix("ALTER TABLE ")
+                .and_then(|line| line.strip_suffix(';'))
+                .and_then(|line| line.split_once(" RENAME TO "))
+            {
+                migrated_tables.remove(old_name);
+                migrated_tables.insert(new_name.to_owned());
             } else if let Some(name) = line
                 .strip_prefix("CREATE TABLE IF NOT EXISTS ")
                 .or_else(|| line.strip_prefix("CREATE TABLE "))

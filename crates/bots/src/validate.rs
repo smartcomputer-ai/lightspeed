@@ -4,7 +4,7 @@
 
 use api::{
     BotBreaker, BotCoalescePolicy, BotDocument, BotTriggerDocument, BotTriggerRoute,
-    BotTriggerSpec, ChatAccess, ChatActivation, PollCursorSpec, PollSource, WebhookVerification,
+    BotTriggerSpec, PollCursorSpec, PollSource, WebhookVerification,
 };
 use chrono::Utc;
 
@@ -32,11 +32,6 @@ pub const MIN_BREAKER_WINDOW_MS: u64 = 1_000;
 pub const MAX_BREAKER_WINDOW_MS: u64 = 86_400_000;
 pub const MAX_BREAKER_FIRES: u32 = 100_000;
 pub const MAX_INBOX_FROM: usize = 100;
-pub const MAX_CHAT_PREFIXES: usize = 20;
-pub const MAX_CHAT_HANDLES: usize = 200;
-pub const MAX_CHAT_PRIORITY: u32 = 1_000;
-pub const MIN_PAIRING_CODE_LEN: usize = 8;
-pub const MAX_PAIRING_CODE_LEN: usize = 64;
 /// A one-shot `atMs` must lie at least this far in the future.
 pub const MIN_ONE_SHOT_LEAD_MS: i64 = 30_000;
 
@@ -190,56 +185,6 @@ pub fn validate_coalesce(policy: &BotCoalescePolicy) -> Result<(), BotError> {
         return Err(invalid(format!(
             "coalesce.maxCount must be {MIN_COALESCE_COUNT}..={MAX_COALESCE_COUNT}"
         )));
-    }
-    Ok(())
-}
-
-fn validate_chat_activation(activation: &ChatActivation) -> Result<(), BotError> {
-    if activation.trigger_prefixes.len() > MAX_CHAT_PREFIXES {
-        return Err(invalid(format!(
-            "activation.triggerPrefixes must have at most {MAX_CHAT_PREFIXES} entries"
-        )));
-    }
-    for prefix in &activation.trigger_prefixes {
-        nonempty("activation.triggerPrefixes entry", prefix, 40)?;
-    }
-    if activation.mention_names.len() > MAX_CHAT_PREFIXES {
-        return Err(invalid(format!(
-            "activation.mentionNames must have at most {MAX_CHAT_PREFIXES} entries"
-        )));
-    }
-    for name in &activation.mention_names {
-        nonempty("activation.mentionNames entry", name, 60)?;
-    }
-    Ok(())
-}
-
-fn validate_chat_access(access: &ChatAccess) -> Result<(), BotError> {
-    for (label, handles) in [
-        ("access.allowed", &access.allowed),
-        ("access.controllers", &access.controllers),
-    ] {
-        if handles.len() > MAX_CHAT_HANDLES {
-            return Err(invalid(format!(
-                "{label} must have at most {MAX_CHAT_HANDLES} entries"
-            )));
-        }
-        for handle in handles {
-            nonempty(&format!("{label} entry"), handle, 200)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn validate_pairing_code(code: &str) -> Result<(), BotError> {
-    let len = code.chars().count();
-    if !(MIN_PAIRING_CODE_LEN..=MAX_PAIRING_CODE_LEN).contains(&len) {
-        return Err(invalid(format!(
-            "pairingCode must be {MIN_PAIRING_CODE_LEN}..={MAX_PAIRING_CODE_LEN} characters"
-        )));
-    }
-    if code.chars().any(char::is_whitespace) {
-        return Err(invalid("pairingCode must not contain whitespace"));
     }
     Ok(())
 }
@@ -413,27 +358,6 @@ pub fn validate_trigger_document(
                 )));
             }
         }
-        BotTriggerSpec::Chat {
-            account_id,
-            activation,
-            access,
-            priority,
-            ..
-        } => {
-            nonempty("accountId", account_id, 128)?;
-            validate_chat_activation(activation)?;
-            validate_chat_access(access)?;
-            if *priority > MAX_CHAT_PRIORITY {
-                return Err(invalid(format!(
-                    "priority must be at most {MAX_CHAT_PRIORITY}"
-                )));
-            }
-            if matches!(document.route, Some(BotTriggerRoute::Bot)) {
-                return Err(invalid(
-                    "chat triggers route per conversation (perKey or perEvent); the main session cannot take a chat",
-                ));
-            }
-        }
     }
     if let Some(filter) = &document.filter {
         nonempty("filter", filter, MAX_FILTER_LEN)?;
@@ -456,25 +380,6 @@ pub fn validate_trigger_document(
     Ok(())
 }
 
-/// Effective route of a trigger: chat triggers default to `perKey`, every
-/// other kind to the main session.
-pub fn effective_route(document: &BotTriggerDocument) -> BotTriggerRoute {
-    match (&document.spec, &document.route) {
-        (BotTriggerSpec::Chat { .. }, None) => BotTriggerRoute::PerKey { key: None },
-        (_, Some(route)) => route.clone(),
-        (_, None) => BotTriggerRoute::Bot,
-    }
-}
-
-/// Effective coalescing of a trigger: chat triggers batch by default.
-pub fn effective_coalesce(document: &BotTriggerDocument) -> Option<BotCoalescePolicy> {
-    match (&document.spec, document.coalesce) {
-        (_, Some(policy)) => Some(policy),
-        (BotTriggerSpec::Chat { .. }, None) => Some(crate::CHAT_COALESCE_DEFAULT),
-        _ => None,
-    }
-}
-
 /// Wall-clock milliseconds, for callers that anchor validation at "now".
 pub fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
@@ -483,7 +388,7 @@ pub fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api::{BotTriggerRoute, PollCursorSpec, PollSource, ProfileId};
+    use api::{PollCursorSpec, PollSource, ProfileId};
 
     fn schedule(cron: Option<&str>, at_ms: Option<i64>) -> BotTriggerDocument {
         BotTriggerDocument {
@@ -549,38 +454,6 @@ mod tests {
         };
         let error = validate_trigger_document(&document, 0).unwrap_err();
         assert!(error.to_string().contains("grantId"), "{error}");
-    }
-
-    #[test]
-    fn chat_cannot_route_to_main_session() {
-        let document = BotTriggerDocument {
-            spec: BotTriggerSpec::Chat {
-                account_id: "tg-main".to_owned(),
-                match_scope: None,
-                activation: Default::default(),
-                access: Default::default(),
-                pairing: Default::default(),
-                priority: 100,
-            },
-            filter: None,
-            route: Some(BotTriggerRoute::Bot),
-            coalesce: None,
-            deliver: None,
-            session_close_after_ms: None,
-            enabled: true,
-        };
-        assert!(validate_trigger_document(&document, 0).is_err());
-        let mut per_key = document;
-        per_key.route = None;
-        assert!(validate_trigger_document(&per_key, 0).is_ok());
-        assert_eq!(
-            effective_route(&per_key),
-            BotTriggerRoute::PerKey { key: None }
-        );
-        assert_eq!(
-            effective_coalesce(&per_key),
-            Some(crate::CHAT_COALESCE_DEFAULT)
-        );
     }
 
     #[test]

@@ -56,7 +56,7 @@ impl From<Slot> for api::ModelDefaultSlot {
 }
 
 pub async fn run(args: ModelDefaultsArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     let defaults = match args.command {
         ModelDefaultsCommand::Read => read(&client).await?,
         ModelDefaultsCommand::Set {
@@ -104,13 +104,13 @@ pub async fn run(args: ModelDefaultsArgs) -> Result<()> {
 }
 
 async fn read(client: &HttpAgentApi) -> Result<api::ModelDefaults> {
-    let response: api::AgentApiOutcome<api::ModelDefaultsResponse> = client
+    let response: api::ModelDefaultsResponse = client
         .request(
             api::METHOD_MODELS_DEFAULTS_READ,
             api::ModelDefaultsReadParams {},
         )
         .await?;
-    Ok(response.result.defaults)
+    Ok(response.defaults)
 }
 
 async fn put(
@@ -119,7 +119,7 @@ async fn put(
     model: Option<api::ModelConfig>,
     revision: Option<u64>,
 ) -> Result<api::ModelDefaults> {
-    let response: api::AgentApiOutcome<api::ModelDefaultsResponse> = client
+    let response: api::ModelDefaultsResponse = client
         .request(
             api::METHOD_MODELS_DEFAULTS_PUT,
             api::ModelDefaultsPutParams {
@@ -132,7 +132,7 @@ async fn put(
     // With a revision, a concurrent change is returned to the caller; never
     // retry a write against a newer revision without the caller reviewing
     // that state. Without one the write is unconditional.
-    Ok(response.result.defaults)
+    Ok(response.defaults)
 }
 
 #[cfg(test)]

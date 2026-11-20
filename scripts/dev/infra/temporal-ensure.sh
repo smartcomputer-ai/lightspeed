@@ -7,8 +7,6 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 namespace="${TEMPORAL_NAMESPACE:-default}"
 attributes=(
   LightspeedUniverseId
-  LightspeedChannelProvider
-  LightspeedChannelAccountId
   LightspeedBotTriggerId
   LightspeedBotId
 )
@@ -50,4 +48,4 @@ for attribute in "${attributes[@]}"; do
     --type Keyword
 done
 
-echo "Temporal Channels search attributes are ready."
+echo "Temporal search attributes are ready."

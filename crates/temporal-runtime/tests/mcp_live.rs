@@ -325,6 +325,38 @@ impl CoreAgentLlm for MatrixScriptedLlm {
     }
 }
 
+fn scripted_injected_tool(
+    request: &LlmGenerationRequest,
+    server_id: &str,
+    remote: &str,
+) -> Option<harness::CodeToolBinding> {
+    request.request.tools.iter().find_map(|tool| {
+        let ToolKind::RemoteMcp(spec) = &tool.kind else {
+            return None;
+        };
+        if spec.server_id != server_id
+            || spec.execution != harness::RemoteMcpExecution::Runtime
+            || spec.exposure != harness::RemoteMcpExposure::Inject
+            || spec
+                .allowed_tools
+                .as_ref()
+                .is_some_and(|names| !names.iter().any(|name| name == remote))
+        {
+            return None;
+        }
+        let name =
+            llm_runtime::injected_tool_name(&tool.id.as_wire_name(), &spec.server_label, remote)?;
+        Some(harness::CodeToolBinding {
+            tool_name: ToolName::new(name),
+            target: harness::ResolvedToolTarget::Mcp {
+                server_tool_id: tool.id.clone(),
+                server_label: spec.server_label.clone(),
+                remote_name: remote.into(),
+            },
+        })
+    })
+}
+
 impl MatrixScriptedLlm {
     async fn tool_call(
         &self,
@@ -340,6 +372,10 @@ impl MatrixScriptedLlm {
             .map_err(io_error)?;
         let call_id = ToolCallId::new(call_id);
         let tool_name = ToolName::new(tool);
+        let binding = ["echo", "rich"]
+            .into_iter()
+            .filter_map(|remote| scripted_injected_tool(request, &self.ids.small, remote))
+            .find(|binding| binding.tool_name == tool_name);
         Ok(LlmGenerationResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
@@ -367,7 +403,9 @@ impl MatrixScriptedLlm {
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id,
-                    tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                    target: binding.map(|b| b.target).or_else(|| {
+                        test_support::scripted_tool_id(request, tool_name.as_str()).map(Into::into)
+                    }),
                     tool_name,
                     provider_kind: Some("mcp-live-matrix".to_owned()),
                     arguments_ref,
@@ -528,7 +566,7 @@ async fn run_matrix_client(
             notify_on_terminal: None,
         })
         .await?;
-    let pending = wait_for_pending_approval(&api, &session_id, &started.result.run.id).await?;
+    let pending = wait_for_pending_approval(&api, &session_id, &started.run.id).await?;
     match &pending.subject {
         api::ApprovalSubjectView::McpToolCall {
             server_id,
@@ -541,7 +579,7 @@ async fn run_matrix_client(
     }
     api.decide_run_approvals(RunApprovalsDecideParams {
         session_id: session_id.as_str().to_owned(),
-        run_id: started.result.run.id.clone(),
+        run_id: started.run.id.clone(),
         decisions: vec![ApprovalDecisionInput {
             approval_id: pending.approval_id,
             decision: ApprovalDecisionKind::Approve,
@@ -549,7 +587,7 @@ async fn run_matrix_client(
         }],
     })
     .await?;
-    let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let terminal = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     assert_eq!(
         final_assistant_text(&terminal),
         Some("runtime MCP matrix complete")
@@ -644,7 +682,7 @@ async fn discover_count(api: &GatewayAgentApi, server_id: &str) -> anyhow::Resul
             server_id: server_id.to_owned(),
         })
         .await?;
-    match response.result {
+    match response {
         McpServerToolsDiscoverResponse::Success { tools } => Ok(tools.len()),
         McpServerToolsDiscoverResponse::Failure { code, message, .. } => {
             anyhow::bail!("MCP discovery failed with {code:?}: {message}")
@@ -665,7 +703,6 @@ async fn wait_for_pending_approval(
                     run_limit: None,
                 })
                 .await?
-                .result
                 .session;
             if let Some(run) = session.runs.iter().find(|run| run.id == run_id) {
                 if let Some(approval) = run.pending_approvals.first() {
@@ -1104,16 +1141,16 @@ async fn run_model_key_replacement_live_client(
     task_queue: String,
     _session_id: SessionId,
 ) -> anyhow::Result<()> {
-    use auth::{AuthProviderStore as _, SecretStore as _};
+    use credentials::{CredentialProviderStore as _, SecretStore as _};
 
     let store = pg_store_from_env().await?;
     let api = GatewayAgentApi::builder(client, store.clone())
         .with_task_queue(task_queue)
         .build();
     let provider_id = format!("model:replace_{}", uuid::Uuid::new_v4().simple());
-    let row_id = auth::AuthProviderId::new(provider_id.clone());
-    let stored_key = |store: Arc<store_pg::PgStore>, row_id: auth::AuthProviderId| async move {
-        let record = store.read_auth_provider(&row_id).await?;
+    let row_id = credentials::CredentialProviderId::new(provider_id.clone());
+    let stored_key = |store: Arc<store_pg::PgStore>, row_id: credentials::CredentialProviderId| async move {
+        let record = store.read_credential_provider(&row_id).await?;
         let secret = record
             .credential_secret
             .clone()
@@ -1122,10 +1159,10 @@ async fn run_model_key_replacement_live_client(
         anyhow::Ok((secret, value.expose().to_owned()))
     };
 
-    api.create_auth_provider(api::AuthProviderCreateParams {
+    api.create_credential_provider(api::CredentialProviderCreateParams {
         provider_id: Some(provider_id.clone()),
         display_name: Some("Replaceable key".to_owned()),
-        config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+        config: api::CredentialProviderConfigInput::ModelApiKey { endpoint: None },
         credential: Some("key-one".to_owned()),
     })
     .await?;
@@ -1136,19 +1173,17 @@ async fn run_model_key_replacement_live_client(
                    endpoint: Option<api::ModelEndpointConfig>,
                    credential: &str,
                    dry_run: bool| {
-        api.put_auth_provider(api::AuthProviderPutParams {
+        api.put_credential_provider(api::CredentialProviderPutParams {
             provider_id: provider_id.clone(),
             display_name: display_name.map(str::to_owned),
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint },
+            config: api::CredentialProviderConfigInput::ModelApiKey { endpoint },
             credential: Some(credential.to_owned()),
             dry_run,
         })
     };
 
     // Declaring the provider as it is changes nothing, not even its secret.
-    let same = declare(Some("Replaceable key"), None, "key-one", false)
-        .await?
-        .result;
+    let same = declare(Some("Replaceable key"), None, "key-one", false).await?;
     anyhow::ensure!(!same.created && !same.credential_replaced);
     anyhow::ensure!(
         stored_key(store.clone(), row_id.clone()).await?
@@ -1176,9 +1211,7 @@ async fn run_model_key_replacement_live_client(
     );
 
     // A dry run reports the replacement and writes nothing.
-    let preview = declare(Some("Replaced key"), None, "key-two", true)
-        .await?
-        .result;
+    let preview = declare(Some("Replaced key"), None, "key-two", true).await?;
     anyhow::ensure!(!preview.created && preview.credential_replaced);
     anyhow::ensure!(preview.provider.display_name.as_deref() == Some("Replaced key"));
     anyhow::ensure!(
@@ -1187,9 +1220,7 @@ async fn run_model_key_replacement_live_client(
     );
 
     // A changed declaration swaps the key in place and deletes the old value.
-    let replaced = declare(Some("Replaced key"), None, "key-two", false)
-        .await?
-        .result;
+    let replaced = declare(Some("Replaced key"), None, "key-two", false).await?;
     anyhow::ensure!(!replaced.created && replaced.credential_replaced);
     anyhow::ensure!(replaced.provider.provider_id == provider_id);
     let (second_secret, second_value) = stored_key(store.clone(), row_id.clone()).await?;
@@ -1200,9 +1231,7 @@ async fn run_model_key_replacement_live_client(
     );
 
     // Settings alone change without touching the key.
-    let renamed = declare(Some("Renamed"), None, "key-two", false)
-        .await?
-        .result;
+    let renamed = declare(Some("Renamed"), None, "key-two", false).await?;
     anyhow::ensure!(!renamed.credential_replaced);
     anyhow::ensure!(renamed.provider.display_name.as_deref() == Some("Renamed"));
     anyhow::ensure!(
@@ -1252,10 +1281,10 @@ async fn run_model_key_replacement_live_client(
         plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
         "a header that carries a secret takes a credential, not a plain value"
     );
-    api.import_auth_grant(api::AuthGrantImportParams {
+    api.import_credential_grant(api::CredentialGrantImportParams {
         grant_id: Some(header_grant.clone()),
         provider_id: None,
-        exposure: api::AuthGrantExposure::Brokered,
+        exposure: api::CredentialGrantExposure::Brokered,
         token: header_token.clone(),
         display_name: Some("Model gateway".to_owned()),
         subject_hint: None,
@@ -1265,9 +1294,9 @@ async fn run_model_key_replacement_live_client(
         metadata: None,
     })
     .await?;
-    let declared = declare_header(credential_header(), false).await?.result;
+    let declared = declare_header(credential_header(), false).await?;
     anyhow::ensure!(!declared.created && !declared.credential_replaced);
-    let api::AuthProviderConfigView::ModelApiKey {
+    let api::CredentialProviderConfigView::ModelApiKey {
         endpoint: Some(endpoint),
     } = &declared.provider.config
     else {
@@ -1284,7 +1313,7 @@ async fn run_model_key_replacement_live_client(
     );
     let headers_in_document: bool = sqlx::query_scalar(
         "SELECT config_json #> '{endpoint,headers}' IS NOT NULL
-         FROM auth_providers WHERE universe_id = $1 AND provider_id = $2",
+         FROM credentials_providers WHERE universe_id = $1 AND provider_id = $2",
     )
     .bind(store.config().universe_id)
     .bind(provider_id.as_str())
@@ -1295,7 +1324,7 @@ async fn run_model_key_replacement_live_client(
         "headers are rows beside the provider, not part of its document"
     );
     // A credential that was revoked can no longer be declared for a header.
-    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+    api.revoke_credential_grant(api::CredentialGrantRevokeParams {
         grant_id: header_grant.clone(),
     })
     .await?;
@@ -1308,40 +1337,38 @@ async fn run_model_key_replacement_live_client(
     // A provider that does not exist is created by its declaration.
     let fresh_id = format!("model:declared_{}", uuid::Uuid::new_v4().simple());
     let preview = api
-        .put_auth_provider(api::AuthProviderPutParams {
+        .put_credential_provider(api::CredentialProviderPutParams {
             provider_id: fresh_id.clone(),
             display_name: None,
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            config: api::CredentialProviderConfigInput::ModelApiKey { endpoint: None },
             credential: Some("key-fresh".to_owned()),
             dry_run: true,
         })
-        .await?
-        .result;
+        .await?;
     anyhow::ensure!(preview.created);
     anyhow::ensure!(
         store
-            .read_auth_provider(&auth::AuthProviderId::new(fresh_id.clone()))
+            .read_credential_provider(&credentials::CredentialProviderId::new(fresh_id.clone()))
             .await
             .is_err(),
         "a dry run creates nothing"
     );
     let created = api
-        .put_auth_provider(api::AuthProviderPutParams {
+        .put_credential_provider(api::CredentialProviderPutParams {
             provider_id: fresh_id.clone(),
             display_name: None,
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            config: api::CredentialProviderConfigInput::ModelApiKey { endpoint: None },
             credential: Some("key-fresh".to_owned()),
             dry_run: false,
         })
-        .await?
-        .result;
+        .await?;
     anyhow::ensure!(created.created && created.provider.has_credential);
-    api.delete_auth_provider(api::AuthProviderDeleteParams {
+    api.delete_credential_provider(api::CredentialProviderDeleteParams {
         provider_id: fresh_id,
     })
     .await?;
 
-    api.delete_auth_provider(api::AuthProviderDeleteParams { provider_id })
+    api.delete_credential_provider(api::CredentialProviderDeleteParams { provider_id })
         .await?;
     Ok(())
 }
@@ -1402,10 +1429,10 @@ async fn run_custom_headers_live_client(
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let grant_id = format!("authgrant_upstream_{suffix}");
     let token = format!("upstream-live-token-{suffix}");
-    api.import_auth_grant(api::AuthGrantImportParams {
+    api.import_credential_grant(api::CredentialGrantImportParams {
         grant_id: Some(grant_id.clone()),
         provider_id: None,
-        exposure: api::AuthGrantExposure::Brokered,
+        exposure: api::CredentialGrantExposure::Brokered,
         token: token.clone(),
         display_name: Some("Upstream tracker".to_owned()),
         subject_hint: None,
@@ -1465,7 +1492,7 @@ async fn run_custom_headers_live_client(
         plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
         "a header that carries a secret takes a credential, not a plain value"
     );
-    let created = api.put_mcp_server(server(headers)).await?.result.server;
+    let created = api.put_mcp_server(server(headers)).await?.server;
     // Names come back lowercased; the credential is named, never its token.
     anyhow::ensure!(
         created.headers.keys().collect::<Vec<_>>() == vec!["x-upstream-token", "x-upstream-url"],
@@ -1492,10 +1519,10 @@ async fn run_custom_headers_live_client(
     // without editing the server.
     let rotated = format!("upstream-live-token-rotated-{suffix}");
     let declare = |token: &str, display_name: &str, dry_run: bool| {
-        api.put_auth_grant(api::AuthGrantPutParams {
+        api.put_credential_grant(api::CredentialGrantPutParams {
             grant_id: grant_id.clone(),
             provider_id: None,
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: api::CredentialGrantExposure::Brokered,
             token: token.to_owned(),
             display_name: Some(display_name.to_owned()),
             subject_hint: None,
@@ -1507,22 +1534,22 @@ async fn run_custom_headers_live_client(
         })
     };
     // Declaring the credential as it is changes nothing.
-    let same = declare(&token, "Upstream tracker", false).await?.result;
+    let same = declare(&token, "Upstream tracker", false).await?;
     anyhow::ensure!(!same.created && !same.token_replaced);
     anyhow::ensure!(same.grant.updated_at_ms == same.grant.created_at_ms);
     // A dry run reports the replacement without making it.
-    let preview = declare(&rotated, "Upstream tracker", true).await?.result;
+    let preview = declare(&rotated, "Upstream tracker", true).await?;
     anyhow::ensure!(!preview.created && preview.token_replaced);
     // Its settings follow the declaration without touching the token.
-    let renamed = declare(&token, "Tracker", false).await?.result;
+    let renamed = declare(&token, "Tracker", false).await?;
     anyhow::ensure!(!renamed.token_replaced);
     anyhow::ensure!(renamed.grant.display_name.as_deref() == Some("Tracker"));
     // What a credential is never changes.
     let exposed = api
-        .put_auth_grant(api::AuthGrantPutParams {
+        .put_credential_grant(api::CredentialGrantPutParams {
             grant_id: grant_id.clone(),
             provider_id: None,
-            exposure: api::AuthGrantExposure::Retrievable,
+            exposure: api::CredentialGrantExposure::Retrievable,
             token: token.clone(),
             display_name: None,
             subject_hint: None,
@@ -1537,7 +1564,7 @@ async fn run_custom_headers_live_client(
         exposed.is_err_and(|error| error.kind == api::AgentApiErrorKind::Conflict),
         "exposure is fixed when the credential is made"
     );
-    let replaced = declare(&rotated, "Tracker", false).await?.result;
+    let replaced = declare(&rotated, "Tracker", false).await?;
     anyhow::ensure!(!replaced.created && replaced.token_replaced);
     anyhow::ensure!(
         replaced.grant.grant_id == grant_id,
@@ -1558,7 +1585,7 @@ async fn run_custom_headers_live_client(
     );
 
     // A revoked credential is never sent: discovery fails before any request.
-    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+    api.revoke_credential_grant(api::CredentialGrantRevokeParams {
         grant_id: grant_id.clone(),
     })
     .await?;
@@ -1569,8 +1596,7 @@ async fn run_custom_headers_live_client(
         .discover_mcp_server_tools(McpServerToolsDiscoverParams {
             server_id: server_id.clone(),
         })
-        .await?
-        .result;
+        .await?;
     anyhow::ensure!(
         matches!(revoked, McpServerToolsDiscoverResponse::Failure { .. }),
         "discovery with a revoked header credential must fail: {revoked:?}"
@@ -1981,7 +2007,8 @@ impl RuntimeMcpScriptedLlm {
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id,
-                    tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                    target: test_support::scripted_tool_id(request, tool_name.as_str())
+                        .map(Into::into),
                     tool_name,
                     provider_kind: Some("runtime-mcp-script".to_owned()),
                     arguments_ref,
@@ -2216,12 +2243,12 @@ async fn run_approval_live_client(
             })
             .await?;
         let pending =
-            wait_for_temporal_pending_approval(&api, &session_id, &started.result.run.id).await?;
+            wait_for_temporal_pending_approval(&api, &session_id, &started.run.id).await?;
         assert_eq!(pending.approval_id, format!("approval_{}", index + 1));
         let decided = api
             .decide_run_approvals(RunApprovalsDecideParams {
                 session_id: session_id.as_str().to_owned(),
-                run_id: started.result.run.id.clone(),
+                run_id: started.run.id.clone(),
                 decisions: vec![ApprovalDecisionInput {
                     approval_id: pending.approval_id,
                     decision,
@@ -2230,13 +2257,10 @@ async fn run_approval_live_client(
                 }],
             })
             .await?;
-        assert_eq!(decided.result.results.len(), 1);
-        assert_eq!(
-            decided.result.results[0].status,
-            ApprovalDecisionStatus::Decided
-        );
+        assert_eq!(decided.results.len(), 1);
+        assert_eq!(decided.results[0].status, ApprovalDecisionStatus::Decided);
 
-        let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+        let terminal = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
         let output = final_assistant_text(&terminal).expect("approval continuation output");
         assert!(output.contains(match decision {
             ApprovalDecisionKind::Approve => "approve=true",
@@ -2256,7 +2280,6 @@ async fn run_approval_live_client(
         })
         .await?;
     let decisions = events
-        .result
         .events
         .iter()
         .filter(|event| {
@@ -2292,7 +2315,6 @@ async fn wait_for_temporal_pending_approvals(
                     run_limit: None,
                 })
                 .await?
-                .result
                 .session;
             if let Some(run) = session.runs.iter().find(|run| run.id == run_id)
                 && run.status == api::RunStatus::Parked
@@ -2399,8 +2421,7 @@ async fn run_runtime_mcp_live_client(
             notify_on_terminal: None,
         })
         .await?;
-    let pending =
-        wait_for_temporal_pending_approval(&api, &session_id, &started.result.run.id).await?;
+    let pending = wait_for_temporal_pending_approval(&api, &session_id, &started.run.id).await?;
     match &pending.subject {
         api::ApprovalSubjectView::McpToolCall {
             server_id: actual_server,
@@ -2413,7 +2434,7 @@ async fn run_runtime_mcp_live_client(
     }
     api.decide_run_approvals(RunApprovalsDecideParams {
         session_id: session_id.as_str().to_owned(),
-        run_id: started.result.run.id.clone(),
+        run_id: started.run.id.clone(),
         decisions: vec![ApprovalDecisionInput {
             approval_id: pending.approval_id,
             decision: ApprovalDecisionKind::Approve,
@@ -2421,7 +2442,7 @@ async fn run_runtime_mcp_live_client(
         }],
     })
     .await?;
-    let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let terminal = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     let output = final_assistant_text(&terminal).expect("runtime MCP final output");
     assert!(output.contains("runtime MCP completed"));
 
@@ -2477,22 +2498,22 @@ async fn run_mcp_live_client(
             expected_revision: None,
         })
         .await?;
-    assert_eq!(created.result.server.server_id, server_id);
-    assert_eq!(created.result.server.revision, 1);
+    assert_eq!(created.server.server_id, server_id);
+    assert_eq!(created.server.revision, 1);
 
     let read = api
         .read_mcp_server(McpServerReadParams {
             server_id: server_id.clone(),
         })
         .await?;
-    assert_eq!(read.result.server.default_server_label, "crm");
+    assert_eq!(read.server.default_server_label, "crm");
 
     let discovered = api
         .discover_mcp_server_tools(McpServerToolsDiscoverParams {
             server_id: server_id.clone(),
         })
         .await?;
-    let tools = match discovered.result {
+    let tools = match discovered {
         McpServerToolsDiscoverResponse::Success { tools } => tools,
         McpServerToolsDiscoverResponse::Failure { code, message, .. } => {
             anyhow::bail!("Configurator discovery failed with {code:?}: {message}")
@@ -2513,7 +2534,6 @@ async fn run_mcp_live_client(
         .await?;
     assert!(
         listed
-            .result
             .servers
             .iter()
             .any(|server| server.server_id == server_id)
@@ -2542,7 +2562,6 @@ async fn run_mcp_live_client(
             run_limit: None,
         })
         .await?
-        .result
         .session;
     let mut linked_config = session.config.clone().expect("session config");
     let mut features = linked_config.features.clone().unwrap_or_default();
@@ -2605,7 +2624,7 @@ async fn run_mcp_live_client(
     }
     api.put_session_config(SessionConfigPutParams {
         session_id: session_id.as_str().to_owned(),
-        expected_config_revision: Some(linked.result.session.config_revision),
+        expected_config_revision: Some(linked.session.config_revision),
         config: unlinked_config,
     })
     .await?;
@@ -2630,7 +2649,7 @@ async fn run_mcp_live_client(
     let deleted = api
         .delete_mcp_server(McpServerDeleteParams { server_id })
         .await?;
-    assert_eq!(deleted.result.server.default_server_label, "crm");
+    assert_eq!(deleted.server.default_server_label, "crm");
 
     let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
@@ -2686,8 +2705,8 @@ impl LiveConfigurator {
                 configurator_port.to_string(),
             )
             .env(
-                "LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL",
-                format!("http://{gateway_address}/rpc"),
+                "LIGHTSPEED_CONFIGURATOR_MCP_API_URL",
+                format!("http://{gateway_address}"),
             )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -2744,7 +2763,7 @@ fn expected_configurator_tool_names() -> anyhow::Result<BTreeSet<String>> {
         .expect("temporal-runtime crate must be inside the workspace")
         .to_owned();
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        repo_root.join("crates/api/contract/methods.json"),
+        repo_root.join("crates/api/contract/http.json"),
     )?)?;
     let filter: serde_json::Value = serde_json::from_slice(&std::fs::read(
         repo_root.join("platform/configurator-mcp/tool-filter.json"),
@@ -2760,14 +2779,19 @@ fn expected_configurator_tool_names() -> anyhow::Result<BTreeSet<String>> {
                 .ok_or_else(|| anyhow::anyhow!("Configurator filter contains a non-string method"))
         })
         .collect::<anyhow::Result<_>>()?;
-    manifest["methods"]
+    manifest["operations"]
         .as_array()
-        .ok_or_else(|| anyhow::anyhow!("API method manifest has no methods array"))?
+        .ok_or_else(|| anyhow::anyhow!("HTTP catalog has no operations array"))?
         .iter()
         .filter(|entry| entry["scope"].as_str() == Some("universe"))
-        .filter_map(|entry| entry["method"].as_str())
+        .filter_map(|entry| entry["operationId"].as_str())
         .filter(|method| !excluded.contains(*method))
         .map(|method| {
+            let method = method.replacen(
+                "credentials/github/installations/",
+                "credentials/github/installs/",
+                1,
+            );
             let suffix: String = method
                 .chars()
                 .map(|character| {
@@ -2869,21 +2893,12 @@ impl CoreAgentLlm for MixedBatchScriptedLlm {
 }
 
 impl MixedBatchScriptedLlm {
-    /// The injected call name is `<server tool>__<remote tool>`; the server
-    /// tool is found by its record id so the test never hard-codes the
-    /// label-derived tool name.
     fn injected_tool_name(
         &self,
         request: &LlmGenerationRequest,
     ) -> Result<String, CoreAgentIoError> {
-        request
-            .request
-            .tools
-            .iter()
-            .find(|tool| {
-                matches!(&tool.kind, ToolKind::RemoteMcp(spec) if spec.server_id == self.server_id)
-            })
-            .map(|tool| format!("{}__{}", tool.id, self.selected_tool))
+        scripted_injected_tool(request, &self.server_id, &self.selected_tool)
+            .map(|binding| binding.tool_name.to_string())
             .ok_or_else(|| CoreAgentIoError::Failed {
                 message: format!(
                     "mixed batch scripted model expected the {} MCP server tool",
@@ -2922,9 +2937,13 @@ impl MixedBatchScriptedLlm {
                 provenance_ref: None,
                 token_estimate: None,
             });
+            let binding = scripted_injected_tool(request, &self.server_id, &self.selected_tool)
+                .filter(|binding| binding.tool_name == tool_name);
             tool_calls.push(ObservedToolCall {
                 call_id,
-                tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                target: binding.map(|b| b.target).or_else(|| {
+                    test_support::scripted_tool_id(request, tool_name.as_str()).map(Into::into)
+                }),
                 tool_name,
                 provider_kind: Some("mixed-batch-script".to_owned()),
                 arguments_ref,
@@ -3078,8 +3097,7 @@ async fn run_mixed_batch_live_client(
 
     // The mixed batch parks once for both MCP approvals; the await sibling
     // neither fails nor defers ahead of the decisions.
-    let pending =
-        wait_for_temporal_pending_approvals(&api, &session_id, &started.result.run.id).await?;
+    let pending = wait_for_temporal_pending_approvals(&api, &session_id, &started.run.id).await?;
     assert_eq!(pending.len(), 2, "{pending:?}");
     for approval in &pending {
         match &approval.subject {
@@ -3095,7 +3113,7 @@ async fn run_mixed_batch_live_client(
     }
     api.decide_run_approvals(RunApprovalsDecideParams {
         session_id: session_id.as_str().to_owned(),
-        run_id: started.result.run.id.clone(),
+        run_id: started.run.id.clone(),
         decisions: pending
             .into_iter()
             .map(|approval| ApprovalDecisionInput {
@@ -3107,7 +3125,7 @@ async fn run_mixed_batch_live_client(
     })
     .await?;
 
-    let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let terminal = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     let output = final_assistant_text(&terminal).expect("mixed batch final output");
     assert!(
         output.contains("mixed runtime MCP batch completed"),

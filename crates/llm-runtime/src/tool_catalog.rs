@@ -1,10 +1,10 @@
 //! Runtime tool presentation and the reverse lookup for one provider request.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use harness::{
-    LlmGenerationResult, ProviderNativeToolExecution, ToolChoice, ToolId, ToolName, ToolSpec,
-    storage::BlobStore,
+    LlmGenerationResult, ProviderNativeToolExecution, ResolvedToolTarget, ToolChoice, ToolId,
+    ToolName, ToolSpec, storage::BlobStore,
 };
 use tools::{callable, runtime::ToolTarget};
 
@@ -136,7 +136,7 @@ impl ToolCatalog {
                 .entry(tool.id.clone())
                 .or_insert_with(|| tool.name.clone());
             self.names
-                .insert(tool.name.clone(), client.then_some(tool.id.clone()))?;
+                .insert(tool.name.clone(), client.then(|| tool.id.clone().into()))?;
         }
         self.tools.push(tool);
         Ok(())
@@ -168,7 +168,7 @@ impl ToolCatalog {
 
     pub fn normalize(&self, result: &mut LlmGenerationResult) {
         for call in &mut result.facts.tool_calls {
-            call.tool_id = self.names.call_ids.get(&call.tool_name).cloned();
+            call.target = self.names.binding(&call.tool_name).cloned();
         }
     }
 }
@@ -215,26 +215,33 @@ fn code_description(
 /// back into the harness.
 #[derive(Default)]
 pub(crate) struct AdvertisedNames {
-    exposed: BTreeSet<ToolName>,
-    call_ids: BTreeMap<ToolName, ToolId>,
+    entries: BTreeMap<ToolName, Option<ResolvedToolTarget>>,
 }
 
 impl AdvertisedNames {
-    pub fn insert(&mut self, name: ToolName, id: Option<ToolId>) -> LlmAdapterResult<()> {
+    fn binding(&self, name: &ToolName) -> Option<&ResolvedToolTarget> {
+        self.entries.get(name)?.as_ref()
+    }
+
+    pub fn insert(
+        &mut self,
+        name: ToolName,
+        binding: Option<ResolvedToolTarget>,
+    ) -> LlmAdapterResult<()> {
         if !valid_exposed_name(name.as_str()) {
             return Err(LlmAdapterError::InvalidProviderRequest {
                 message: format!("invalid exposed tool name {name}"),
             });
         }
-        if !self.exposed.insert(name.clone()) {
-            return Err(LlmAdapterError::InvalidProviderRequest {
-                message: format!("duplicate exposed tool name {name}"),
-            });
+        match self.entries.entry(name) {
+            Entry::Vacant(entry) => {
+                entry.insert(binding);
+                Ok(())
+            }
+            Entry::Occupied(entry) => Err(LlmAdapterError::InvalidProviderRequest {
+                message: format!("duplicate exposed tool name {}", entry.key()),
+            }),
         }
-        if let Some(id) = id {
-            self.call_ids.insert(name, id);
-        }
-        Ok(())
     }
 }
 
@@ -314,7 +321,7 @@ mod tests {
                     .map(|(index, name)| ObservedToolCall {
                         call_id: ToolCallId::new(format!("call_{index}")),
                         tool_name: ToolName::new(name),
-                        tool_id: None,
+                        target: None,
                         provider_kind: None,
                         arguments_ref: BlobRef::from_bytes(b"{}"),
                         native_call_ref: Some(BlobRef::from_bytes(name.as_bytes())),
@@ -329,7 +336,7 @@ mod tests {
                 .facts
                 .tool_calls
                 .iter()
-                .map(|call| call.tool_id.as_ref().map(ToolId::as_str))
+                .map(|call| call.tool_id().map(ToolId::as_str))
                 .collect::<Vec<_>>(),
             [
                 Some("env.continue_process"),
@@ -354,7 +361,7 @@ mod tests {
                 .facts
                 .tool_calls
                 .iter()
-                .map(|call| call.tool_id.as_ref().map(ToolId::as_str))
+                .map(|call| call.tool_id().map(ToolId::as_str))
                 .collect::<Vec<_>>(),
             [None, None, Some("env.continue_process"), None]
         );
@@ -402,7 +409,10 @@ mod tests {
             ("edit_file", "env.edit_file"),
         ] {
             assert_eq!(
-                catalog.names.call_ids.get(&ToolName::new(name)),
+                catalog
+                    .names
+                    .binding(&ToolName::new(name))
+                    .map(ResolvedToolTarget::tool_id),
                 Some(&ToolId::new(id))
             );
         }
@@ -413,7 +423,7 @@ mod tests {
             "vfs_apply_patch",
             "Bash",
         ] {
-            assert!(!catalog.names.call_ids.contains_key(&ToolName::new(name)));
+            assert!(catalog.names.binding(&ToolName::new(name)).is_none());
         }
         for id in ["env.apply_patch", "vfs.apply_patch"] {
             assert!(matches!(
@@ -468,7 +478,7 @@ mod tests {
         )
         .await
         .expect("hosted catalog");
-        assert!(catalog.names.call_ids.is_empty());
+        assert!(catalog.names.entries.values().all(Option::is_none));
         assert!(matches!(
             ToolCatalog::resolve(&blobs, &target, &[builtin("unknown.operation")]).await,
             Err(LlmAdapterError::InvalidProviderRequest { .. })

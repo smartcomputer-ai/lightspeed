@@ -34,7 +34,7 @@ async function login(username: string, jar: Browser) {
     if (url.startsWith(identityEnv.baseUrl)) {
       const callback = await fixture.request(url, undefined, responseCookies(started));
       const cookie = responseCookies(callback);
-      const me = await fixture.request("/api/v1/me", undefined, cookie);
+      const me = await fixture.request("/api/ui/me", undefined, cookie);
       return { cookie, status: me.status, user: me.ok ? ((await me.json()) as { user: { id: string; role: string } }).user : null, prompted };
     }
     assert.equal(new URL(url).origin, "http://localhost:18090");
@@ -85,17 +85,17 @@ try {
   await admin(`users/${adminId}/groups/${adminsGroup}`, "DELETE");
   const demoted = await login("sso-admin", adminBrowser);
   assert.equal(demoted.user?.role, "user"); assert.equal(demoted.prompted, false);
-  assert.equal(((await (await fixture.request("/api/v1/me", undefined, elevated.cookie)).json()) as { user: { role: string } }).user.role, "user");
+  assert.equal(((await (await fixture.request("/api/ui/me", undefined, elevated.cookie)).json()) as { user: { role: string } }).user.role, "user");
   await admin(`users/${adminId}/groups/${usersGroup}`, "DELETE");
   assert.equal((await login("sso-admin", adminBrowser)).status, 401);
-  assert.equal((await fixture.request("/api/v1/me", undefined, elevated.cookie)).status, 401);
+  assert.equal((await fixture.request("/api/ui/me", undefined, elevated.cookie)).status, 401);
   await admin(`users/${userId}`, "PUT", { enabled: false });
   assert.equal((await login("sso-user", userBrowser)).status, 401);
   // A provider-side denial alone does not tell Platform which sessions to
   // revoke. Their original bound continues to apply.
-  assert.equal((await fixture.request("/api/v1/me", undefined, first.cookie)).status, 200);
+  assert.equal((await fixture.request("/api/ui/me", undefined, first.cookie)).status, 200);
   await fixture.db.update(schema.session).set({ expiresAt: new Date(0) }).where(eq(schema.session.userId, first.user!.id));
-  assert.equal((await fixture.request("/api/v1/me", undefined, first.cookie)).status, 401);
+  assert.equal((await fixture.request("/api/ui/me", undefined, first.cookie)).status, 401);
   const emergency = await fixture.request("/api/auth/sign-in/email", { email: identityEnv.adminEmail, password: identityEnv.adminPassword });
   assert.equal(emergency.status, 200);
   console.log("Keycloak: code + PKCE login, silent renewal, ordinary/admin admission, denial, demotion, removal, disabled-account renewal, absolute expiry and emergency access passed.");

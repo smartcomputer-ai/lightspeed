@@ -20,9 +20,7 @@ copy_workspace_manifests() {
   for workspace in \
     clients/typescript \
     docs/site \
-    platform/cli \
     platform/configurator-mcp \
-    platform/connectors \
     platform/db \
     platform/backend \
     platform/shared \
@@ -49,14 +47,7 @@ stage_runtime() {
   rm -f "$root/package-lock.json"
   # The documentation workspace participates in dependency resolution only.
   rm -rf "$root/docs"
-  if [[ "$name" = platform ]]; then
-    rm -rf "$root/platform/cli" "$root/platform/configurator-mcp" \
-      "$root/platform/connectors"
-  else
-    rm -rf "$root/platform/cli" "$root/platform/configurator-mcp" \
-      "$root/platform/db" "$root/platform/backend" "$root/platform/shared" \
-      "$root/platform/web"
-  fi
+  rm -rf "$root/platform/configurator-mcp"
   "$tar_command" --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     -C "$root" -czf "$dist_dir/runtime/$name.tar.gz" .
 }
@@ -68,9 +59,3 @@ stage_runtime platform @lightspeed-ai/platform-backend \
   platform/db/migrations \
   platform/shared/src \
   platform/web/dist
-# The "platform-workers" runtime is the connector host (platform/connectors):
-# Bots and Channels core moved into the Rust runtime. The artifact keeps its
-# name so image references and manifest keys stay stable.
-stage_runtime platform-workers @lightspeed-ai/connectors \
-  clients/typescript/dist \
-  platform/connectors/src

@@ -372,6 +372,38 @@ mod tests {
     }
 
     #[test]
+    fn universe_and_environment_removal_are_recognizable_through_activity_failures() {
+        for kind in [
+            crate::UNIVERSE_UNKNOWN_ERROR_TYPE,
+            crate::ENVIRONMENT_GONE_ERROR_TYPE,
+        ] {
+            let error = activity_error(activity_failure(
+                RetryState::NonRetryableFailure,
+                application_failure(kind),
+            ));
+            assert!(errors::activity_failure_has_type(&error, kind));
+            let local_error = activity_error(application_failure(kind));
+            assert!(errors::activity_failure_has_type(&local_error, kind));
+            assert!(!errors::activity_failure_has_type(
+                &error,
+                "TransientStoreFailure"
+            ));
+        }
+        let outage = activity_error(activity_failure(
+            RetryState::MaximumAttemptsReached,
+            application_failure("TransientStoreFailure"),
+        ));
+        assert!(!errors::activity_failure_has_type(
+            &outage,
+            crate::UNIVERSE_UNKNOWN_ERROR_TYPE
+        ));
+        assert!(!errors::activity_failure_has_type(
+            &outage,
+            crate::ENVIRONMENT_GONE_ERROR_TYPE
+        ));
+    }
+
+    #[test]
     fn an_activity_failure_reports_the_workers_words() {
         let error = activity_error(activity_failure(
             RetryState::NonRetryableFailure,

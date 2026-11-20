@@ -10,6 +10,7 @@
 mod document;
 mod export;
 mod plan;
+mod platform;
 mod resources;
 mod schema;
 
@@ -19,10 +20,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 
 use self::{
-    document::{Document, Format, LoadedDocument},
+    document::Format,
     plan::{Action, DocumentPlan, Step},
 };
-use crate::{api_client::HttpAgentApi, connection::ResolvedConnection};
+use crate::connection::ResolvedConnection;
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ConfigArgs {
@@ -32,8 +33,8 @@ pub(crate) struct ConfigArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum ConfigCommand {
-    /// Write the configuration of the selected universe, or of the
-    /// deployment, as a document.
+    /// Write the configuration of the selected universe, or with `--kind
+    /// organization` of the selected organization, as a document.
     Export(ExportArgs),
     /// Report what `apply` would change, without writing anything. Exits
     /// with status 2 when something would change.
@@ -47,6 +48,36 @@ enum ConfigCommand {
 }
 
 impl ConfigArgs {
+    pub(crate) fn prepare_enrollment(&mut self) -> Result<Option<serde_json::Value>> {
+        let ConfigCommand::Apply(args) = &mut self.command else {
+            return Ok(None);
+        };
+        if !args.enroll {
+            return Ok(None);
+        }
+        let documents = document::load(&args.document.files)?;
+        anyhow::ensure!(
+            args.document.universe_id.is_none() || documents.len() == 1,
+            "--universe-id requires exactly one document"
+        );
+        let mut organizations = documents
+            .iter()
+            .filter_map(|loaded| match &loaded.document {
+                document::Document::Organization(org) => Some(org),
+                _ => None,
+            });
+        let org = organizations
+            .next()
+            .context("--enroll requires exactly one organization document")?;
+        anyhow::ensure!(
+            organizations.next().is_none(),
+            "--enroll requires exactly one organization document"
+        );
+        let params = serde_json::json!({"handle": org.handle, "name": org.name.as_deref().unwrap_or(&org.handle)});
+        args.loaded = Some(documents);
+        Ok(Some(params))
+    }
+
     pub(crate) fn wait_seconds(&self) -> Option<u64> {
         match &self.command {
             ConfigCommand::Apply(args) => args.wait,
@@ -77,6 +108,11 @@ pub(crate) struct DocumentArgs {
     /// YAML and JSON are both accepted.
     #[arg(short = 'f', long = "file", required = true, num_args = 1..)]
     files: Vec<PathBuf>,
+    #[command(flatten)]
+    owner: crate::platform_cli::InitialOwnerArgs,
+    /// Reuse a provisioning UUID when retrying one document after interruption.
+    #[arg(long)]
+    universe_id: Option<uuid::Uuid>,
     /// Print one JSON object per resource instead of lines for people.
     #[arg(long)]
     json: bool,
@@ -84,6 +120,11 @@ pub(crate) struct DocumentArgs {
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ApplyArgs {
+    /// Enroll the workload using the single organization document before planning.
+    #[arg(long)]
+    enroll: bool,
+    #[arg(skip)]
+    loaded: Option<Vec<document::LoadedDocument>>,
     #[command(flatten)]
     document: DocumentArgs,
     /// Wait up to this many seconds for Runtime startup (60 when no value is given).
@@ -91,11 +132,20 @@ pub(crate) struct ApplyArgs {
     wait: Option<u64>,
 }
 
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportKind {
+    /// The selected universe.
+    Universe,
+    /// The selected Platform organization.
+    Organization,
+}
+
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ExportArgs {
-    /// Export the deployment's own resources instead of a universe's.
-    #[arg(long)]
-    deployment: bool,
+    /// What to export: the selected universe, or the selected organization
+    /// (Platform only).
+    #[arg(long, value_enum, default_value = "universe")]
+    kind: ExportKind,
     /// Write the document to this file instead of standard output.
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
@@ -110,26 +160,28 @@ pub(crate) struct ExportArgs {
 }
 
 fn base_connection() -> ResolvedConnection {
-    HttpAgentApi::new("").connection().clone()
+    crate::connection::active().clone()
 }
 
-/// The deployment's document is planned and written first: universes may
-/// depend on what it declares.
-fn in_order(mut documents: Vec<LoadedDocument>) -> Vec<LoadedDocument> {
-    documents.sort_by_key(|loaded| match loaded.document {
-        Document::Deployment(_) => 0,
-        Document::Universe(_) => 1,
-    });
-    documents
-}
-
-async fn plan_all(files: &[PathBuf]) -> Result<Vec<DocumentPlan>> {
-    let documents = in_order(document::load(files)?);
+async fn plan_all(
+    documents: &[document::LoadedDocument],
+    owner: &crate::platform_cli::InitialOwnerArgs,
+    universe_id: Option<uuid::Uuid>,
+) -> Result<Vec<DocumentPlan>> {
+    anyhow::ensure!(
+        universe_id.is_none() || documents.len() == 1,
+        "--universe-id requires exactly one document"
+    );
     let base = base_connection();
+    let declared = platform::Declared::of(documents);
+    // Organizations first, so the universes and grants that need them
+    // find them when they are applied.
+    let mut ordered: Vec<&document::LoadedDocument> = documents.iter().collect();
+    ordered.sort_by_key(|loaded| !matches!(loaded.document, document::Document::Organization(_)));
     let mut plans = Vec::new();
-    for loaded in &documents {
+    for loaded in ordered {
         plans.push(
-            plan::plan(&base, loaded)
+            plan::plan_with_owner(&base, loaded, owner.value(), universe_id, &declared)
                 .await
                 .with_context(|| format!("{}", loaded.path.display()))?,
         );
@@ -140,7 +192,7 @@ async fn plan_all(files: &[PathBuf]) -> Result<Vec<DocumentPlan>> {
 /// `lightspeed config diff`: exit status 0 when nothing would change, 2 when
 /// something would.
 async fn diff(args: DocumentArgs) -> Result<()> {
-    let plans = plan_all(&args.files).await?;
+    let plans = plan_all(&document::load(&args.files)?, &args.owner, args.universe_id).await?;
     report(&plans, args.json)?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         bail!("the documents ask for changes apply will not make");
@@ -154,10 +206,18 @@ async fn diff(args: DocumentArgs) -> Result<()> {
 /// `lightspeed config apply`: every document is planned before anything is
 /// written, so a document that cannot be applied changes nothing.
 async fn apply(args: ApplyArgs) -> Result<()> {
+    let enrolled = args.enroll;
+    let documents = match args.loaded {
+        Some(documents) => documents,
+        None => document::load(&args.document.files)?,
+    };
     let args = args.document;
-    let mut plans = plan_all(&args.files).await?;
+    let mut plans = plan_all(&documents, &args.owner, args.universe_id).await?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         report(&plans, args.json)?;
+        if enrolled {
+            bail!("enrollment completed, but the configuration plan has conflicts");
+        }
         bail!("the documents ask for changes apply will not make; nothing was written");
     }
     let mut outcome = Ok(());
@@ -174,14 +234,35 @@ async fn apply(args: ApplyArgs) -> Result<()> {
 /// `lightspeed config export`.
 async fn export(args: ExportArgs) -> Result<()> {
     let base = base_connection();
-    let mut exported = if args.deployment {
-        export::deployment(&base).await?
-    } else {
-        let universe = base
-            .active_universe()
-            .context("no universe selected; name one with --universe, or pass --deployment")?;
-        export::universe(&base, &universe).await?
-    };
+    if args.kind == ExportKind::Organization {
+        platform::require_platform(&base, "an organization")?;
+        anyhow::ensure!(
+            args.profiles_dir.is_none(),
+            "--profiles-dir applies to universe documents"
+        );
+        let organization = base
+            .selected_organization()
+            .context("no organization selected; name one with --organization")?
+            .to_owned();
+        let target = plan::connect(&base, None).await?;
+        let document = platform::export_organization(&target, &organization).await?;
+        return write_export(&args, &document);
+    }
+    let universe = base
+        .active_universe()
+        .context("no universe selected; name one with --universe")?;
+    let mut exported = export::universe(&base, &universe).await?;
+    if let (Some(profiles_dir), Some(output)) = (&args.profiles_dir, &args.output) {
+        let document_dir = output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        export::split_profiles(&mut exported, profiles_dir, document_dir)?;
+    }
+    write_export(&args, &exported)
+}
+
+fn write_export(args: &ExportArgs, exported: &impl serde::Serialize) -> Result<()> {
     let format = args.format.unwrap_or_else(|| {
         match args
             .output
@@ -193,14 +274,7 @@ async fn export(args: ExportArgs) -> Result<()> {
             _ => Format::Yaml,
         }
     });
-    if let (Some(profiles_dir), Some(output)) = (&args.profiles_dir, &args.output) {
-        let document_dir = output
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(std::path::Path::new("."));
-        export::split_profiles(&mut exported, profiles_dir, document_dir)?;
-    }
-    let text = format.render(&exported)?;
+    let text = format.render(exported)?;
     match &args.output {
         Some(output) => {
             if let Some(parent) = output

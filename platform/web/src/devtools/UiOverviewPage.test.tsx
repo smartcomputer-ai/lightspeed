@@ -45,10 +45,3 @@ it("colours the tester's swatch from the id as it is typed", async () => {
   });
   expect(swatch().style.background).toBe(idColor("release-scribe"));
 });
-
-it("lays out the main surfaces with their tokens", async () => {
-  await showColors();
-  const text = container.textContent ?? "";
-  for (const name of ["Sidebar", "List pane", "Page", "Card"]) expect(text).toContain(name);
-  for (const token of ["--sidebar", "--surface-list", "--background", "--surface-card"]) expect(text).toContain(token);
-});

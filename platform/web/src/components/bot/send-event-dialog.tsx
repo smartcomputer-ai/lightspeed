@@ -38,7 +38,7 @@ export function SendEventDialog({
       if (!invoke) throw new Error("You do not have permission to invoke this bot.");
       let parsed: unknown = undefined;
       if (data.trim()) parsed = JSON.parse(data);
-      return api("POST", `/api/v1/universes/${universeId}/bots/${botId}/events`, {
+      return api("POST", `/api/ui/universes/${universeId}/bots/${botId}/events`, {
         event: {
           kind: kind.trim(),
           summary: summary.trim(),

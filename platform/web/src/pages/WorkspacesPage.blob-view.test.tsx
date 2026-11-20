@@ -56,6 +56,7 @@ const tree = () => ({
               media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             },
             "image.png": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false, media_type: "image/png" },
+            "chart.svg": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false },
             [name]: {
               kind: "file",
               blob_ref: blobRef,
@@ -81,6 +82,7 @@ beforeEach(() => {
   mocks.api
     .mockReset()
     .mockImplementation(async (method: string, path: string) => {
+      if (!path.startsWith("/api/ui/")) throw new Error(`Expected a UI adapter request: ${path}`);
       if (path.endsWith("/workspaces")) return [tree().workspace];
       if (path.endsWith("/tree")) return tree();
       if (method === "PUT") return { workspace: { ...tree().workspace, revision: 4 } };
@@ -113,7 +115,7 @@ async function render(file = name, ready: () => Element | null = () => container
           <Routes>
             <Route
               path="/u/:handle/workspaces/:workspaceId/files/*"
-              element={<WorkspacesPage admin={false} />}
+              element={<WorkspacesPage />}
             />
           </Routes>
         </MemoryRouter>
@@ -224,8 +226,21 @@ it("previews unsaved edits, preserves them in source, and saves the draft from p
   expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   await act(async () => button("Preview").click());
   await act(async () => button("Save").click());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/universes/u/workspaces/ws/files/docs/notes.md", {
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/universes/u/workspaces/ws/files/docs/notes.md", {
     contentText: draft, expectedRevision: 3, mediaType: "text/markdown",
+  });
+});
+
+it("saves a plain-text filename with reserved characters through the UI adapter", async () => {
+  await render();
+  const editor = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "updated text");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("Save").click());
+  expect(mocks.api).toHaveBeenCalledWith("PUT", `/api/ui/universes/u/workspaces/ws/files/docs/${encodeURIComponent(name)}`, {
+    contentText: "updated text", expectedRevision: 3, mediaType: "text/plain",
   });
 });
 
@@ -266,5 +281,13 @@ it("shows a file without a preview by its details, with a download", async () =>
   expect(container.textContent).toContain("report.docx");
   expect(button("Download")).toBeDefined();
   expect(container.querySelector("textarea, img")).toBeNull();
+  expect(button("Save")).toBeUndefined();
+});
+
+it("previews images without a recorded media type using their extension", async () => {
+  stored = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+  const preview = () => container.querySelector<HTMLImageElement>('img[alt="docs/chart.svg"]');
+  await render("chart.svg", preview);
+  expect(preview()!.getAttribute("src")).toBe(`data:image/svg+xml;base64,${btoa(stored)}`);
   expect(button("Save")).toBeUndefined();
 });

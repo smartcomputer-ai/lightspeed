@@ -53,8 +53,8 @@ A provider adds machine lifecycle management. Lightspeed asks it to create a
 machine and, later, to close it; the provider runs everything in between,
 including power, idle policy, and wake-up. The included Incus provider offers
 operator-configured templates and runs VMs. A Platform admin registers the
-provider and enables a binding for the universe; Operators and Admins can
-then create environments from its available templates.
+provider, available to every universe or only to universes bound to it;
+Operators and Owners can then create environments from its templates.
 
 ## Select an environment for a session
 
@@ -66,9 +66,10 @@ commands**, and **Run durable jobs**, each including the preceding levels.
 
 Enable **Environments** in the session setup, attach the machine, and select
 it. A profile can also mark one attachment as its **Default environment**, which
-fills an empty selection when that profile is applied. Contributors can use
-existing environments in sessions they control; Operators and Admins manage
-the machines and profiles. See [People and roles](../access-and-security/people-and-roles.md).
+fills an empty selection when that profile is applied. Contributors can run
+sessions with an environment already configured. Operators and Owners manage
+machines and configure attachments. See
+[Organizations, members, and roles](../access-and-security/people-and-roles.md).
 
 A profile attaches existing environments, can give every session a new
 machine of its own from a provider template, and, for sub-agents, can

@@ -1,8 +1,8 @@
+import { decodeHttpRequest } from "../../test/http-fixture.js";
 import { request as httpRequest } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConfiguratorConfig } from "../src/config.js";
-import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 import { startConfigurator, type RunningConfigurator } from "../src/transport.js";
 
@@ -10,6 +10,7 @@ interface UpstreamRequest {
   method: string;
   headers: Headers;
   params: unknown;
+  universe?: string;
 }
 
 const running: RunningConfigurator[] = [];
@@ -19,10 +20,35 @@ afterEach(async () => {
 });
 
 describe("Streamable HTTP configurator", () => {
-  it("initializes, lists all tools, and forwards a universe call in api-key mode", async () => {
+  it.each([
+    ["lightspeed_blobs_read", "blobs/read", { blobRef: "blob-fixture" }],
+    ["lightspeed_vfs_workspaces_files_read", "vfs/workspaces/files/read", { workspaceId: "workspace-fixture", path: "nested/file.bin" }],
+  ])("encodes binary download tool %s without losing bytes", async (name, operation, args) => {
+    const upstream: UpstreamRequest[] = [];
+    const bytes = new Uint8Array([0, 255, 128, 10, 13, 65]);
+    const fallback = fakeUpstream(upstream);
+    const server = await start("authenticated", async (input, init) => {
+      const decoded = decodeHttpRequest(input, init);
+      if (decoded.method !== operation) return fallback(input, init);
+      expect(decoded.params).toEqual(args);
+      expect(decoded.universe).toBe(universeA);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer binary-reader");
+      return new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+    });
+    const { client, transport } = mcpClient(server, { authorization: "Bearer binary-reader" });
+    try {
+      await client.connect(transport as Parameters<typeof client.connect>[0]);
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content).toEqual([{ type: "text", text: JSON.stringify({ encoding: "base64", data: Buffer.from(bytes).toString("base64"), bytes: bytes.byteLength }) }]);
+    } finally { await client.close(); }
+  });
+
+  it("initializes, lists all tools, and forwards a universe call in authenticated mode", async () => {
     const upstream: UpstreamRequest[] = [];
     const server = await start("authenticated", fakeUpstream(upstream));
-    const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_alpha" });
+    const { client, transport } = mcpClient(server, { authorization: "Bearer lsr_alpha" });
 
     await client.connect(transport as Parameters<typeof client.connect>[0]);
     expect(client.getProtocolEra()).toBe("modern");
@@ -44,11 +70,10 @@ describe("Streamable HTTP configurator", () => {
     const content = result.content as Array<{ type: string; text: string }>;
     expect(content).toHaveLength(1);
     expect(JSON.parse(content[0]?.text ?? "")).toEqual({
-      result: { models: [], providers: [] },
-      notifications: [],
+      models: [], providers: [],
     });
     expect(upstream.filter((request) => request.method === "models/list")).toHaveLength(1);
-    expect(upstream.every((request) => request.headers.get("authorization") === "Bearer lsk_alpha"))
+    expect(upstream.every((request) => request.headers.get("authorization") === "Bearer lsr_alpha"))
       .toBe(true);
     expect(upstream.find((request) => request.method === "models/list")?.params).toEqual({
       selectableOnly: true,
@@ -56,26 +81,25 @@ describe("Streamable HTTP configurator", () => {
     await client.close();
   });
 
-  it("offers only the tools whose group the caller's key holds", async () => {
+  it("uses a single scoped Platform universe discovered by a bearer without a universe header", async () => {
     const upstream: UpstreamRequest[] = [];
-    const groups: MethodGroup[] = ["profiles", "models"];
-    const server = await start("authenticated", fakeUpstream(upstream, 0, groups));
-    const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_config" });
-
+    const server = await start("authenticated", fakeUpstream(upstream));
+    const client = new Client({ name: "scoped-configurator", version: "1" }, { versionNegotiation: { mode: "auto" } });
+    const transport = new StreamableHTTPClientTransport(new URL(`${server.url}/mcp`), {
+      requestInit: { headers: { authorization: "Bearer lsa_scoped" } },
+    });
     await client.connect(transport as Parameters<typeof client.connect>[0]);
-    const listed = await client.listTools();
-    const expected = GENERATED_TOOLS.filter((tool) => groups.includes(tool.group)).map((tool) => tool.name);
-    expect(listed.tools.map((tool) => tool.name)).toEqual(expected);
-    expect(expected).toContain("lightspeed_profiles_list");
-    expect(expected).not.toContain("lightspeed_session_list");
-
-    // A tool outside the key's groups is unknown and never reaches core.
-    await expect(
-      client.callTool({ name: "lightspeed_session_list", arguments: {} }),
-    ).rejects.toThrow(/unknown tool/);
-    expect(upstream.some((request) => request.method === "session/list")).toBe(false);
     await client.callTool({ name: "lightspeed_models_list", arguments: {} });
-    expect(upstream.some((request) => request.method === "models/list")).toBe(true);
+    expect(upstream.find(request => request.method === "models/list")?.universe).toBe(universeA);
+    await client.close();
+  });
+
+  it("offers generated tools after authenticating the runtime token", async () => {
+    const upstream: UpstreamRequest[] = [];
+    const server = await start("authenticated", fakeUpstream(upstream));
+    const { client, transport } = mcpClient(server, { authorization: "Bearer operator-token" });
+    await client.connect(transport as Parameters<typeof client.connect>[0]);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(GENERATED_TOOLS.map(tool => tool.name));
     await client.close();
   });
 
@@ -84,12 +108,12 @@ describe("Streamable HTTP configurator", () => {
     const server = await start("authenticated", fakeUpstream(upstream, 5));
     const a = mcpClient(server, {
       "x-lightspeed-universe": universeA,
-      authorization: "Bearer lsk_service",
+      authorization: "Bearer lsr_service",
       "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000003",
     });
     const b = mcpClient(server, {
       "x-lightspeed-universe": universeB,
-      authorization: "Bearer lsk_service",
+      authorization: "Bearer lsr_service",
       "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000004",
     });
 
@@ -102,16 +126,18 @@ describe("Streamable HTTP configurator", () => {
       b.client.callTool({ name: "lightspeed_session_list", arguments: {} }),
     ]);
 
+    expect(upstream.filter(request => request.method === "initialize").every(request =>
+      !request.headers.has("x-lightspeed-universe") && !request.headers.has("x-lightspeed-actor"))).toBe(true);
     const calls = upstream.filter((request) => request.method === "session/list");
     expect(calls).toHaveLength(2);
-    expect(calls.map((call) => call.headers.get("x-lightspeed-universe")).sort()).toEqual(
+    expect(calls.map((call) => call.universe).sort()).toEqual(
       [universeA, universeB].sort(),
     );
     const callA = calls.find(
-      (call) => call.headers.get("x-lightspeed-universe") === universeA,
+      (call) => call.universe === universeA,
     );
     const callB = calls.find(
-      (call) => call.headers.get("x-lightspeed-universe") === universeB,
+      (call) => call.universe === universeB,
     );
     expect(callA?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000003");
     expect(callB?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000004");
@@ -119,20 +145,12 @@ describe("Streamable HTTP configurator", () => {
   });
 
   it("authenticates protocol-only requests upstream and rejects invalid credentials", async () => {
-    const server = await start("authenticated", async (_input, init) => {
-      const body = JSON.parse(String(init?.body)) as { id: number | string };
-      return jsonResponse({
-        id: body.id,
-        error: {
-          code: -32001,
-          message: "invalid api key",
-          data: { kind: "unauthenticated", message: "request is not authenticated" },
-        },
-      });
-    });
+    const server = await start("authenticated", async () => Response.json({
+      type: "about:blank", title: "Unauthenticated", detail: "request is not authenticated", status: 401, kind: "unauthenticated",
+    }, { status: 401, headers: { "content-type": "application/problem+json" } }));
     const response = await fetch(`${server.url}/mcp`, {
       method: "POST",
-      headers: mcpHeaders({ authorization: "Bearer lsk_revoked" }),
+      headers: mcpHeaders({ authorization: "Bearer lsr_revoked" }),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -145,7 +163,7 @@ describe("Streamable HTTP configurator", () => {
       }),
     });
     expect(response.status).toBe(401);
-    expect(await response.text()).not.toContain("lsk_revoked");
+    expect(await response.text()).not.toContain("lsr_revoked");
   });
 
   it("rejects disallowed origins before contacting Lightspeed", async () => {
@@ -218,16 +236,7 @@ describe("Streamable HTTP configurator", () => {
   it("rejects oversized upstream responses without returning their body", async () => {
     const server = await start(
       "single",
-      async (_input, init) => {
-        const request = JSON.parse(String(init?.body)) as { id: number | string };
-        return jsonResponse({
-          id: request.id,
-          result: {
-            result: { padding: "sensitive-response".repeat(200) },
-            notifications: [],
-          },
-        });
-      },
+      async () => jsonResponse({ padding: "sensitive-response".repeat(200) }),
       [],
       1024,
     );
@@ -252,7 +261,7 @@ async function start(
     bindPort: 0,
     allowedHosts: ["127.0.0.1", "localhost"],
     allowedOrigins,
-    rpcEndpoint: "http://lightspeed.test/rpc",
+    apiEndpoint: "http://lightspeed.test/api/v1",
     authMode,
     maxBodyBytes,
     upstreamTimeoutMs: 5_000,
@@ -269,44 +278,32 @@ function mcpClient(server: RunningConfigurator, headers: Record<string, string>)
     { versionNegotiation: { mode: "auto" } },
   );
   const transport = new StreamableHTTPClientTransport(new URL(`${server.url}/mcp`), {
-    requestInit: { headers },
+    requestInit: { headers: { "x-lightspeed-universe": universeA, ...headers } },
   });
   return { client, transport };
 }
 
-const ALL_GROUPS = [...new Set(GENERATED_TOOLS.map((tool) => tool.group))];
-
-/// A core that answers `initialize` with `groups` as the caller's.
-function fakeUpstream(requests: UpstreamRequest[], delayMs = 0, groups: MethodGroup[] = ALL_GROUPS): typeof fetch {
+/// A runtime that identifies the configured token.
+function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
   return async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as {
-      id: number | string;
-      method: string;
-      params: unknown;
-    };
+    const body = decodeHttpRequest(_input, init);
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    requests.push({ method: body.method, params: body.params, headers: new Headers(init?.headers) });
+    requests.push({ method: body.method, params: body.params, headers: new Headers(init?.headers), ...(body.universe ? { universe: body.universe } : {}) });
     const result =
       body.method === "initialize"
         ? {
-            protocolVersion: "1",
+            contractRevision: "1", runtime: "runtime", defaultUniverse: universeA,
             serverInfo: { name: "lightspeed-test", version: "1" },
-            capabilities: {
-              notifications: false,
-              historyRead: true,
-              eventLog: true,
-              localExecution: false,
-            },
-            caller: { keyPrefix: "lsk_test", groups },
+            caller: { single: false, tokenName: "test" },
           }
         : body.method === "models/list"
           ? { models: [], providers: [] }
           : body.method === "session/list"
             ? { sessions: [] }
             : {};
-    return jsonResponse({ id: body.id, result: { result, notifications: [] } });
+    return jsonResponse(result);
   };
 }
 

@@ -46,7 +46,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
     ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
         request.record.validate()?;
         validate_secret_hash(&request.secret_hash)?;
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| store_message(format!("ensure universe: {error}")))?;
         let record = request.record;
@@ -277,6 +277,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
               ON k.universe_id = live.universe_id
              AND k.registration_key_id = live.registration_key_id
             WHERE live.universe_id = $1 AND live.secret_hash = $2 AND live.retired_at_ms IS NULL
+              AND EXISTS (SELECT 1 FROM universes u WHERE u.universe_id = live.universe_id AND u.deleting_at_ms IS NULL)
             "#
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -383,6 +384,7 @@ pub async fn find_registration_key_universe(
         JOIN environment_registration_keys k
           ON k.universe_id = s.universe_id AND k.registration_key_id = s.registration_key_id
         WHERE s.secret_hash = $1 AND s.retired_at_ms IS NULL
+          AND EXISTS (SELECT 1 FROM universes u WHERE u.universe_id = s.universe_id AND u.deleting_at_ms IS NULL)
         "#,
     )
     .bind(secret_hash)
@@ -399,7 +401,7 @@ pub async fn find_registered_environment_universe(
     daemon_public_key: &str,
 ) -> Result<Option<Uuid>, PgStoreError> {
     let row: Option<(Uuid,)> =
-        sqlx::query_as("SELECT universe_id FROM environments WHERE daemon_public_key = $1")
+        sqlx::query_as("SELECT universe_id FROM environments WHERE daemon_public_key = $1 AND EXISTS (SELECT 1 FROM universes u WHERE u.universe_id = environments.universe_id AND u.deleting_at_ms IS NULL)")
             .bind(daemon_public_key)
             .fetch_optional(pool)
             .await?;

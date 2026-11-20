@@ -344,7 +344,7 @@ async fn a_well_formed_unknown_name_still_reaches_the_unavailable_path() {
     assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
     let call = &execution.result.facts.tool_calls[0];
     assert_eq!(call.tool_name.as_str(), "functions.read_file");
-    assert_eq!(call.tool_id, None, "no tool answers to this name");
+    assert_eq!(call.target, None, "no tool answers to this name");
 }
 
 #[tokio::test(flavor = "current_thread")]

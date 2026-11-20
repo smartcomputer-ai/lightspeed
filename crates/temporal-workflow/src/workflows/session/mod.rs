@@ -21,7 +21,7 @@ mod wait_loop;
 mod watchdog;
 mod workflow_starts;
 
-pub(crate) use errors::activity_failure_message;
+pub(crate) use errors::{activity_failure_has_type, activity_failure_message};
 pub use session_state::run_terminal_emissions;
 
 use crate::workflows::WorkflowContextExt as _;

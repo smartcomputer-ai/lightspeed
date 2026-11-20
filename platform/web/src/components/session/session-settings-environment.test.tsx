@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionView } from "@/api";
 import { SessionSettingsDialog } from "./session-settings-sheet";
+import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -72,7 +73,7 @@ it("deactivates after the config put, so a put that activates a new default cann
   await act(async () => root.render(<QueryClientProvider client={client}>
     <SessionSettingsDialog universeId="universe" sessionId="session" session={session} runActive={false} open onOpenChange={() => {}} />
   </QueryClientProvider>));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  await waitForUi(() => expect(client.isFetching()).toBe(0));
   const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
 
   const model = [...dialog.querySelectorAll<HTMLInputElement>("input")].find((input) => input.value === "saved-model")!;
@@ -91,10 +92,8 @@ it("deactivates after the config put, so a put that activates a new default cann
   });
   const apply = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Apply setup"))!;
   await act(async () => apply.click());
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-
-  const writes = mocks.api.mock.calls
+  const writes = () => mocks.api.mock.calls
     .filter(([method]) => method !== "GET")
     .map(([method, path]) => `${method} ${(path as string).split("/sessions/session")[1]}`);
-  expect(writes).toEqual(["PUT /config", "POST /environments/deactivate"]);
+  await waitForUi(() => expect(writes()).toEqual(["PUT /config", "POST /environments/deactivate"]));
 });

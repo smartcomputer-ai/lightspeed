@@ -3,8 +3,12 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -22,7 +26,6 @@
     "platform/shared/src/**/*.ts",
     "platform/backend/src/**/*.ts",
     "platform/backend/test/**/*.ts",
-    "platform/backend/scripts/**/*.ts",
-    "platform/cli/src/**/*.ts"
+    "platform/backend/scripts/**/*.ts"
   ]
 }

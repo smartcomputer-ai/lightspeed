@@ -31,7 +31,7 @@ vi.mock("@/components/ui/select", async () => {
   return { Select, SelectTrigger, SelectContent: ({ children }: { children?: ReactNode }) => <>{children}</>, SelectItem: Part, SelectValue: Part };
 });
 
-type Binding = { providerId: string; enabled: boolean };
+type Binding = { providerId: string };
 const provider = (providerId: string, overrides: Record<string, unknown> = {}) => ({
   providerId, controllerEndpoint: `wss://${providerId}.internal/control`, hasCredential: false,
   effectiveDataRouteBase: `wss://${providerId}.internal/routes`, ...overrides,
@@ -48,19 +48,19 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   providers = [
-    provider("incus-b", { displayName: "Incus B", hasCredential: true, dataRouteBase: "wss://routes.internal", effectiveDataRouteBase: "wss://routes.internal" }),
-    provider("incus-a"),
+    provider("incus-b", { displayName: "Incus B", hasCredential: true, dataRouteBase: "wss://routes.internal", effectiveDataRouteBase: "wss://routes.internal", availableToAllUniverses: true }),
+    provider("incus-a", { availableToAllUniverses: false }),
   ];
   bindings = [
-    universe("Zeta", [{ providerId: "incus-a", enabled: true }]),
-    universe("Alpha", [{ providerId: "incus-a", enabled: false }]),
+    universe("Zeta", [{ providerId: "incus-a" }]),
+    universe("Alpha", [{ providerId: "incus-a" }]),
     universe("Beta", []),
     universe("Archived", [], { status: "archived" }),
     universe("Broken", [], { error: "engine timeout" }),
   ];
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (method === "GET" && path === "/api/v1/admin/environment-providers") return providers;
-    if (method === "GET" && path === "/api/v1/admin/environment-provider-bindings") return bindings;
+    if (method === "GET" && path === "/api/ui/admin/environment-providers") return providers;
+    if (method === "GET" && path === "/api/ui/admin/environment-provider-bindings") return bindings;
     if (method !== "GET") return {};
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
@@ -95,14 +95,17 @@ async function type(selector: string, value: string) {
 }
 const submit = () => act(async () => dialog()!.querySelector("form")!.requestSubmit());
 
-it("lists providers by id with their routes, credential, and bound universes", async () => {
+it("lists providers by id with their routes, credential, availability, and bound universes", async () => {
   await show();
   expect(sections().map((node) => node.querySelector("h2")?.textContent)).toEqual(["incus-a", "Incus B"]);
   expect(section("incus-a").textContent).toContain("no credential");
   expect(section("incus-a").textContent).toContain("Data routes wss://incus-a.internal/routes (derived)");
   expect(section("incus-b").textContent).toContain("credential");
   expect(section("incus-b").textContent).not.toContain("(derived)");
-  expect(section("incus-b").textContent).toContain("No universe is bound to this provider yet.");
+  expect(section("incus-b").textContent).toContain("All universes");
+  expect(section("incus-b").textContent).toContain("Every universe may use this provider.");
+  expect(buttonIn(section("incus-b"), "Bind universe")).toBeUndefined();
+  expect(section("incus-a").textContent).toContain("Selected universes");
   const bound = [...section("incus-a").querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent);
   expect(bound).toEqual(["Alphacore-Alpha", "Zetacore-Zeta"]);
   expect(container.textContent).toContain("Bindings could not be read for: Broken (engine timeout)");
@@ -140,7 +143,7 @@ it("registers a provider with only the fields that were filled in", async () => 
   await type("#provider-credential", "secret");
   await submit();
   await waitForUi(() => expect(dialog()).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/environment-providers/incus-c", {
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/environment-providers/incus-c", {
     controllerEndpoint: "wss://incus-c.internal:19090/control",
     credential: "secret",
   });
@@ -158,7 +161,7 @@ it("edits a provider under its fixed id and can drop the stored credential", asy
   expect(credential.disabled).toBe(true);
   await act(async () => buttonIn(dialog()!, "Save")!.click());
   await waitForUi(() => expect(dialog()).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/environment-providers/incus-b", {
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/environment-providers/incus-b", {
     displayName: "Incus B",
     controllerEndpoint: "wss://incus-b.internal/control",
     dataRouteBase: "wss://routes.internal",
@@ -166,19 +169,24 @@ it("edits a provider under its fixed id and can drop the stored credential", asy
   });
 });
 
-it("toggles a binding and deletes one only after confirmation", async () => {
+it("limits a provider to bound universes when its availability is switched off", async () => {
   await show();
-  const toggle = section("incus-a").querySelector<HTMLElement>('[aria-label="Enable incus-a for Alpha"]')!;
-  expect(toggle.getAttribute("aria-checked")).toBe("false");
-  await act(async () => toggle.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/universes/core-Alpha/environment-provider-bindings/incus-a", { enabled: true }));
+  await act(async () => buttonIn(section("incus-b"), "Edit")!.click());
+  await waitForUi(() => expect(dialog()?.textContent).toContain("Available to every universe"));
+  await act(async () => dialog()!.querySelector<HTMLElement>('[data-slot="switch"]')!.click());
+  await act(async () => buttonIn(dialog()!, "Save")!.click());
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/environment-providers/incus-b", expect.objectContaining({ availableToAllUniverses: false })));
+});
 
+it("unbinds a universe only after confirmation", async () => {
+  await show();
   const zeta = [...section("incus-a").querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("Zeta"))!;
-  await act(async () => buttonIn(zeta, "Delete")!.click());
+  await act(async () => buttonIn(zeta, "Unbind")!.click());
   await waitForUi(() => expect(alertDialog()?.textContent).toContain("Unbind Zeta?"));
+  expect(alertDialog()!.textContent).toContain("lose access until it is bound again");
   expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
-  await act(async () => buttonIn(alertDialog()!, "Delete binding")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/admin/universes/core-Zeta/environment-provider-bindings/incus-a"));
+  await act(async () => buttonIn(alertDialog()!, "Unbind")!.click());
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/admin/universes/core-Zeta/environment-provider-bindings/incus-a"));
 });
 
 it("binds only active, readable universes that are not bound yet", async () => {
@@ -192,11 +200,11 @@ it("binds only active, readable universes that are not bound yet", async () => {
   await act(async () => { picker.value = "core-Beta"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
   await submit();
   await waitForUi(() => expect(dialog()).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/universes/core-Beta/environment-provider-bindings/incus-a", { enabled: true });
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/universes/core-Beta/environment-provider-bindings/incus-a", {});
 });
 
 it("holds the bind action when every active universe is already bound", async () => {
-  bindings = [universe("Zeta", [{ providerId: "incus-a", enabled: true }])];
+  bindings = [universe("Zeta", [{ providerId: "incus-a" }])];
   await show();
   await act(async () => buttonIn(section("incus-a"), "Bind universe")!.click());
   await waitForUi(() => expect(dialog()?.textContent).toContain("Every active universe on this deployment is already bound"));
@@ -213,5 +221,5 @@ it("deletes a provider after confirmation and shows why the engine refused", asy
   await waitForUi(() => expect(alertDialog()?.textContent).toContain("Delete provider incus-a?"));
   await act(async () => buttonIn(alertDialog()!, "Delete provider")!.click());
   await waitForUi(() => expect(container.textContent).toContain("provider still has bindings"));
-  expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/admin/environment-providers/incus-a");
+  expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/admin/environment-providers/incus-a");
 });

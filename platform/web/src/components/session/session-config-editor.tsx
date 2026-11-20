@@ -1370,6 +1370,8 @@ function VfsFields({
     }
   }
   const options = [...workspaceOptions.values()];
+  const attachedIds = new Set(attachments.map((attachment) => attachment.workspaceId));
+  const nextWorkspace = workspaces.find((workspace) => !attachedIds.has(workspace.workspaceId));
   const updateAttachments = (nextAttachments: RecordValue[]) =>
     patch((next) => {
       if (nextAttachments.length) next.workspaces = nextAttachments;
@@ -1396,15 +1398,15 @@ function VfsFields({
               Attach workspaces at session paths with their own access grants. Files written here remain visible through the workspace, even when the session is restricted.
             </p>
           </div>
-          <Button disabled={readOnly}
+          <Button disabled={readOnly || workspacesLoading || !nextWorkspace}
             variant="outline"
             size="xs"
-            onClick={() => updateAttachments([
+            onClick={() => nextWorkspace && updateAttachments([
               ...attachments,
               {
                 path: nextPath,
                 access: "edit",
-                workspaceId: workspaces[0]?.workspaceId ?? "",
+                workspaceId: nextWorkspace.workspaceId,
               },
             ])}
           >
@@ -1449,7 +1451,9 @@ function VfsFields({
                           <SelectValue placeholder={workspacesLoading ? "Loading…" : "Select workspace"} />
                         </SelectTrigger>
                         <SelectContent>
-                          {options.map((workspace) => (
+                          {options.filter(({ workspaceId }) =>
+                            workspaceId === attachment.workspaceId || !attachedIds.has(workspaceId),
+                          ).map((workspace) => (
                             <SelectItem
                               key={workspace.workspaceId}
                               value={workspace.workspaceId}
@@ -1911,6 +1915,11 @@ function EnvironmentFields({
   const readOnly = useContext(ConfigReadOnlyContext);
   const selectionId = useId();
   const attachments = Array.isArray(feature.environments) ? feature.environments.map(record) : [];
+  const attachedIds = new Set(attachments.map((attachment) => attachment.environmentId));
+  const nextEnvironment = selectableEnvironments(environments).find(
+    ({ environmentId }) => !attachedIds.has(environmentId),
+  );
+  const canInherit = allowInherit && !attachments.some((attachment) => attachment.inherit === true);
   const update = (index: number, mutate: (attachment: RecordValue) => void) =>
     patch((next) => {
       next.environments = attachments.map((attachment, position) => {
@@ -1929,19 +1938,15 @@ function EnvironmentFields({
             profile is applied. Restricting a session does not restrict files or processes in its environment.
           </p>
         </div>
-        <Button disabled={readOnly}
+        <Button disabled={readOnly || (!nextEnvironment && !canInherit)}
           variant="outline"
           size="xs"
           onClick={() =>
             patch((next) => {
-              const environment = selectableEnvironments(environments).find(
-                (candidate) =>
-                  !attachments.some((item) => item.environmentId === candidate.environmentId),
-              );
               next.environments = [
                 ...attachments,
                 {
-                  environmentId: environment?.environmentId ?? "",
+                  ...(nextEnvironment ? { environmentId: nextEnvironment.environmentId } : { inherit: true }),
                   access: "jobs",
                   ...(attachments.length === 0 ? { default: true } : {}),
                 },
@@ -1963,7 +1968,7 @@ function EnvironmentFields({
         const options = selectableEnvironments(environments, id).filter(
           (candidate) =>
             candidate.environmentId === id ||
-            !attachments.some((item) => item.environmentId === candidate.environmentId),
+            !attachedIds.has(candidate.environmentId),
         );
         if (id && !options.some((candidate) => candidate.environmentId === id))
           options.push({ environmentId: id, status: "unavailable" });
@@ -1990,11 +1995,8 @@ function EnvironmentFields({
                     <SelectValue placeholder="Select environment" />
                   </SelectTrigger>
                   <SelectContent>
-                    {allowInherit && (
-                      <SelectItem
-                        value="__inherit__"
-                        disabled={!inherited && attachments.some((item) => item.inherit === true)}
-                      >
+                    {(canInherit || (allowInherit && inherited)) && (
+                      <SelectItem value="__inherit__">
                         Inherit parent environment
                       </SelectItem>
                     )}
@@ -2130,7 +2132,10 @@ function McpFields({
     if (serverId && !options.has(serverId)) options.set(serverId, { serverId });
   }
   const serverOptions = [...options.values()];
-  const firstServerId = firstUsableMcpServerId(serverOptions);
+  const attachedIds = new Set(attachments.map((attachment) => attachment.serverId));
+  const nextServer = servers.find((server) =>
+    !attachedIds.has(server.serverId) && isUsableMcpServer(server),
+  );
   const updateAttachments = (nextAttachments: RecordValue[]) =>
     patch((next) => {
       next.servers = nextAttachments;
@@ -2151,10 +2156,10 @@ function McpFields({
         <p className="min-w-0 text-xs text-muted-foreground">
           Attach servers to make their tools available.
         </p>
-        <Button disabled={readOnly}
+        <Button disabled={readOnly || !nextServer}
           variant="outline"
           size="xs"
-          onClick={() => updateAttachments([...attachments, { serverId: firstServerId }])}
+          onClick={() => nextServer && updateAttachments([...attachments, { serverId: nextServer.serverId }])}
         >
           <AddIcon data-icon="inline-start" />
           Add server
@@ -2176,11 +2181,13 @@ function McpFields({
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {serverOptions.map((server) => (
+                    {serverOptions.filter(({ serverId }) =>
+                      serverId === attachment.serverId || !attachedIds.has(serverId),
+                    ).map((server) => (
                       <SelectItem
                         key={server.serverId}
                         value={server.serverId}
-                        disabled={server.status !== undefined && server.status !== "active"}
+                        disabled={!isUsableMcpServer(server)}
                       >
                         {mcpServerOptionLabel(server)}
                       </SelectItem>
@@ -2226,9 +2233,8 @@ function McpFields({
   );
 }
 
-function firstUsableMcpServerId(servers: McpServerOption[]): string {
-  return servers.find((server) => server.status === undefined || server.status === "active")
-    ?.serverId ?? "";
+function isUsableMcpServer(server: McpServerOption): boolean {
+  return server.status === undefined || server.status === "active";
 }
 
 function mcpServerOptionLabel(server: McpServerOption): string {

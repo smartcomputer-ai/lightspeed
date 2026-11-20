@@ -10,12 +10,12 @@
 
 use super::*;
 
+use ::credentials::SecretValue;
 use ::environments::{
     EnvironmentEndpoint, EnvironmentProviderId, EnvironmentProviderRecord,
     EnvironmentProviderStore, EnvironmentRegistryError,
 };
 use async_trait::async_trait;
-use auth::SecretValue;
 use environment_client::{ClientError, ConnectOptions, ControllerClient};
 use environment_protocol::{
     control::handshake::ControllerCapabilities, error::ProtocolErrorKind, routes::DataRouteBase,
@@ -145,7 +145,16 @@ pub(crate) async fn connect_provider_controller(
     connector: &dyn ProviderControllerConnector,
     provider_id: &EnvironmentProviderId,
 ) -> Result<ProviderController, ControllerError> {
-    let provider: EnvironmentProviderRecord = store.read_provider(provider_id).await?;
+    let provider = store.read_provider(provider_id).await?;
+    connect_to_controller(store, connector, &provider).await
+}
+
+async fn connect_to_controller(
+    store: &dyn EnvironmentProviderStore,
+    connector: &dyn ProviderControllerConnector,
+    provider: &EnvironmentProviderRecord,
+) -> Result<ProviderController, ControllerError> {
+    let provider_id = &provider.provider_id;
     let data_route_base = provider.effective_data_route_base()?;
     let credential = store.read_provider_credential(provider_id).await?;
     let client = connector
@@ -297,15 +306,21 @@ pub(crate) fn call_disposition(error: &ClientError) -> ControllerDisposition {
 }
 
 impl EnvironmentService {
-    /// A controller connection for one API request; the caller closes it.
+    /// Dial only providers currently available to the requesting universe.
     pub(crate) async fn connect_provider_controller(
         &self,
         provider_id: &EnvironmentProviderId,
     ) -> Result<ProviderController, ControllerError> {
-        connect_provider_controller(
+        let provider = super::providers::read_available_provider(
+            self.store.as_ref(),
+            self.store.config().universe_id,
+            provider_id,
+        )
+        .await?;
+        connect_to_controller(
             self.store.as_ref(),
             self.provider_controller_connector.as_ref(),
-            provider_id,
+            &provider,
         )
         .await
     }
@@ -457,10 +472,48 @@ mod tests {
                     None => ::environments::ProviderCredentialChange::Keep,
                 },
                 updated_at_ms: 1,
+                available_to_all_universes: Some(false),
             })
             .await
             .unwrap();
         store
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_private_provider_can_be_dialed_only_while_the_universe_is_bound() {
+        use super::super::providers::read_available_provider;
+        use ::environments::{EnvironmentProviderBindingStore, PutEnvironmentProviderBinding};
+
+        let store = provider_store("ws://provider.test/control", None).await;
+        let provider_id = EnvironmentProviderId::new("provider");
+        let universe = store.universe_id();
+        store
+            .put_provider_binding(PutEnvironmentProviderBinding {
+                universe_id: universe,
+                provider_id: provider_id.clone(),
+                updated_at_ms: 2,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_available_provider(&store, universe, &provider_id)
+                .await
+                .unwrap()
+                .provider_id,
+            provider_id
+        );
+        assert!(matches!(
+            read_available_provider(&store, uuid::Uuid::new_v4(), &provider_id).await,
+            Err(EnvironmentRegistryError::NotFound { .. })
+        ));
+        store
+            .delete_provider_binding(universe, &provider_id)
+            .await
+            .unwrap();
+        assert!(matches!(
+            read_available_provider(&store, universe, &provider_id).await,
+            Err(EnvironmentRegistryError::NotFound { .. })
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

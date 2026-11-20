@@ -12,7 +12,6 @@ platform/web/test-results/
 .tmp/
 refs/
 .bridge-state.json
-.whatsapp-auth/
 .claude/
 .codex/
 

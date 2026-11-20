@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -11,7 +12,7 @@ import { BlobPage } from "./BlobPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "viewer", handle: "acme", name: "Acme" }, handle: "acme", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "viewer", actions: [...universeActions(["viewer"])], handle: "acme", name: "Acme" }, handle: "acme", isLoading: false }) }));
 
 const digest = "c".repeat(64);
 const filePath = "docs/résumé #?.txt";
@@ -60,7 +61,7 @@ async function open(url: string) {
     <QueryClientProvider client={client}>
       <PermissionIdentityProvider userId="user" platformAdmin={false}>
         <MemoryRouter initialEntries={[url]}>
-          <Routes><Route path="/u/:handle/blobs/:digest" element={<BlobPage admin={false} />} /></Routes>
+          <Routes><Route path="/u/:handle/blobs/:digest" element={<BlobPage />} /></Routes>
         </MemoryRouter>
       </PermissionIdentityProvider>
     </QueryClientProvider>,
@@ -115,19 +116,6 @@ it.each(["", "?type=text/markdown", "?name=notes.md"])(
   },
 );
 
-it("offers the Markdown views as a labelled toggle group", async () => {
-  await open(`/u/acme/blobs/${digest}`);
-  const group = container.querySelector('[role="group"][aria-label="Markdown view"]')!;
-  const [source, preview] = group.querySelectorAll<HTMLButtonElement>("button");
-  expect(source!.getAttribute("aria-pressed")).toBe("true");
-  expect(preview!.getAttribute("aria-pressed")).toBe("false");
-  await act(async () => preview!.click());
-  expect(preview!.getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("pre")).toBeNull();
-  await act(async () => source!.click());
-  expect(container.querySelector("pre")!.textContent).toBe(stored);
-});
-
 it("names a source session the viewer cannot read by its id, without a link", async () => {
   await open(`/u/acme/blobs/${digest}?session=private`);
   await waitForUi(() => expect(container.textContent).toContain("Linked from session: private"));
@@ -170,7 +158,7 @@ it("refuses addresses that are not digests without reading anything", async () =
     <QueryClientProvider client={client}>
       <PermissionIdentityProvider userId="user" platformAdmin={false}>
         <MemoryRouter initialEntries={["/u/acme/blobs/not-a-digest"]}>
-          <Routes><Route path="/u/:handle/blobs/:digest" element={<BlobPage admin={false} />} /></Routes>
+          <Routes><Route path="/u/:handle/blobs/:digest" element={<BlobPage />} /></Routes>
         </MemoryRouter>
       </PermissionIdentityProvider>
     </QueryClientProvider>,

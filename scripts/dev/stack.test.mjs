@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -16,7 +16,7 @@ for (const alias of ["docs", "doc", "documentation"]) {
     test(`documentation plan: ./dev.sh ${[...prefix, alias].join(" ")}`, () => {
       const result = spawnSync("./dev.sh", [...prefix, alias, "--plan"], {
         cwd: root,
-        env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+        env: { ...process.env, LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
         encoding: "utf8",
       });
       assert.equal(result.status, 0, result.stderr);
@@ -34,7 +34,7 @@ for (const alias of ["docs", "doc", "documentation"]) {
 test("invalid configuration gets a summary, with launcher stack traces only on request", () => {
   for (const debug of [false, true]) {
     const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "docs", "--plan", ...(debug ? ["--debug"] : [])], {
-      cwd: root, encoding: "utf8", env: { ...process.env, PORT: "invalid", LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+      cwd: root, encoding: "utf8", env: { ...process.env, PORT: "invalid", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
     });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Failed while configuring the docs profile/);
@@ -44,30 +44,55 @@ test("invalid configuration gets a summary, with launcher stack traces only on r
   }
 });
 
-test("unknown CLI arguments are explained before checking Docker", () => {
-  const result = spawnSync("./dev.sh", ["not-a-profile"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Unknown command or profile/);
-  assert.match(result.stderr, /--help/);
-  assert.doesNotMatch(result.stderr, /Docker|at parseCli/);
-});
-
-test("an occupied port fails before infrastructure or migrations and releases supervisor state", { timeout: 5_000 }, async (t) => {
-  const directory = launcherFixture(t);
-  const server = createServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  t.after(() => server.close());
-  const port = server.address().port;
-  const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
-    cwd: directory, encoding: "utf8", env: { ...process.env, LIGHTSPEED_GATEWAY_BIND: `127.0.0.1:${port}`, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+for (const [argument, diagnostic] of [
+  ["not-a-profile", /Unknown command or profile/],
+  ["--allow-missing-api-keys", /unexpected development arguments/],
+]) {
+  test(`unsupported CLI argument ${argument} is explained before checking Docker`, () => {
+    const result = spawnSync("./dev.sh", [argument], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, diagnostic);
+    assert.match(result.stderr, /--help/);
+    assert.doesNotMatch(result.stderr, /Docker|at parseCli/);
   });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, new RegExp(`Port ${port} .*already in use`));
-  assert.match(result.stderr, /lsof -nP/);
-  assert.doesNotMatch(result.stdout, /\[infra\]|\[runtime migration\]/);
-  assert.ok(!existsSync(path.join(directory, ".lightspeed/dev-supervisor.json")));
-});
+}
+
+for (const bindVariable of ["LIGHTSPEED_GATEWAY_BIND", "LIGHTSPEED_PUBLIC_BIND", "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND"]) {
+  test(`an occupied ${bindVariable} fails before infrastructure or migrations and releases supervisor state`, { timeout: 5_000 }, async (t) => {
+    const directory = launcherFixture(t);
+    const server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    t.after(() => server.close());
+    const port = server.address().port;
+    const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
+      cwd: directory, encoding: "utf8", env: { ...process.env, ...await availableListenerEnv(), [bindVariable]: `127.0.0.1:${port}`, LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`Port ${port} .*already in use`));
+    assert.match(result.stderr, /lsof -nP/);
+    assert.doesNotMatch(result.stdout, /\[infra\]|\[runtime migration\]/);
+    assert.ok(!existsSync(path.join(directory, ".lightspeed/dev-supervisor.json")));
+  });
+
+}
+
+async function availableListenerEnv() {
+  const env = {};
+  const reservations = [];
+  try {
+    for (const name of ["LIGHTSPEED_GATEWAY_BIND", "LIGHTSPEED_PUBLIC_BIND", "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND"]) {
+      const reservation = createServer();
+      reservation.listen(0, "127.0.0.1");
+      await once(reservation, "listening");
+      reservations.push(reservation);
+      env[name] = `127.0.0.1:${reservation.address().port}`;
+    }
+    return env;
+  } finally {
+    await Promise.all(reservations.map(reservation => new Promise(resolve => reservation.close(resolve))));
+  }
+}
 
 function launcherFixture(t) {
   const directory = mkdtempSync(path.join(tmpdir(), "lightspeed-launcher-"));
@@ -88,24 +113,13 @@ for (const resetExitCode of [0, 7]) {
     const env = {
       ...process.env,
       LIGHTSPEED_AUTH_MODE: "authenticated",
-      LIGHTSPEED_BOOTSTRAP_API_KEY: "",
-      LIGHTSPEED_PLATFORM_API_KEY: "",
-      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc",
+      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/api/v1",
       LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001",
     };
-    const keys = new Set();
-    let sequence = 0;
-    const run = async (_name, _command, args, provisioningEnv) => {
-      if (args.includes("universe")) return { stdout: "" };
-      const supplied = provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
-      const secret = supplied ?? `lsk_reset_${++sequence}`;
-      if (args.includes("--require-existing")) assert.ok(keys.has(secret), "saved key must exist in the database");
-      keys.add(secret);
-      // A supplied secret is never printed back.
-      return { stdout: JSON.stringify(supplied ? { keyId: "dev" } : { keyId: "dev", secret }) };
-    };
+    const run = async () => ({ stdout: "" });
     const options = { root: directory, env, full: true, run };
     const before = await prepareCliConnection(options);
+    const beforeToken = readFileSync(before.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8");
     const unrelated = path.join(directory, ".lightspeed", "unrelated");
     writeFileSync(unrelated, "preserve");
     writeFileSync(path.join(directory, "scripts/dev/infra/reset.sh"), `#!/bin/sh\nexit ${resetExitCode}\n`, { mode: 0o755 });
@@ -118,16 +132,16 @@ for (const resetExitCode of [0, 7]) {
     if (resetExitCode === 0) {
       assert.ok(!existsSync(credentialDirectory));
       assert.match(result.stdout, /lightspeed connect dev/);
-      keys.clear();
+      delete env.LIGHTSPEED_API_TOKEN_CLI_FILE;
+      delete env.LIGHTSPEED_API_TOKEN_PLATFORM_FILE;
+      delete env.LIGHTSPEED_PLATFORM_API_TOKEN_FILE;
       const after = await prepareCliConnection(options);
-      assert.notEqual(after.platformSecret, before.platformSecret);
-      assert.equal(sequence, 4, "both CLI and Platform receive fresh keys");
+      assert.notEqual(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8"), beforeToken);
       assert.ok(existsSync(after.handoff));
     } else {
       assert.ok(existsSync(before.handoff));
       const after = await prepareCliConnection(options);
-      assert.equal(after.platformSecret, before.platformSecret);
-      assert.equal(sequence, 2, "failed reset retains both saved keys");
+      assert.equal(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8"), beforeToken);
     }
   });
 }
@@ -142,14 +156,10 @@ case "$*" in
   *) echo 'fixture runtime crashed' >&2; exit 9 ;;
 esac
 `, { mode: 0o755 });
-    const reservation = createServer();
-    reservation.listen(0, "127.0.0.1");
-    await once(reservation, "listening");
-    const port = reservation.address().port;
-    await new Promise((resolve) => reservation.close(resolve));
+    const listenerEnv = await availableListenerEnv();
     const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
       cwd: directory, encoding: "utf8", timeout: 5_000,
-      env: { ...process.env, PATH: `${directory}/bin:${process.env.PATH}`, LIGHTSPEED_GATEWAY_BIND: `127.0.0.1:${port}`, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+      env: { ...process.env, PATH: `${directory}/bin:${process.env.PATH}`, ...listenerEnv, LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
     });
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.stderr.split("dev.sh: Failed").length - 1, 1);

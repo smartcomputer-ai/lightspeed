@@ -160,7 +160,7 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
 }
 
 function baseUrl(universeId: string, sessionId: string) {
-  return `/api/v1/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}`;
+  return `/api/ui/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 export async function fetchHistory(universeId: string, sessionId: string, before: number | null, signal: AbortSignal): Promise<SessionEventsPage> {

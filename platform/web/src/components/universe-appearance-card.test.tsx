@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -7,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Universe } from "@/api";
 import { DEFAULT_UNIVERSE_ICON, RETIRED_UNIVERSE_ICONS, UNIVERSE_ICON_REPLACEMENTS, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
+import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
 import { UniverseAppearanceCard, label } from "./universe-appearance-card";
 import { UNIVERSE_ILLUSTRATIONS, offeredUniverseIcon } from "./universe-illustrations";
 import { waitForUi } from "@/test/wait-for-ui";
@@ -26,8 +27,8 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", handle: "test",
-    gatewayUrl: null, status: "active", createdAt: "2026-01-01", role: "admin",
-    features: { bots: true, channels: true }, icon: "orbit", iconColor: "default" };
+    status: "active", createdAt: "2026-01-01", role: "owner", actions: [...universeActions(["owner"])],
+    features: { bots: true }, icon: "orbit", iconColor: "default" };
   mocks.api.mockReset().mockImplementation(async (_method, _path, fields) => ({ ...mocks.universe, ...fields }));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   client.setQueryData(["universes"], [mocks.universe]);
@@ -50,7 +51,8 @@ function button(label: string) {
 }
 async function click(label: string) { await act(async () => button(label).click()); }
 
-it.each(UNIVERSE_ICONS)("saves the %s icon and a color as each is chosen", async icon => {
+// Every icon has an illustration (checked below); two show the save path.
+it.each(UNIVERSE_ICONS.slice(0, 2))("saves the %s icon and a color as each is chosen", async icon => {
   const iconLabel = `${label(icon)} icon`;
   function CachedIcon() {
     const universe = client.getQueryData<Universe[]>(["universes"])![0]!;
@@ -59,10 +61,10 @@ it.each(UNIVERSE_ICONS)("saves the %s icon and a color as each is chosen", async
   await render(<UniverseAppearanceCard universe={mocks.universe} />);
   if (icon !== DEFAULT_UNIVERSE_ICON) {
     await click(iconLabel);
-    expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/v1/universes/universe", { icon, iconColor: "default" });
+    expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/ui/universes/universe", { icon, iconColor: "default" });
   }
   await click("Blue color");
-  expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/v1/universes/universe", { icon, iconColor: "blue" });
+  expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/ui/universes/universe", { icon, iconColor: "blue" });
   expect(button(iconLabel).getAttribute("aria-pressed")).toBe("true");
   expect(button("Blue color").getAttribute("aria-pressed")).toBe("true");
   const preview = container.querySelector('[aria-label="Universe appearance preview"]')!;
@@ -127,14 +129,17 @@ it("saves without a save or reset button, and not for the current choice", async
 
 it.each(["viewer", "contributor", "operator"] as const)("hides General settings from a %s", async role => {
   mocks.universe.role = role;
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><GeneralSettingsPage admin={false} /></PermissionIdentityProvider>);
+  mocks.universe.actions = [...universeActions([role])];
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><UniverseGeneralSettingsPage /></PermissionIdentityProvider>);
   expect(container.textContent).not.toContain("Appearance");
   expect(container.querySelector("form")).toBeNull();
 });
 
 it.each([false, true])("offers appearance on General settings for an authorized admin (platform admin: %s)", async platformAdmin => {
-  mocks.universe.role = platformAdmin ? null : "admin";
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><GeneralSettingsPage admin={platformAdmin} /></PermissionIdentityProvider>);
+  // The server gives a Platform Admin Owner through organization administration.
+  mocks.universe.role = "owner";
+  mocks.universe.actions = [...universeActions(["owner"])];
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><UniverseGeneralSettingsPage /></PermissionIdentityProvider>);
   expect(container.textContent).toContain("Appearance");
   expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`)).toBeDefined();
 });

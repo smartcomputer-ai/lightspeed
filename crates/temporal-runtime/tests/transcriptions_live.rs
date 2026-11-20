@@ -111,7 +111,7 @@ async fn run_audio_transcription_live_client(
         .await?;
     let transcript_ref = transcribe(
         &api,
-        audio.result.blobs[0].blob_ref.clone(),
+        audio.blobs[0].blob_ref.clone(),
         "audio/ogg",
         "voice-note.ogg",
     )
@@ -125,14 +125,14 @@ async fn run_audio_transcription_live_client(
                 items: vec![InputItem::TextRef {
                     origin: None,
                     blob_ref: transcript_ref,
-                    provenance_ref: Some(audio.result.blobs[0].blob_ref.clone()),
+                    provenance_ref: Some(audio.blobs[0].blob_ref.clone()),
                 }],
             },
             config: None,
         })
         .await?;
 
-    let run = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     assert_eq!(run.status, RunStatus::Completed);
     let output = final_assistant_text(&run).expect("assistant output");
     assert!(output.contains("Fake agent completed run"));
@@ -156,14 +156,12 @@ async fn run_audio_transcription_live_client(
     let transcript_entry = run
         .entries
         .iter()
-        .find(|entry| {
-            entry.provenance_ref.as_deref() == Some(audio.result.blobs[0].blob_ref.as_str())
-        })
+        .find(|entry| entry.provenance_ref.as_deref() == Some(audio.blobs[0].blob_ref.as_str()))
         .expect("text with source provenance");
     assert_eq!(transcript_entry.content.mime.as_deref(), Some("text/plain"));
     assert_eq!(
         transcript_entry.provenance_ref.as_deref(),
-        Some(audio.result.blobs[0].blob_ref.as_str())
+        Some(audio.blobs[0].blob_ref.as_str())
     );
     assert!(transcript_entry.content.provider_kind.is_none());
     assert_eq!(transcript_entry.text.as_deref(), Some(TRANSCRIPT_TEXT));
@@ -230,7 +228,7 @@ async fn run_transcodable_audio_transcription_live_client(
         .await?;
     let transcript_ref = transcribe(
         &api,
-        audio.result.blobs[0].blob_ref.clone(),
+        audio.blobs[0].blob_ref.clone(),
         "audio/x-aac",
         "voice-note.aac",
     )
@@ -244,14 +242,14 @@ async fn run_transcodable_audio_transcription_live_client(
                 items: vec![InputItem::TextRef {
                     origin: None,
                     blob_ref: transcript_ref,
-                    provenance_ref: Some(audio.result.blobs[0].blob_ref.clone()),
+                    provenance_ref: Some(audio.blobs[0].blob_ref.clone()),
                 }],
             },
             config: None,
         })
         .await?;
 
-    let run = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     assert_eq!(run.status, RunStatus::Completed);
 
     let user_messages: Vec<&str> = run
@@ -273,14 +271,12 @@ async fn run_transcodable_audio_transcription_live_client(
     let transcript_entry = run
         .entries
         .iter()
-        .find(|entry| {
-            entry.provenance_ref.as_deref() == Some(audio.result.blobs[0].blob_ref.as_str())
-        })
+        .find(|entry| entry.provenance_ref.as_deref() == Some(audio.blobs[0].blob_ref.as_str()))
         .expect("text with source provenance");
     assert_eq!(transcript_entry.content.mime.as_deref(), Some("text/plain"));
     assert_eq!(
         transcript_entry.provenance_ref.as_deref(),
-        Some(audio.result.blobs[0].blob_ref.as_str())
+        Some(audio.blobs[0].blob_ref.as_str())
     );
     assert!(transcript_entry.content.provider_kind.is_none());
     assert_eq!(transcript_entry.text.as_deref(), Some(TRANSCRIPT_TEXT));
@@ -438,7 +434,6 @@ async fn transcribe(
     let before = api
         .read_model_defaults(api::ModelDefaultsReadParams {})
         .await?
-        .result
         .defaults;
     let updated = api
         .put_model_defaults(api::ModelDefaultsPutParams {
@@ -447,7 +442,6 @@ async fn transcribe(
             expected_revision: Some(before.revision),
         })
         .await?
-        .result
         .defaults;
     let request = api::TranscriptionStartParams {
         idempotency_key: uuid::Uuid::new_v4().to_string(),
@@ -463,7 +457,6 @@ async fn transcribe(
     let initial = api
         .start_transcription(request.clone())
         .await?
-        .result
         .transcription;
     api.put_model_defaults(api::ModelDefaultsPutParams {
         slot: api::ModelDefaultSlot::SpeechToText,
@@ -477,7 +470,6 @@ async fn transcribe(
                 transcription_id: initial.transcription_id.clone(),
             })
             .await?
-            .result
             .transcription;
         if view.status.is_terminal() {
             break view;
@@ -494,19 +486,20 @@ async fn transcribe(
     assert_eq!(terminal.text.as_deref(), Some(TRANSCRIPT_TEXT));
     let mut other = support::live::local_request_context().await?;
     other.actor = Some("another-person".into());
-    let denied = temporal_runtime::gateway::request_context::with_request_context(
+    let same_result = temporal_runtime::gateway::request_context::with_request_context(
         other,
         api.read_transcription(api::TranscriptionReadParams {
             transcription_id: initial.transcription_id.clone(),
         }),
     )
-    .await
-    .unwrap_err();
-    assert_eq!(denied.kind, api::AgentApiErrorKind::Forbidden);
+    .await?;
+    assert_eq!(
+        same_result.transcription.transcript_ref,
+        terminal.transcript_ref
+    );
     let retried = api
         .start_transcription(request.clone())
         .await?
-        .result
         .transcription;
     assert_eq!(retried.transcript_ref, terminal.transcript_ref);
     assert_eq!(terminal.audio, request.audio);
@@ -522,7 +515,6 @@ async fn transcribe(
             transcription_id: initial.transcription_id,
         })
         .await?
-        .result
         .transcription;
     assert_eq!(cancelled.status, api::TranscriptionStatus::Succeeded);
     Ok(terminal.transcript_ref.unwrap())
@@ -578,14 +570,14 @@ async fn transcription_live_retries_transient_failure_and_cancels_running_activi
             let store = pg_store_from_env().await?;
             store.ensure_universe().await?;
             let api = GatewayAgentApi::builder(client, store).with_task_queue(queue).build();
-            let blob = api.put_blobs(BlobPutParams { blobs: vec![BlobPutItem { bytes_base64: BASE64.encode(AUDIO_BYTES) }] }).await?.result.blobs.remove(0).blob_ref;
+            let blob = api.put_blobs(BlobPutParams { blobs: vec![BlobPutItem { bytes_base64: BASE64.encode(AUDIO_BYTES) }] }).await?.blobs.remove(0).blob_ref;
             let request = api::TranscriptionStartParams {
                 idempotency_key: uuid::Uuid::new_v4().to_string(),
                 audio: api::TranscriptionAudio { blob_ref: blob, mime: "audio/ogg".into(), name: "voice.ogg".into() },
                 model: Some(api::ModelConfig { provider_id: "fake".into(), api_kind: "openai:audio-transcriptions".into(), model: "speech".into() }),
                 language: None, prompt: None,
             };
-            let started = api.start_transcription(request).await?.result.transcription;
+            let started = api.start_transcription(request).await?.transcription;
             while transcriber.attempts.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
@@ -593,7 +585,7 @@ async fn transcription_live_retries_transient_failure_and_cancels_running_activi
                 api.cancel_transcription(api::TranscriptionCancelParams { transcription_id: started.transcription_id.clone() }).await?;
             }
             let terminal = loop {
-                let view = api.read_transcription(api::TranscriptionReadParams { transcription_id: started.transcription_id.clone() }).await?.result.transcription;
+                let view = api.read_transcription(api::TranscriptionReadParams { transcription_id: started.transcription_id.clone() }).await?.transcription;
                 if view.status.is_terminal() { break view; }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             };
@@ -605,7 +597,7 @@ async fn transcription_live_retries_transient_failure_and_cancels_running_activi
                 sqlx::query("UPDATE cas_blobs SET created_at_ms = 1, touched_at_ms = 1 WHERE universe_id = $1 AND digest = $2")
                     .bind(store.config().universe_id).bind(reference.as_str().trim_start_matches("sha256:")).execute(store.pool()).await?;
                 assert_eq!(store.delete_dead_blobs(&[reference], 2, &[]).await?.len(), 1, "unsubmitted workflows do not create retention roots");
-                let expired = api.read_transcription(api::TranscriptionReadParams { transcription_id: started.transcription_id }).await?.result.transcription;
+                let expired = api.read_transcription(api::TranscriptionReadParams { transcription_id: started.transcription_id }).await?.transcription;
                 assert_eq!(expired.status, api::TranscriptionStatus::Expired);
             }
 

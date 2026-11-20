@@ -226,7 +226,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let identity = DaemonIdentity::load_or_create(temp.path()).expect("create");
         let nonce = ChallengeNonce::from_bytes([7u8; 32]);
-        let origin = canonical_origin("wss://gateway.example/environment-gateway/connect").unwrap();
+        let origin = canonical_origin("wss://gateway.example/environments/connect").unwrap();
         let signature = identity.sign_challenge(&nonce, &origin);
         let signature = ed25519_dalek::Signature::from_bytes(signature.as_bytes());
         let verifying = identity.verifying_key();

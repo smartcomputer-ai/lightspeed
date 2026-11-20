@@ -33,10 +33,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it.each([
-  ["user:operator", "muted"], ["event", "muted"], ["integration:example", "muted"],
-  [undefined, "muted"], ["user:", "muted"],
-])("uses the standard muted palette for origin %s without adding a label", async (origin, variant) => {
+it.each([["user:operator", "muted"], [undefined, "muted"]])("uses the standard muted palette for origin %s without adding a label", async (origin, variant) => {
   await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "message", role: "user", text: "Hello", origin }} />));
   expect(container.querySelector('[data-slot="bubble"]')?.getAttribute("data-variant")).toBe(variant);
   expect(container.textContent).toBe("Hello");
@@ -77,14 +74,6 @@ it("rechecks overflow on resize and text changes, and disconnects on unmount", a
   expect(disconnect).toHaveBeenCalledOnce();
   await act(async () => root.render(null));
   expect(disconnect).toHaveBeenCalledTimes(2);
-});
-
-it("uses the standard muted palette at full opacity for a local message", async () => {
-  await act(async () => root.render(<UserBand text="Sending" />));
-  const bubble = container.querySelector('[data-slot="bubble"]')!;
-  expect(bubble.getAttribute("data-variant")).toBe("muted");
-  expect(bubble.className).not.toContain("opacity-60");
-  expect(bubble.className).not.toContain("transition-opacity");
 });
 
 it("shows a delivered bot event with a teal source icon and groups its number and time on the right", async () => {

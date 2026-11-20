@@ -112,6 +112,9 @@ pub(super) async fn process_due(
             .execute_activity(
                 WorkflowActivities::check_workflow_tool_execution,
                 crate::WorkflowToolExecutionCheckRequest {
+                    universe_id: split_workflow_id(ctx.workflow_id())
+                        .expect("validated session identity")
+                        .0,
                     execution_id: producer_workflow_id.clone(),
                     completion_key,
                 },
@@ -226,6 +229,7 @@ pub(super) async fn flush_pending_promise_cancellations(
             harness::PromiseSource::Timer { .. } => {}
             harness::PromiseSource::Workflow {
                 producer_workflow_id,
+                producer_workflow_kind,
                 invocation_id,
                 completion_key,
                 ..
@@ -252,8 +256,13 @@ pub(super) async fn flush_pending_promise_cancellations(
                     completion_key,
                     harness::PromiseId::new(pending.promise_id),
                 );
+                let target = if producer_workflow_kind == harness::WORKFLOW_TOOL_EXECUTION_KIND {
+                    crate::compose_workflow_tool_execution_id(universe_id, &producer_workflow_id)
+                } else {
+                    producer_workflow_id
+                };
                 let _ = ctx
-                    .external_workflow(producer_workflow_id, None)
+                    .external_workflow(target, None)
                     .signal(
                         AgentSessionWorkflow::deliver_emission,
                         crate::workflows::emission_signal_input(&envelope),

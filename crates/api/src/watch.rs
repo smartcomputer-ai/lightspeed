@@ -1,6 +1,6 @@
 use super::*;
 
-/// Collections whose list rows can be watched. Each requires its existing API-key group.
+/// Collections whose list rows can be watched. Each publishes its API family.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -38,11 +38,6 @@ pub struct UniverseWatchParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_to: Option<String>,
 }
-
-/// Final response when a watch reaches its lifetime. Reconnect and refetch on
-/// watch/reset; notifications are lossy hints and have no durable resume cursor.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct UniverseWatchResponse {}
 
 pub const WATCH_NOTIFICATIONS: &[&str] = &[
     "session/changed",

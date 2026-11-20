@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import {
   ActivityIcon,
   BotIcon,
-  ChannelIcon,
   EnvironmentIcon,
   InboxIcon,
   ManagedIcon,
@@ -122,10 +121,6 @@ function botItems(act: (what: string) => void): MetaItem[] {
     },
     { key: "schedule", label: "Schedule: weekdays at 09:00", icon: ScheduleIcon, text: "Weekdays 09:00", priority: 5, places: PAGE },
     { key: "webhook", label: "Webhook trigger", icon: WebhookIcon, text: "Webhook", priority: 4, places: PAGE },
-    {
-      key: "channel", label: "Telegram channel", icon: ChannelIcon, text: "Telegram", tone: "success", tooltip: "Connected to Telegram", priority: 3,
-      details: <Details title="Channels" detail="Where this bot hears and answers." rows={[{ primary: "Telegram", secondary: "@release_planner_bot · connected", tone: "ready" }]} />,
-    },
     { key: "shared", label: "Shared", icon: SharedIcon, text: "Shared", priority: 2, align: "end" },
   ];
 }

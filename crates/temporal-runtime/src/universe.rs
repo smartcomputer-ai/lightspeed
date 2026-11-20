@@ -22,7 +22,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use auth::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
+use credentials::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
 use futures_util::StreamExt as _;
 use llm_clients::{
     anthropic::messages as am,
@@ -73,7 +73,7 @@ pub struct DeploymentClients {
     pub(crate) openai_audio: Arc<oai_audio::Client>,
     pub(crate) anthropic: Arc<am::Client>,
     pub(crate) oauth_token: Arc<dyn OAuthTokenClient>,
-    pub(crate) oauth_metadata: Arc<dyn auth::OAuthMetadataClient>,
+    pub(crate) oauth_metadata: Arc<dyn credentials::OAuthMetadataClient>,
     pub(crate) github: Arc<dyn GitHubApiClient>,
     pub(crate) audio_transcoder: Option<Arc<dyn AudioTranscoder>>,
 }
@@ -96,7 +96,7 @@ impl DeploymentClients {
             am::Client::new(am::Config::from_env_allow_missing_key())
                 .map_err(|error| anyhow::anyhow!("construct Anthropic client: {error}"))?,
         );
-        let oauth_metadata: Arc<dyn auth::OAuthMetadataClient> = Arc::new(
+        let oauth_metadata: Arc<dyn credentials::OAuthMetadataClient> = Arc::new(
             crate::worker::mcp::McpPrivateNetworkPolicy::from_env()
                 .map_err(anyhow::Error::msg)?
                 .oauth_http_client(),
@@ -137,18 +137,15 @@ pub struct UniverseState {
 struct UniverseEntry {
     state: Arc<UniverseState>,
     last_used_ms: u64,
+    validated_at_ms: u64,
 }
 
-/// Lazy universe registry. `state_for` returns the cached state or builds it,
-/// applying the caller's existence policy: the gateway may auto-create
-/// universes (`trusted-header` mode with auto-create, or `single` mode for its
-/// pinned universe); the worker never creates, because a workflow for a
-/// universe the gateway did not create is a routing error, not a provisioning
-/// request.
 /// How often bot trigger Schedules are re-converged in the background.
 pub const BOT_SCHEDULE_RECONCILE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(10 * 60);
 
+/// Lazy registry of existing active universes. Explicit deployment creation
+/// and single-universe startup own provisioning; cache construction never inserts rows.
 pub struct UniverseRuntime {
     client: Client,
     task_queues: TaskQueues,
@@ -167,25 +164,30 @@ impl UniverseRuntime {
         public_base_url: Option<String>,
         stores: DeploymentStores,
     ) -> anyhow::Result<Self> {
-        Self::new_with_environment_gateway(client, task_queue, public_base_url, stores, true)
+        Self::new_with_environment_gateway(
+            client,
+            task_queue,
+            public_base_url,
+            stores,
+            Some(format!(
+                "http://{}",
+                crate::gateway::DEFAULT_ENVIRONMENT_GATEWAY_BIND
+            )),
+        )
     }
 
-    /// `local_environment_gateway` says whether this process serves the
-    /// environment routes itself; only then may the worker-side route default
-    /// to the local public base URL. Every other process must be told where
-    /// the environment gateway is.
+    /// A local environment listener supplies its own advertised URL. Processes
+    /// without one use the configured remote environment gateway; public OAuth
+    /// callbacks and environment traffic never share an inferred endpoint.
     pub fn new_with_environment_gateway(
         client: Client,
         task_queue: String,
         public_base_url: Option<String>,
         stores: DeploymentStores,
-        local_environment_gateway: bool,
+        environment_gateway_url: Option<String>,
     ) -> anyhow::Result<Self> {
-        let environment_gateway = EnvironmentGatewayClientConfig::from_env(
-            public_base_url
-                .as_deref()
-                .filter(|_| local_environment_gateway),
-        )?;
+        let environment_gateway =
+            EnvironmentGatewayClientConfig::from_env(environment_gateway_url.as_deref())?;
         Ok(Self {
             client,
             task_queues: TaskQueues::derived_from(task_queue),
@@ -226,6 +228,11 @@ impl UniverseRuntime {
         &self.environment_gateway
     }
 
+    pub fn with_external_environments(mut self, allowed: bool) -> Self {
+        self.environment_gateway.allow_external_environments = allowed;
+        self
+    }
+
     /// This process's environment signals, shared by every universe's API.
     pub fn environment_signals(&self) -> &Arc<EnvironmentSignals> {
         &self.environment_signals
@@ -236,15 +243,53 @@ impl UniverseRuntime {
     /// lost because states hold no durable data.
     pub async fn evict(&self, universe_id: Uuid) {
         self.states.lock().await.remove(&universe_id);
+        self.stores.evict_universe_blobs(universe_id);
+        self.environment_signals.revoke_universe(universe_id);
     }
 
-    pub async fn state_for(
-        &self,
-        universe_id: Uuid,
-        create_missing: bool,
-    ) -> Result<Arc<UniverseState>, UniverseError> {
+    /// Lossy change hints accelerate eviction; cache validation is the fallback.
+    pub async fn run_universe_invalidations(self: Arc<Self>) {
+        let mut changes = self.stores.changes().subscribe_all();
+        loop {
+            match changes.recv().await {
+                Ok(Some(change)) if change.kind == store_pg::changes::ChangeKind::Universe => {
+                    self.evict(change.universe).await
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    let ids: Vec<_> = self.states.lock().await.keys().copied().collect();
+                    for id in ids {
+                        if matches!(
+                            store_pg::universe_exists(self.stores.pool(), id).await,
+                            Ok(false)
+                        ) {
+                            self.evict(id).await;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }
+
+    pub async fn state_for(&self, universe_id: Uuid) -> Result<Arc<UniverseState>, UniverseError> {
         let now_ms = now_ms();
         let mut states = self.states.lock().await;
+        if states
+            .get(&universe_id)
+            .is_some_and(|entry| now_ms.saturating_sub(entry.validated_at_ms) >= 30_000)
+        {
+            if !store_pg::universe_exists(self.stores.pool(), universe_id)
+                .await
+                .map_err(|error| UniverseError::Runtime(error.into()))?
+            {
+                states.remove(&universe_id);
+                return Err(UniverseError::Unknown { universe_id });
+            }
+            if let Some(entry) = states.get_mut(&universe_id) {
+                entry.validated_at_ms = now_ms;
+            }
+        }
         if let Some(entry) = states.get_mut(&universe_id) {
             entry.last_used_ms = now_ms;
             let state = entry.state.clone();
@@ -254,7 +299,7 @@ impl UniverseRuntime {
         let exists = store_pg::universe_exists(self.stores.pool(), universe_id)
             .await
             .map_err(|error| UniverseError::Runtime(error.into()))?;
-        if !exists && !create_missing {
+        if !exists {
             return Err(UniverseError::Unknown { universe_id });
         }
         let state = Arc::new(self.build_state(universe_id).await?);
@@ -263,6 +308,7 @@ impl UniverseRuntime {
             UniverseEntry {
                 state: state.clone(),
                 last_used_ms: now_ms,
+                validated_at_ms: now_ms,
             },
         );
         evict_universe_states(&mut states, now_ms, universe_id);
@@ -321,7 +367,7 @@ impl UniverseRuntime {
                 }
             };
             for universe_id in universe_ids {
-                let state = match self.state_for(universe_id, false).await {
+                let state = match self.build_state(universe_id).await {
                     Ok(state) => state,
                     Err(error) => {
                         tracing::warn!(target: "temporal_runtime", %universe_id, %error, "environment reconciler could not resolve universe");
@@ -361,7 +407,7 @@ impl UniverseRuntime {
                         .map(|universe_id| {
                             let runtime = self.clone();
                             async move {
-                                let result = match runtime.state_for(universe_id, false).await {
+                                let result = match runtime.state_for(universe_id).await {
                                     Ok(state) => {
                                         state.api.environment_service().run_display_sweep(now).await
                                     }
@@ -408,7 +454,7 @@ impl UniverseRuntime {
                 }
             };
             for (universe_id, _handle) in universes {
-                let state = match self.state_for(universe_id, false).await {
+                let state = match self.state_for(universe_id).await {
                     Ok(state) => state,
                     Err(error) => {
                         tracing::warn!(target: "temporal_runtime", %universe_id, %error, "bot schedule reconciler could not resolve universe");
@@ -423,16 +469,14 @@ impl UniverseRuntime {
         }
     }
 
-    async fn build_state(&self, universe_id: Uuid) -> Result<UniverseState, UniverseError> {
+    pub(crate) async fn build_state(
+        &self,
+        universe_id: Uuid,
+    ) -> Result<UniverseState, UniverseError> {
         let store = self.stores.store_for(universe_id);
-        store
-            .ensure_universe()
-            .await
-            .map_err(|error| UniverseError::Runtime(error.into()))?;
         let mut api = GatewayAgentApi::builder(self.client.clone(), store.clone())
             .with_task_queue(self.task_queues.sessions.clone())
             .with_bot_task_queue(self.task_queues.bots.clone())
-            .with_channel_task_queue(self.task_queues.channels.clone())
             .with_code_task_queue(self.task_queues.code.clone())
             .with_oauth_token_client(self.clients.oauth_token.clone())
             .with_oauth_metadata_client(self.clients.oauth_metadata.clone())

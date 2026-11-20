@@ -5,15 +5,14 @@
   "workspaces": [
     "clients/typescript",
     "docs/site",
-    "platform/cli",
     "platform/configurator-mcp",
-    "platform/connectors",
     "platform/db",
     "platform/backend",
     "platform/shared",
     "platform/web"
   ],
   "scripts": {
+    "check:openapi": "redocly lint crates/api/contract/openapi.json",
     "git:change-stats": "node scripts/git-change-stats.mjs",
     "release:prepare": "node scripts/release/prepare-version.mjs",
     "dev:docs": "npm run dev --workspace @lightspeed-ai/docs --",
@@ -22,12 +21,12 @@
     "check:docs": "npm run check --workspace @lightspeed-ai/docs",
     "build": "npm run build --workspace @lightspeed-ai/sdk && npm run build --workspace @lightspeed-ai/configurator-mcp && npm run build --workspace @lightspeed-ai/platform-web && npm run build:demo --workspace @lightspeed-ai/platform-web",
     "build:web": "npm run build --workspace @lightspeed-ai/platform-web",
-    "check": "npm run check:dev && npm run check:identity && npm run check:generated && npm run typecheck && npm run test:consumers && npm run build",
+    "check": "npm run check:dev && npm run check:identity && npm run check:generated && npm run check:openapi && npm run typecheck && npm run test:consumers && npm run build",
     "check:ci": "npm run check:package-age && npm run check && npm run test:build && npm run test:migrations && npm run test:release-packaging",
-    "check:dev": "bash -n dev.sh scripts/dev/env.sh scripts/dev/lib/common.sh scripts/dev/infra/*.sh && node --check scripts/dev/stack.mjs && node --test scripts/dev/*.test.mjs && ./dev.sh --help >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan infra >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan runtime >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan platform >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan demo >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan full >/dev/null",
+    "check:dev": "bash -n dev.sh scripts/dev/env.sh scripts/dev/lib/common.sh scripts/dev/infra/*.sh && node --check scripts/dev/stack.mjs && node --test scripts/dev/*.test.mjs && ./dev.sh --help >/dev/null && node scripts/dev/stack.mjs --plan infra >/dev/null && node scripts/dev/stack.mjs --plan runtime >/dev/null && node scripts/dev/stack.mjs --plan platform >/dev/null && node scripts/dev/stack.mjs --plan demo >/dev/null && node scripts/dev/stack.mjs --plan full >/dev/null",
     "check:package-age": "node scripts/ci/check-package-age.mjs",
     "check:identity": "node platform/scripts/check-product-identity.mjs",
-    "check:generated": "npm run check:generated --workspace @lightspeed-ai/sdk && npm run check:generated --workspace @lightspeed-ai/configurator-mcp && node platform/scripts/generate-config-reference.mjs && node platform/scripts/generate-method-roles.mjs && git diff --exit-code -- platform/web/src/lib/profile-config-reference.ts platform/backend/src/routes/method-roles.ts",
+    "check:generated": "npm run generate:platform-contract && npm run check:generated --workspace @lightspeed-ai/sdk && npm run check:generated --workspace @lightspeed-ai/configurator-mcp && node platform/scripts/generate-config-reference.mjs && node platform/scripts/generate-method-actions.mjs && git diff --exit-code -- platform/web/src/lib/profile-config-reference.ts platform/backend/src/routes/method-actions.ts && git diff --exit-code -- platform/shared/contract",
     "dev": "./dev.sh",
     "generate": "npm run generate --workspace @lightspeed-ai/platform-db",
     "test": "npm run test --workspaces --if-present",
@@ -35,13 +34,15 @@
     "test:build": "node --test scripts/ci/*.test.mjs scripts/release/*.test.mjs",
     "test:migrations": "npm run test:migrations --workspace @lightspeed-ai/platform-db",
     "test:release-packaging": "npm --prefix clients/typescript ci --ignore-scripts && npm --prefix platform/configurator-mcp ci --ignore-scripts && scripts/release/stage-runtimes.sh",
-    "typecheck": "tsc --noEmit && npm run typecheck --workspace @lightspeed-ai/connectors && npm run typecheck --workspace @lightspeed-ai/platform-web && npm run typecheck --workspace @lightspeed-ai/sdk && npm run typecheck --workspace @lightspeed-ai/configurator-mcp",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace @lightspeed-ai/platform-web && npm run typecheck --workspace @lightspeed-ai/sdk && npm run typecheck --workspace @lightspeed-ai/configurator-mcp",
     "build:demo": "npm run build:demo --workspace @lightspeed-ai/platform-web",
     "demo": "npm run dev:demo --workspace @lightspeed-ai/platform-web",
     "screenshots:demo": "npm run screenshots:demo --workspace @lightspeed-ai/platform-web --",
-    "screendiff:demo": "npm run screendiff:demo --workspace @lightspeed-ai/platform-web --"
+    "screendiff:demo": "npm run screendiff:demo --workspace @lightspeed-ai/platform-web --",
+    "generate:platform-contract": "tsx platform/scripts/export-platform-contract.ts"
   },
   "devDependencies": {
+    "@redocly/cli": "2.76.0",
     "@types/node": "^24.19.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
@@ -54,13 +55,13 @@
     "semver@^7": "7.8.5",
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
-    }
+    },
+    "@better-auth/core": "1.7.7"
   },
   "allowScripts": {
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
     "@swc/core@1.16.13": true,
-    "baileys@7.0.0-rc14": true,
     "fsevents@2.3.3": true,
     "protobufjs@7.6.6": true
   }

@@ -10,7 +10,7 @@ For example, `openai` identifies the built-in OpenAI connection, while
 a model available on that connection. An OpenAI-compatible service can use
 the same wire format under its own provider ID and endpoint.
 
-Provider connections belong to a universe. Use an Operator or Admin account
+Provider connections belong to a universe. Use Operator or Owner access
 to configure them on the **Models** page. Once connected, select the model in
 a [profile](profiles-and-instructions.md) or session setup.
 
@@ -142,13 +142,13 @@ model name while refusing an incompatible parameter.
 
 ## Choose universe defaults
 
-Under **Models → Defaults**, an Operator or Admin can choose, change, or clear
+Under **Models → Defaults**, an Operator or Owner can choose, change, or clear
 two independent defaults:
 
 | Default | Used for |
 | --- | --- |
 | **Agent runs** | New sessions whose setup and profile leave the model unset. |
-| **Speech-to-text** | Transcription jobs without an explicit model, including web dictation and channel voice messages. |
+| **Speech-to-text** | Transcription jobs without an explicit model, including web dictation. |
 
 Choose **Choose model** or **Change**, select a discovered model or enter its
 provider, API kind, and model name, then choose **Save default**. Manual models
@@ -173,7 +173,7 @@ review their selection before saving again.
 
 ## Configure speech-to-text
 
-To use web dictation or channel voice messages, configure a provider that
+To use web dictation, configure a provider that
 supports `openai:audio-transcriptions`, then choose its transcription model
 under **Models → Defaults → Speech-to-text**. The built-in OpenAI provider and
 compatible endpoints use this protocol. A compatible endpoint uses its saved
@@ -189,8 +189,7 @@ unavailable.
 The microphone in the [session composer](sessions-and-runs.md#dictate-a-message)
 reports why dictation is unavailable. Check the selected speech route and its
 credential, browser recording support, microphone permission, and a secure
-browser origin. [Channel voice messages](chat-channels.md#understand-replies-and-media)
-use the same universe default before delivering text to the bot.
+browser origin.
 
 ## Understand deployment credentials
 

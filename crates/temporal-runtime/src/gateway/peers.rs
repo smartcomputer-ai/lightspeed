@@ -30,8 +30,8 @@ use super::{
 };
 use crate::environments::gateway::{RouteKey, bearer_matches};
 
-pub(super) const STREAMS_PATH: &str = "/environment-gateway/peer/streams";
-pub(super) const DATA_PATH: &str = "/environment-gateway/peer/data";
+pub(super) const STREAMS_PATH: &str = "/environments/peer/streams";
+pub(super) const DATA_PATH: &str = "/environments/peer/data";
 pub(super) const OWNER_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
 const STREAM_TOKEN_HEADER: &str = "lightspeed-stream-token";
 const TOKEN_DOMAIN: &[u8] = b"lightspeed/environment-gateway/stream/v1\0";
@@ -350,11 +350,11 @@ mod tests {
     fn peer_endpoints_are_direct_and_do_not_carry_credentials() {
         assert_eq!(
             endpoint("http://127.0.0.1:8080", DATA_PATH, true).unwrap(),
-            "ws://127.0.0.1:8080/environment-gateway/peer/data"
+            "ws://127.0.0.1:8080/environments/peer/data"
         );
         assert_eq!(
             endpoint("https://gateway.test:8443", STREAMS_PATH, false).unwrap(),
-            "https://gateway.test:8443/environment-gateway/peer/streams"
+            "https://gateway.test:8443/environments/peer/streams"
         );
         for rejected in [
             "file:///tmp/socket",

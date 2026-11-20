@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { BotsPage } from "./BotsPage";
 import { BotSetup } from "@/components/bot/setup";
@@ -11,7 +12,7 @@ import { BotSetup } from "@/components/bot/setup";
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "contributor" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "universe", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])] }, handle: "universe", isLoading: false }),
   useFeature: () => true,
 }));
 // The conversation, with the header the bot page gives it (its switcher and ⋯ menu).
@@ -79,7 +80,7 @@ async function settle() {
 /// The bot's page, with its activity dialog open unless showing the chat.
 async function show(view: "chat" | "activity" = "activity", introduce = false) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", search: view === "activity" ? "?activity=open" : "", state: { introduce } }]}><Routes><Route path="/u/:handle/bots/:botId" element={<BotsPage admin={true} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", search: view === "activity" ? "?activity=open" : "", state: { introduce } }]}><Routes><Route path="/u/:handle/bots/:botId" element={<BotsPage />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
 }
@@ -153,8 +154,8 @@ it("opens the activity dialog over the chat from the former activity address", a
   mocks.role = "viewer";
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/bots/bot/activity"]}><Routes>
-      <Route path="/u/:handle/bots/:botId" element={<BotsPage admin={true} />} />
-      <Route path="/u/:handle/bots/:botId/activity" element={<BotsPage admin={true} view="activity" />} />
+      <Route path="/u/:handle/bots/:botId" element={<BotsPage />} />
+      <Route path="/u/:handle/bots/:botId/activity" element={<BotsPage view="activity" />} />
     </Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();

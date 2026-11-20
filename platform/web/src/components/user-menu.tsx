@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { AdminIcon, DarkThemeIcon, LightThemeIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
+import { AdminIcon, DarkThemeIcon, LightThemeIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import type { SessionUser } from "@/auth";
 import { authClient } from "@/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -36,7 +36,7 @@ function initials(name: string): string {
   );
 }
 
-export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean }) {
+export function UserMenu({ user, canAdmin, organizationId }: { user: SessionUser; canAdmin: boolean; organizationId?: string }) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
 
@@ -65,15 +65,18 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
           </DropdownMenuTrigger>
           <DropdownMenuContent className="min-w-56" side="top" align="start">
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
+              <DropdownMenuLabel className="grid gap-1 font-normal">
+                <span className="truncate font-bold">{user.name}</span>
+                <span className="truncate">{user.email}</span>
+                <span className="text-xs font-normal text-muted-foreground/60">
+                  Lightspeed v{__LIGHTSPEED_VERSION__}
+                </span>
+              </DropdownMenuLabel>
             </DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => navigate("/account")}>
-              <UserIcon />
-              Account
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/preferences")}>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate("/settings")}>
               <SettingsIcon />
-              Preferences
+              Settings
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
@@ -98,12 +101,12 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            {admin && (
+            {canAdmin && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/admin/users")}>
+                <DropdownMenuItem onClick={() => navigate(organizationId ? `/admin?organization=${encodeURIComponent(organizationId)}` : "/admin")}>
                   <AdminIcon />
-                  Platform admin
+                  Admin
                 </DropdownMenuItem>
               </>
             )}

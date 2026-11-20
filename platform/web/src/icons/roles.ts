@@ -20,8 +20,6 @@ export interface IconSet {
   ModelIcon: IconComponent;
   McpServerIcon: IconComponent;
   ProfileIcon: IconComponent;
-  TemplateIcon: IconComponent;
-  ChannelIcon: IconComponent;
   CredentialIcon: IconComponent;
   ApiKeyIcon: IconComponent;
   MemberIcon: IconComponent;
@@ -82,7 +80,6 @@ export interface IconSet {
   DelegateToolIcon: IconComponent;
   AwaitToolIcon: IconComponent;
   EmitToSelfIcon: IconComponent;
-  MessageToolIcon: IconComponent;
   OtherToolIcon: IconComponent;
   ToolGroupIcon: IconComponent;
   BotEventIcon: IconComponent;
@@ -90,7 +87,6 @@ export interface IconSet {
   // Bot triggers and what arrives through them.
   ScheduleIcon: IconComponent;
   WebhookIcon: IconComponent;
-  ChatTriggerIcon: IconComponent;
   InboxIcon: IconComponent;
   PollIcon: IconComponent;
   CommandIcon: IconComponent;

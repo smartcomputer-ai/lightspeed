@@ -1,5 +1,5 @@
-//! Public webhook ingress: `POST /hooks/bots/{universe}/{bot}/{trigger}/{token}`
-//! on the gateway, outside RPC auth. The URL token is checked in constant
+//! Public webhook ingress: `POST /ingress/webhooks/bots/{universe}/{bot}/{trigger}/{token}`
+//! on the gateway, outside application token authentication. The URL token is checked in constant
 //! time before anything else — a probe of the path never produces a lease
 //! or a stored row — then the optional HMAC over the raw body with a secret
 //! leased in-process, then the shared trigger pipeline.
@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AuthGrantLeaseParams, BotEventDocument, BotId, BotTriggerId, BotTriggerSpec,
+    BotEventDocument, BotId, BotTriggerId, BotTriggerSpec, CredentialGrantLeaseParams,
     WebhookVerification,
 };
 use bots::{
@@ -96,13 +96,13 @@ impl GatewayAgentApi {
                 grant_id, audience, ..
             // Ingest has no caller: the stored trigger names its signing secret.
             } => match self
-                .lease_grant_token(AuthGrantLeaseParams {
+                .lease_grant_token(CredentialGrantLeaseParams {
                     grant_id: grant_id.clone(),
                     audience: audience.clone(),
                 })
                 .await
             {
-                Ok(leased) => Some(leased.result.token),
+                Ok(leased) => Some(leased.token),
                 Err(error) => {
                     return WebhookIngestOutcome::SecretUnavailable {
                         message: error.message,

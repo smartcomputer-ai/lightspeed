@@ -1,55 +1,110 @@
 # Configuration as code
 
-A universe's configuration can be kept in a file and applied by a pipeline,
-with the review and promotion flow you already use for the deployment
-itself. The `lightspeed config` commands do this:
-
-| Command | Effect |
-| --- | --- |
-| `lightspeed config export` | Writes the configuration of a universe as a document. |
-| `lightspeed config apply -f FILE` | Makes a universe match a document. |
-| `lightspeed config diff -f FILE` | Reports what `apply` would change, and writes nothing. |
-| `lightspeed config schema` | Prints the JSON Schema of a document, for editors. |
-
-They use the public API. A document holds what you would otherwise pass
-to the API one resource at a time, so anything `apply` does can also be done
-by hand.
-
-Service settings are not part of a document. Roles, addresses, storage and
-Temporal connections stay with the chart or Compose file that starts the
-services; see [Configure a deployment](configuration.md).
+Keep universe and shared organization configuration in YAML or JSON. Review
+changes with `lightspeed config diff`, then apply the same files to each
+deployment with its own secrets. For process settings such as storage and
+Temporal, see [Configure a deployment](configuration.md).
 
 ## Before you start
 
-- Use a deployment API key. It needs the `deployment/universes` group and the
-  groups of the resources in your documents: `auth`, `models`, `mcp`,
-  `environments`, `profiles`, and `deployment/api-keys` or
-  `deployment/environment-providers` if you declare keys or enable providers.
-  See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
-- A key that holds `deployment/api-keys` can declare a key with any authority
-  and replace the secret of any key, so it is as powerful as the bootstrap
-  key whatever its other groups are. If your documents declare keys, keep the
-  applying key in the pipeline's secret store only; see
-  [Key management is full authority](../access-and-security/api-keys-and-service-access.md#key-management-is-full-authority).
-- Connect the CLI to the runtime with `LIGHTSPEED_API_URL` and
-  `LIGHTSPEED_API_KEY`, or a saved connection.
+Use a [Platform CLI connection](../using-lightspeed/cli.md#connect-to-platform)
+for organizations, memberships, and universe grants. For a pipeline, use a
+Platform service-user key. A direct runtime connection can apply universe
+resources. Keep the runtime token in your infrastructure secret store.
+
+### Platform permissions
+
+| Work | Who can do it |
+| --- | --- |
+| Create a shared organization or set its universe quota | Platform Admin |
+| Set organization policy or manage service users and their keys | Organization Admin |
+| Create a universe in an organization | Organization Creator or Admin |
+| Change universe settings or access | Universe Owner |
+| Write ordinary universe resources such as profiles, credentials, or MCP servers | Universe Operator or Owner |
+| Bind a deployment provider limited to selected universes | Platform Admin |
+
+When a Platform Admin creates a universe outside their own organizations, pass
+`--owner-user USER_ID` or `--owner-service-user SERVICE_USER_ID` to name its
+first Owner. The principal must already belong to the target organization.
+An Organization Admin can also use these flags to appoint someone else.
+
+A key's restrictions apply alongside the principal's role. Allow discovery,
+the reads needed for planning, and the writes needed for applying. A key
+restricted to existing universe UUIDs cannot create another universe. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 ## Write a universe document
 
-A document is YAML or JSON; both hold the same fields. This one declares a
-credential, an MCP server that uses it, a registration key, a fixed machine
-and a profile that runs on that machine:
+Save this as `config/release-review.yaml`. It defines a review profile in a
+universe named `release-review`.
 
 ```yaml
 schemaVersion: 1
 kind: universe
-handle: research
+handle: release-review
+displayName: Release Review
 
+profiles:
+  - profileId: reviewer
+    displayName: Reviewer
+    instructions: { type: text, text: "Review the change and report risks." }
+```
+
+Lightspeed finds the universe by its deployment-wide handle and creates it
+when absent. With a Platform connection, set `organization` to the
+organization's handle or select an organization with `--organization
+ORGANIZATION_ID` when creating the universe. The selected organization is
+only a creation default. To check that an existing universe belongs to the
+expected organization, put `organization` in the document.
+
+### Sections
+
+Add sections for the resources you want to manage. Each entry uses the
+corresponding [HTTP API](../../../crates/api/contract/api-reference.md) fields.
+Use [the generated configuration schema](#validate-a-document-as-you-write-it)
+to see exact types for each section.
+
+| Section | What it configures |
+| --- | --- |
+| `credentials`, `providers`, `modelDefaults` | External credentials, providers, and models for agent runs and speech-to-text. |
+| `mcpServers` | MCP connections. |
+| `profiles` | Agent profiles. Write instructions as text or include an entry with `file: profiles/reviewer.json`, relative to the document. |
+| `registrationKeys`, `environments` | Registration keys and registered, provisioned, or external environments. |
+| `environmentProviders` | Bindings to deployment providers that are limited to selected universes. |
+
+### Environment provider allocation
+
+A deployment provider serves every universe by default. To use one,
+declare a provisioned environment with its `providerId` and `templateId`.
+When a Platform Admin restricts a provider to selected universes, the
+universe needs a binding. A Platform Admin can declare that binding as an
+`environmentProviders` entry with the `providerId`. Leaving one out keeps
+its existing binding.
+
+### Environment entries
+
+An environment entry names its `environmentId` and its `source`.
+
+| Source type | Fields |
+| --- | --- |
+| `registered` | `registrationKeyId` and daemon `name`. See [Declare fixed machines](../environments/registered-daemons.md#declare-fixed-machines-before-their-daemons-register). |
+| `provisioned` | `providerId`, `templateId`, and optional `idle` settings. |
+| `external` | `endpoint`. |
+
+A profile can refer to one of these environments by ID. To pass an external
+token to processes there, create the credential with `exposure: retrievable`
+before binding it. See [Environment credentials](../environments/credentials.md).
+
+### Give a model endpoint or an MCP server a header
+
+Headers can be a `literal` visible to readers of the endpoint or a
+`credential` whose token the runtime attaches to its requests. Use a
+credential for secret values.
+
+```yaml
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
-    # Bound into build-box below, whose commands receive the plain token.
-    exposure: retrievable
     tokenFrom: { env: TRACKER_TOKEN }
 
 mcpServers:
@@ -57,213 +112,106 @@ mcpServers:
     serverUrl: https://tracker.example.com/mcp
     defaultServerLabel: tracker
     headers:
-      x-upstream-token: { type: credential, grantId: tracker-token }
-
-registrationKeys:
-  - registrationKeyId: runners
-    displayName: Runners
-    identityMode: persistent
-    declaredOnly: true
-    secretFrom: { file: /var/run/secrets/runners/registration-key }
-
-environments:
-  - environmentId: build-box
-    displayName: Build box
-    source: { type: registered, registrationKeyId: runners, name: lightspeed-runner-0 }
-    credentials:
-      - envName: TRACKER_TOKEN
-        source: { type: authGrant, grantId: tracker-token }
-
-profiles:
-  - profileId: reviewer
-    displayName: Reviewer
-    instructions: { type: text, text: "Review the change and report risks." }
-    config:
-      features:
-        environments:
-          version: 1
-          environments:
-            - { environmentId: build-box, default: true, access: read }
+      x-api-key: { type: credential, grantId: tracker-token }
 ```
 
-`handle` names the universe. `apply` finds the universe by its handle and
-creates it when no universe has that handle, so the same file works in every
-deployment. The universe's UUID never appears in a document.
-
-`schemaVersion` identifies the layout of the file. It is not a revision of
-your configuration, and it plays no part in deciding what changed.
-
-Every section is optional. A section you leave out is not managed by the
-document: `apply` does not read or change it.
-
-### Sections
-
-Each entry is the input of the API method that writes the resource, with the
-same field names. The
-[JSON-RPC reference](../../../crates/api/contract/api-reference.md) describes
-the fields.
-
-| Section | Method an entry follows | Identified by |
-| --- | --- | --- |
-| `credentials` | `auth/grants/put` | `grantId` |
-| `providers` | `auth/providers/put` | `providerId` |
-| `modelDefaults` | `models/defaults/put`; a map of slot (`agentRun`, `speechToText`) to model, where `null` clears a slot | slot |
-| `mcpServers` | `mcp/servers/put` (the `server` object) | `serverId` |
-| `environmentProviders` | `deployment/environment-providers/bindings/put`: `providerId` and `enabled` | `providerId` |
-| `registrationKeys` | `environments/registration-keys/put` | `registrationKeyId` |
-| `environments` | see below | `environmentId` |
-| `profiles` | `profiles/put` (the `profile` object) | `profileId` |
-| `apiKeys` | `deployment/api-keys/put`, scoped to this universe | `keyId` |
-
-An environment entry has an `environmentId`, an optional `displayName` and
-`metadata`, and a `source` that says what kind of environment it is:
-
-| `source.type` | Other fields | Created with |
-| --- | --- | --- |
-| `registered` | `registrationKeyId`, `name` | `environments/registered/put`. A fixed machine declared before its daemon registers; see [Run registered daemons](../environments/registered-daemons.md#declare-fixed-machines-before-their-daemons-register). |
-| `provisioned` | `providerId`, `templateId`, optional `idle` | `environments/create` |
-| `external` | `endpoint` | `environments/external/create` |
-
-An entry differs from the API input in these ways only:
-
-- A secret is never written in a document. In place of `token`, `credential`
-  or `secret`, name where it comes from with `tokenFrom`, `credentialFrom` or
-  `secretFrom`; see [Supply secrets](#supply-secrets).
-- `expectedRevision`, `dryRun` and `requestId` are not accepted. `apply`
-  supplies them.
-- The universe and a key's `scope` are implied by the document.
-- A key's `groups` are written as a list, or as `groups: all`; see
-  [Declare a key's groups](#declare-a-keys-groups).
-- A profile's instructions are written as text, not as a blob reference.
-- An entry can live in a file of its own: `- file: profiles/reviewer.json`,
-  relative to the document. A profile written by `lightspeed profile export`
-  can be included unchanged.
-
-An unknown field is an error, at every level, so a misspelled field never
-silently does nothing.
-
-### Give a model endpoint or an MCP server a header
-
-A model provider's endpoint and an MCP server can each send extra headers,
-written the same way under `headers`. Each is a tagged value: a `literal`,
-which every reader of the provider or server sees, or a `credential`, which
-names a token credential whose current token the runtime sends and never
-returns. A header that carries a secret by convention (`api-key`, `x-api-key`,
-and on a model endpoint `proxy-authorization`) must be a `credential`; `diff`
-reports a literal under one of these names before anything is written:
-
-```yaml
-credentials:
-  - grantId: gateway-key
-    displayName: Model gateway
-    tokenFrom: { env: GATEWAY_KEY }
-
-providers:
-  - providerId: model:gateway
-    config:
-      type: modelEndpoint
-      endpoint:
-        baseUrl: https://models.example.com/v1
-        apiKinds: ["openai:completions"]
-        headers:
-          api-key: { type: credential, grantId: gateway-key }
-          x-title: { type: literal, value: Lightspeed }
-```
-
-The credential a header names is a reference like any other: it must be in the
-document or already in the universe, and `apply` writes credentials before the
-providers that use them. It can stay `brokered`, because the runtime attaches
-it to its own request. Header names are compared in lowercase, which is how the
-runtime stores them, so one header written in two spellings is an error.
+The default `brokered` exposure keeps the token available to runtime
+requests. For model endpoints, put the same header form under
+`providers[].config.endpoint.headers`.
 
 ### Validate a document as you write it
 
-The CLI prints the JSON Schema of a document, without contacting a runtime:
+Generate the schema with the CLI version you use to apply the files:
 
 ```bash
 lightspeed config schema > lightspeed-configuration.schema.json
 ```
 
-Point your editor at it. With the YAML language server, add this line at the
-top of a document:
+For the YAML language server, add
+`# yaml-language-server: $schema=./lightspeed-configuration.schema.json`
+and adjust the path relative to the YAML file. Unknown fields are errors.
 
-```yaml
-# yaml-language-server: $schema=./lightspeed-configuration.schema.json
-```
+## Configure organizations and access
 
-The schema is generated from the same API inputs `apply` checks entries
-against, so it describes every field and refuses the same unknown fields.
-It belongs to the CLI version that printed it; regenerate it when you
-upgrade. An included file holds a single entry without the envelope, so the
-schema does not apply to it directly.
-
-### Declare a key's groups
-
-An `apiKeys` entry always states the key's `groups`. An entry without them is
-an error in `diff` and `apply`, before anything is read or written: nothing
-fills them in.
-
-```yaml
-apiKeys:
-  - keyId: release-bot
-    displayName: Release bot
-    groups: [session, profiles]
-    secretFrom: { env: RELEASE_BOT_KEY }
-```
-
-`groups: all` asks for every group the key's scope allows: the universe
-groups in a universe document, and the deployment groups as well in a
-deployment document. The runtime stores the resulting list with the key.
-`diff` compares that stored list with what `all` means in the release of the
-CLI you run. After an upgrade that adds a method group, a key declared with
-`all` therefore shows `groups` as a pending update, and the next `apply`
-gives the key the new group. A key declared with a list keeps exactly that
-list.
-
-`export` always writes the list a key holds, never `all`, so applying an
-exported document later does not widen a key. Write `all` yourself where you
-want a key to follow new releases.
-
-### The deployment's own resources
-
-API keys with deployment scope go in a document of their own:
+With a Platform connection, declare a shared organization alongside its
+universes. Save this example as `config/research-team.yaml`.
 
 ```yaml
 schemaVersion: 1
-kind: deployment
-apiKeys:
-  - keyId: platform
-    displayName: Platform
-    groups: all
-    assertActor: true
-    secretFrom: { env: PLATFORM_API_KEY }
+kind: organization
+handle: research-team
+name: Research
+baseUniverseRole: viewer
+defaultProtected: true
+membershipPolicy:
+  directoryGroupMappings:
+    - { issuer: https://login.example.com, group: research, role: member }
+serviceUsers:
+  - name: deployer
+    role: member
+    keys:
+      - name: ci
+        secretFrom: { file: /run/secrets/deployer-key }
+        expiresAt: "2027-12-31T00:00:00Z"
 ```
 
-The first key cannot be declared this way, because nothing can authenticate
-before it exists. Declare it on the server host with
-`lightspeed-runtime api-key provision`; see
-[Self-hosting](self-hosting.md).
+An organization document can set the default universe role for people
+(`baseUniverseRole: null` means grants only), deletion protection defaults
+(`defaultProtected`, `requireProtected`), and an organization quota
+(`universeQuota: null` follows the deployment default). Its
+`membershipPolicy` can name verified emails, company issuer and subject
+pairs, or company groups. See [People and roles](../access-and-security/people-and-roles.md).
+
+Add an `access` section to the universe document to give the deployer access.
+
+```yaml
+organization: research-team
+access:
+  serviceUsers:
+    - { name: deployer, role: operator }
+```
+
+Service users get their universe access from explicit grants or organization
+Admin authority. A universe can also declare `access.members` and
+`access.directoryGroupMappings` in the shape of `membershipPolicy`, using
+universe roles. The people referenced there need organization membership.
+
+`apply` processes organization documents before universe documents, so both
+can live in one directory. It replaces the declared organization
+`membershipPolicy` when supplied, or each part of the universe's people or
+group policy when supplied. Other manually assigned grants and memberships
+stay in place. Leaving out a service user, its key, or its universe grant
+keeps it.
+
+### Manage a declared service-user key
+
+Generate the secret with `lightspeed platform api-key generate-secret` and
+save it in your secret store. Refer to it with `secretFrom`. The key's
+`restrictions` and `expiresAt` describe its full desired state. Omit
+`restrictions` for an unrestricted key acting within the service user's
+authority. Omit `expiresAt` for a key that does not expire, where deployment
+policy permits it.
+
+Declaring a key needs a person's `lightspeed connect login` session, or a
+key created with `--allow-service-user-keys` by an Organization Admin of that
+organization. Any other key is reported as a conflict before anything is
+written, so an unattended pipeline uses such a key.
+
+Changing the secret in the store and applying replaces the key in place.
+Its ID stays the same and the old secret stops working immediately. Use a
+second key when consumers must switch without interruption. Exports omit key
+entries, so keep declared keys in the source documents you maintain.
 
 ## Supply secrets
 
-A secret source is `{ env: NAME }` or `{ file: PATH }`. The process that
-runs `apply` reads it; in a cluster, mount the values from your secret store
-into the job. A relative file path is relative to the document. One trailing
-line break in a file is dropped.
+Use `{ env: NAME }` or `{ file: PATH }` in a secret source. The CLI reads
+the value, resolving relative paths from the document. For example, a
+credential uses `tokenFrom` and a registration key uses `secretFrom`.
+When a key is shared with a daemon, supply the same value on both sides.
 
-Every source is read before anything is sent. If one is missing, `apply`
-stops without having read or written anything in the runtime.
-
-Secrets flow one way, into Lightspeed. For keys that Lightspeed itself
-accepts (`apiKeys`, `registrationKeys`), generate the secret in your secret
-store, or with `lightspeed api-key generate-secret` and
-`lightspeed environment registration-key generate-secret`, and give the same
-value to the
-service that uses the key.
-
-When the value behind a source changes, the next `apply` replaces the stored
-secret at once. The old secret stops working at that moment, so update the
-consumers of a key together with it.
+Check that the pipeline can read each mounted secret. A missing source stops
+planning before writes. Changing a supplied secret appears as `(secret)`
+in the diff. The report never prints the value.
 
 ## Check and apply
 
@@ -272,191 +220,71 @@ lightspeed config diff -f config/
 lightspeed config apply -f config/
 ```
 
-`-f` takes files or directories. A directory is read recursively; every YAML
-or JSON file in it that has a `kind` is a document. Files and directories
-whose name starts with a dot are skipped, which is also what makes a mounted
-ConfigMap or Secret read correctly.
+`-f` accepts files or directories. The CLI looks in subdirectories for
+YAML and JSON files with a `kind`, skipping hidden files and directories.
+`diff` exits with 0 for no changes, 2 for planned changes, and 1 for errors
+or conflicts. Run it again after applying to check that the deployment
+matches your files.
 
-`apply` works in four steps and writes only in the last one:
-
-1. It checks every entry and every reference between entries, for example a
-   profile that attaches an environment.
-2. It reads the secret sources, finds each universe, and reads the current
-   state of the sections the document contains.
-3. It compares each entry with the current state.
-4. It writes the entries that differ, in dependency order.
-
-```
-universe research
-  created     credentials/tracker-token
-  created     mcpServers/tracker
-  created     registrationKeys/runners
-  created     environments/build-box
-  created     environments.credentials/build-box/TRACKER_TOKEN
-  created     profiles/reviewer
-  6 changed, 0 unchanged
-```
-
-Applying the same document again changes nothing and makes no write. An
-update names the fields that differ, and `(secret)` when the stored secret
-differs from the supplied one. Secret values never appear in the output.
-`--json` prints one object per resource.
-
-| Command | Exit status |
-| --- | --- |
-| `config apply` | 0 when the universe matches the document afterwards, 1 otherwise |
-| `config diff` | 0 when nothing would change, 2 when something would, 1 on an error |
-
-If a write is refused, `apply` stops there and reports what it completed and
-what remains. Every write is safe to repeat, so run it again once the cause
-is fixed.
+The CLI checks all documents for conflicts before making any writes, then
+applies changes in dependency order. If a write fails midway, fix the
+cause and rerun. Earlier successful changes are already in place. If universe
+creation was interrupted, reuse the provisioning UUID in the report with
+`config apply --universe-id UUID -f FILE`.
 
 ### What apply changes, and what it leaves alone
 
-The document is the desired state of the resources it names:
+`apply` reconciles the resources it names, including changes someone made
+in the UI to those resources. Unlisted resources stay in place. When you
+supply an environment's `credentials` list, it replaces that environment's
+bindings. Omit the list to leave those bindings unmanaged.
 
-- A resource you edited in the web app or with another command is set back
-  to what the document says by the next `apply`, including fields the
-  document leaves at their defaults. `diff` shows such an edit as an update.
-- A resource the document does not name is left alone, and so is every
-  section the document does not contain.
-- **Nothing is deleted.** Removing an entry from a document leaves the
-  resource in the universe; remove it by hand. The one exception is the
-  `credentials` list of an environment entry: a binding that is not listed is
-  unbound. Leave the list out to keep an environment's bindings unmanaged.
+Some values are fixed after creation, including an environment's source, a
+registration key's identity mode, and a credential's exposure. Use a new ID
+when changing one of those. To rename a universe, use
+`lightspeed universe set-handle`, then update the document's handle before
+applying again.
 
-Some settings cannot change once a resource exists. An entry that differs in
-one of them is reported as a conflict, and a document with a conflict writes
-nothing at all:
-
-| Resource | Fixed |
-| --- | --- |
-| Credential | `exposure`; declare the credential under a new id. |
-| Registration key | `identityMode` |
-| API key | `assertActor` |
-| Environment | `source` |
-| A revoked key | Stays revoked; declare the key under a new id. |
-| A closed environment | Its id stays taken; declare the environment under a new id. |
-
-A credential's `exposure` says where its plain token may go. `brokered`, the
-default, keeps it inside the runtime, which attaches it to its own requests:
-an MCP server's credential or header, or a model endpoint's header, needs
-nothing more. `retrievable` also
-lets the token be bound into an environment and leased by trusted services.
-A document that binds a credential into an environment (`source: { type:
-authGrant }` in an environment's `credentials` list) must declare that
-credential `exposure: retrievable`, or name one that already is. Otherwise
-`diff` and `apply` stop before anything is written and name the binding and
-the credential. A provider's credential (`authProviderCredential`) can be
-bound only when the provider is a model API key provider; see
-[Environment credentials](../environments/credentials.md#choose-a-credential-source).
-
-`apply` never releases the daemon bound to a declared environment and never
-renames a universe. Both stay explicit commands:
-`lightspeed environment release` and
-`lightspeed universe set-handle`. After a rename, update the document's
-`handle` before the next `apply`, or it creates a new universe under the old
-handle.
-
-A document does not carry the name people see. That name belongs to the
-Platform organization. A universe created by `apply` has no Platform
-organization until an administrator adopts it in the web app, and names it
-there; see [Managing universes](multi-tenancy.md).
+New universes created by a document are protected by default. For existing
+universes, leaving out `protected` preserves their current setting. To
+clear it through Platform, an Organization Admin or Platform Admin must set
+`protected: false` and organization policy must permit it. See
+[Managing universes](multi-tenancy.md#archive-and-delete-a-universe).
 
 ## Export a universe
 
 ```bash
-lightspeed --universe research config export -o config/universes/research.yaml
-lightspeed --universe research config export -o research.json --profiles-dir profiles
-lightspeed config export --deployment
+lightspeed --universe release-review config export -o config/release-review.yaml
+lightspeed --organization research-team config export --kind organization -o config/research-team.yaml
 ```
 
-The exported document is in a normal form: entries ordered by id, fields the
-runtime derives removed, and fields left out when they hold their default.
-Applying it to the universe it came from changes nothing.
-
-Each secret is written as a placeholder source named after the resource, for
-example `tokenFrom: { env: TRACKER_TOKEN }`. Bind those variables, or edit
-the sources, before applying the document elsewhere.
-
-An export leaves out what is not configuration: closed environments,
-environments whose daemon registered without a declaration, revoked keys, and
-credentials created through a sign-in flow.
-
-To promote a universe from one deployment to another, export it, review the
-file, and apply it against the other deployment with that deployment's
-secrets. To start a new universe from an existing one, change `handle` in the
-exported file.
+Review the export before applying it to another deployment. It records
+secret sources as placeholders, which you must bind in the target. A
+Platform export can include declared access and service-user grants when
+the caller can read them. Manually granted roles for people, issued keys,
+and credentials created through sign-in stay out of the export. Use
+`--profiles-dir` to write profiles as separate files.
 
 ## Run it from a pipeline
 
-`apply` is safe to run on every deployment and on a schedule. The runtime
-image contains the `lightspeed` CLI of the same release at
-`/usr/local/bin/lightspeed`, so a job needs no other image and always matches
-the runtime it talks to. A typical arrangement in Kubernetes:
+Use the matching runtime image and invoke `/usr/local/bin/lightspeed`
+explicitly as the job command. Set `LIGHTSPEED_API_URL` to the Platform's
+`/api/v1` base and inject the service-user key as `LIGHTSPEED_API_TOKEN`.
+Mount the configuration and its secret sources so the container user can
+read them. A scheduled apply can detect and reconcile drift, or run apply
+only when the configuration changes.
 
-- Render the documents into a ConfigMap and the secrets into a Secret.
-- Run `lightspeed config apply -f /config` as a Job whose name includes a hash of
-  the documents, so a changed document triggers a new run.
-- Run `lightspeed config diff -f config/` in merge requests against the target
-  deployment to show reviewers what would change.
+The credential that runs the pipeline must already exist. To bootstrap
+the example organization and its first service-user key, apply the documents
+as a Platform Admin, then use the new key to manage ordinary resources in
+that universe. Use the admin connection later for access changes.
 
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: lightspeed-config-3f9a1c   # include a hash of the documents
-spec:
-  backoffLimit: 3
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: apply
-          image: <the runtime image of your release>
-          command: ["/usr/local/bin/lightspeed", "config", "apply", "-f", "/config"]
-          env:
-            - name: LIGHTSPEED_API_URL
-              value: http://lightspeed-runtime:18080/rpc
-            - name: LIGHTSPEED_API_KEY
-              valueFrom:
-                secretKeyRef: { name: lightspeed-config, key: api-key }
-            - name: TRACKER_TOKEN
-              valueFrom:
-                secretKeyRef: { name: lightspeed-config, key: tracker-token }
-          volumeMounts:
-            - { name: config, mountPath: /config, readOnly: true }
-      volumes:
-        - name: config
-          configMap: { name: lightspeed-config }
-```
-
-The job takes its connection from `LIGHTSPEED_API_URL` and
-`LIGHTSPEED_API_KEY`. It needs no home directory and no saved connection, and
-it writes nothing to the container's filesystem, so a read-only root
-filesystem works.
-
-Documents and secrets can come from mounted volumes. A secret source of the
-form `{ file: /var/run/secrets/tracker/token }` reads a mounted Secret, as
-`{ env: … }` reads one injected as a variable. The image runs as user and
-group 65532: files mounted with the default mode are readable; if you
-restrict a Secret's mode, set the pod's `fsGroup` to 65532 and use mode
-`0440`. Give it a deployment key
-limited to the groups listed under [Before you start](#before-you-start).
-The image's default command is still the server, so name the CLI as the
-job's `command`.
-
-Declare a registration key before the daemons that hold its secret start: a
-daemon whose key the runtime does not know exits. An orchestrator that
-restarts the pod converges anyway. A declared environment and its machine can
-be deployed in either order.
+For registered daemons, apply their registration keys before starting the
+daemon processes. See [Run registered daemons](../environments/registered-daemons.md).
 
 ## Limits
 
-- Members and roles, bots and triggers, chat channel accounts, workspaces and
-  session retention defaults cannot be declared yet.
-- Deployment environment providers
-  (`deployment/environment-providers/put`) cannot be declared yet; a universe
-  document can only enable an existing one.
-- Credentials created through an OAuth sign-in cannot be declared. A document
-  can refer to one by its `grantId`.
+Shared organization and universe documents cover configuration and access
+policy. Manage personal organizations, deployment settings, provider
+registration, bots, workspaces, and session retention
+through their own tools or APIs.

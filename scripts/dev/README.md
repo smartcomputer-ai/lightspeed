@@ -26,7 +26,7 @@ development override table and the separate production component variables.
 - Temporal UI on `http://localhost:8233`
 
 The local Temporal namespace is registered with the search attributes
-`LightspeedUniverseId`, `LightspeedChannelProvider`, `LightspeedChannelAccountId`,
+`LightspeedUniverseId`,
 `LightspeedBotTriggerId`, and `LightspeedBotId`. No workflow attaches them at present.
 
 ## Unified supervisor
@@ -52,8 +52,7 @@ To require a deployment key before startup, for example in CI:
 ./dev.sh runtime --require-api-keys
 ```
 
-The older `--allow-missing-api-keys` flag is accepted for compatibility and has
-no effect. Deployment-wide keys can still be configured in the root `.env`.
+Deployment-wide provider keys can be configured in the root `.env`.
 
 `npm run dev` delegates to the same root launcher, so these are equivalent:
 
@@ -87,6 +86,11 @@ shows how to attach it. Commands run as the daemon's OS user; its working
 directory is not a process sandbox.
 
 The local UI is available at `http://localhost:5173/app/`. The supervisor
+defaults `LIGHTSPEED_PLATFORM_BASE_URL` to `http://localhost:5173`, the public
+origin for browser sign-in and CLI device approval. Connect the CLI to that
+origin for Platform login; Vite forwards its API and device entry point to the
+backend. An explicit base URL override supports a development reverse proxy.
+The supervisor
 trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
 additional browser origins must be listed explicitly in
 `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.
@@ -100,11 +104,15 @@ Existing passwords and universe content are preserved. Set
 [development logins](../../docs/documentation/development/local-development.md#development-logins).
 
 Both `full` and `runtime` default to authenticated runtime access. The launcher
-ensures the configured universe and provisions a persistent CLI deployment
-key, plus a separate Platform key with actor assertion when needed. Run
-`lightspeed connect dev` from the checkout to import the protected handoff in
-`.lightspeed/cli/`. Pass `--no-api-key-bootstrap` to manage API keys yourself.
-Explicit `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available.
+ensures the development universe and saves persistent CLI and Platform runtime
+tokens under `.lightspeed/cli/`. These files are owner-only. Run
+`lightspeed connect dev` from the checkout to import the handoff. Set
+`LIGHTSPEED_API_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_API_TOKEN` (or their `_FILE`
+variants) to supply tokens. Matching CLI and Platform secrets share the runtime
+identity `cli` (or `default` when supplied through `LIGHTSPEED_API_TOKEN`); no
+duplicate named token is installed. Pass `--no-token-bootstrap` to require supplied or
+saved tokens instead of generating them. Explicit
+`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available.
 
 Platform waits for the configured runtime's HTTP health endpoint before starting,
 including in the `platform` profile. Its universe operations need that runtime,
@@ -113,23 +121,15 @@ from the configured email and password when its own user table is empty. The
 supervisor logs this dependency wait and fails startup after 60 seconds if the
 runtime never becomes ready. `--plan` also shows startup dependencies.
 
-The full profile also runs Configurator MCP; Bots and Channels core run inside
-the Rust runtime. The connector host is opt-in: naming providers starts one
-`connectors` process that discovers every enabled account of those providers
-through the core API and leases their tokens from it (WhatsApp additionally
-needs `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY` and pairs by QR code):
-
-```bash
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp ./dev.sh
-```
-
-Configurator setup provisions a universe key with configuration method groups
-and stores it in a credential grant. Enabled connectors require their own
-`LIGHTSPEED_CONNECTOR_API_KEY` with the groups needed for account discovery,
-inbound admission, credential leasing, and media upload. See
-[API keys and service access](../../docs/documentation/access-and-security/api-keys-and-service-access.md)
-for the exact groups and request headers.
+The runtime uses three separate listeners: private HTTP API at `127.0.0.1:18080`,
+public callbacks/webhooks at `127.0.0.1:18082`, and environment routes at
+`127.0.0.1:18083`. Override them with `LIGHTSPEED_GATEWAY_BIND`,
+`LIGHTSPEED_PUBLIC_BIND`, and `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`. The launcher
+preflights each port and waits for each listener's health endpoint.
+`LIGHTSPEED_PUBLIC_BASE_URL` sets callback/webhook URLs;
+`LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` sets the environment origin. Each defaults
+from its own bind. Worker `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` points to the
+environment listener, not private HTTP API.
 
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.
@@ -204,12 +204,9 @@ scripts/dev/infra/minio-reset.sh
 clears the Lightspeed MinIO prefix. Platform applies its independently owned
 database migrations when the Platform backend starts.
 
-The runtime's fresh PostgreSQL baseline is organized into eleven domain migrations
-in `crates/store-pg/migrations/`: identity and scoped API keys share a definition;
-resource ownership and access audit remain separate. Auth and environment
-alterations are folded into their owning definitions. Databases from earlier
-baselines require a reset of the schema and migration ledger; deleting rows alone is not
-enough. The migrator keeps rejecting changed checksums and never resets data
+The runtime's schema is defined by the embedded migrations in
+`crates/store-pg/migrations/`. Runtime API tokens are loaded from configuration;
+there is no API-key table. The migrator keeps rejecting changed checksums and never resets data
 automatically. Use `./dev.sh reset` for disposable local development state.
 
 Run the `store-pg` live integration tests against this stack:
@@ -235,7 +232,7 @@ export LIGHTSPEED_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
 export LIGHTSPEED_POSTGRES_URL=${LIGHTSPEED_TEST_POSTGRES_URL}
 export LIGHTSPEED_PLATFORM_DATABASE_URL=postgres://lightspeed:lightspeed@localhost:15432/lightspeed_platform
 export LIGHTSPEED_TASK_QUEUE=lightspeed-sessions
-export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
+export LIGHTSPEED_API_URL=http://127.0.0.1:18080/api/v1
 
 export LIGHTSPEED_OBJECT_STORE_BUCKET=lightspeed-dev
 export LIGHTSPEED_OBJECT_STORE_ENDPOINT=http://localhost:29000
@@ -268,18 +265,18 @@ cargo run -p temporal-runtime -- migrate
 cargo run -p temporal-runtime
 ```
 
-With no flags, the `lightspeed-runtime` binary runs every role — the JSON-RPC
+With no flags, the `lightspeed-runtime` binary runs every role — the HTTP API
 `gateway`, the `environment-gateway` (worker environment routes, the public
 daemon registration routes, and the environment reconcilers), plus the
-`sessions`, `bots`, and `channels` Temporal workers, each on its own task
+`sessions`, `bots`, and `code` Temporal workers, each on its own task
 queue — in one process. Each worker runs its workflows and activities together.
 For split-role runs, select roles per shell; keep the `environment-gateway`
 role on exactly one process and point the others at it
-through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`:
+through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` (locally `http://127.0.0.1:18083`):
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-runtime -- --roles sessions,bots,channels
+cargo run -p temporal-runtime -- --roles sessions,bots,code
 ```
 
 ```bash
@@ -350,16 +347,13 @@ network. From the host machine, use `localhost:15432` instead:
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
 
-Development uses `server api-key provision --all-groups` for CLI and Platform
-keys, each declared under a key id derived from its kind and this checkout.
-Keys are stored normally and remain revocable; ordinary restarts declare the
-same secret from their protected local files, which also applies newly
-introduced method groups. The command prints a secret only when it generated
-one, so on a restart the launcher keeps the secret it supplied. CLI keys have
-all method groups and no actor assertion;
-Platform keys additionally assert actors. The Platform receives its key as
-`LIGHTSPEED_PLATFORM_API_KEY`. See the
-[terminal guide](../../docs/documentation/using-lightspeed/cli.md) for connection
-setup and explicit repair after revocation or a database reset.
-The greenfield identity migration refuses a populated old Platform schema;
-reset disposable Platform state explicitly instead of importing old permissions.
+Development saves persistent runtime tokens in protected files, configures the
+runtime with `LIGHTSPEED_API_TOKEN_CLI_FILE` and
+`LIGHTSPEED_API_TOKEN_PLATFORM_FILE`, and gives Platform the latter file through
+`LIGHTSPEED_PLATFORM_API_TOKEN_FILE`. Every token has full authority and can name
+an actor. See the [terminal guide](../../docs/documentation/using-lightspeed/cli.md)
+for token generation, replacement and local connection setup.
+
+Configurator starts with the full and platform profiles, targets the Platform
+`/api/v1` endpoint, and receives no runtime infrastructure credentials. Install
+its restricted service-user key from the universe template as an Organization Admin.

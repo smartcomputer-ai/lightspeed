@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -29,7 +30,7 @@ it("requires resource configuration permission for live discovery even in a writ
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let role = "contributor";
   mocks.api.mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/universes") return [{ id: "universe", handle: "test", status: "active", role }];
+    if (path === "/api/ui/universes") return [{ id: "universe", handle: "test", status: "active", role, actions: [...universeActions([role as UniverseRole])] }];
     if (path.endsWith("/tools/discover")) return { status: "success", tools: [] };
     return [];
   });

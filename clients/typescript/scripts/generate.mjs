@@ -1,8 +1,11 @@
+import { generatePlatform } from "./generate-platform.mjs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileFromFile } from "json-schema-to-typescript";
-import { HELPERS } from "./helpers.mjs";
+import { HELPERS, MANUAL_HELPERS, ALL_HELPERS, validateHelpers } from "./helpers.mjs";
+import ts from "typescript";
+import { httpDescriptors } from "./http-contract.mjs";
 
 const packageDir = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.resolve(packageDir, "..");
@@ -15,7 +18,7 @@ const contractDir = path.resolve(
   "contract",
 );
 const schemaPath = path.join(contractDir, "api.schema.json");
-const methodsPath = path.join(contractDir, "methods.json");
+
 const workflowContractDir = path.resolve(
   clientDir,
   "..",
@@ -96,9 +99,32 @@ await writeFile(
   workflowManifestLines.join("\n"),
 );
 
-const manifest = JSON.parse(await readFile(methodsPath, "utf8"));
-const methods = manifest.methods ?? [];
-const notifications = manifest.notifications ?? [];
+
+const httpContractPath = path.join(contractDir, "http.json");
+const httpContract = JSON.parse(await readFile(httpContractPath, "utf8"));
+await writeFile(path.join(generatedDir, "http.ts"), [
+  bannerComment.trimEnd(),
+  `export const HTTP_CONTRACT_REVISION = ${JSON.stringify(httpContract.contractRevision)};`,
+  `export const HTTP_OPERATIONS = ${JSON.stringify(httpDescriptors(httpContract), null, 2)} as const;`,
+  'export type HttpOperationId = keyof typeof HTTP_OPERATIONS;',
+  'export type HttpOperation = typeof HTTP_OPERATIONS[HttpOperationId];',
+  '',
+].join('\n'));
+await copyFile(httpContractPath, path.join(clientDir, "schema", "http.json"));
+await copyFile(path.join(contractDir, "openapi.json"), path.join(clientDir, "schema", "openapi.json"));
+const methods = httpContract.operations.map((entry) => ({ ...entry, method: entry.operationId, streaming: entry.transfer === "sse", notifications: Object.keys(entry.events?.events ?? {}) }));
+const notifications = [...new Set(methods.flatMap((entry) => entry.notifications))];
+validateHelpers(httpContract.operations);
+const clientSource = ts.createSourceFile("client.ts", await readFile(path.join(clientDir, "src/client.ts"), "utf8"), ts.ScriptTarget.Latest, true);
+const clientClass = clientSource.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "LightspeedClient");
+if (!clientClass) throw new Error("Missing LightspeedClient implementation");
+const implemented = new Set(clientClass.members.filter(ts.isMethodDeclaration).map(method => method.name.getText(clientSource)));
+for (const [, helper] of MANUAL_HELPERS) {
+  if (!implemented.has(helper)) throw new Error(`Missing handwritten helper implementation ${helper}`);
+}
+for (const [, helper] of HELPERS) {
+  if (implemented.has(helper) && helper !== "initialize") throw new Error(`Generated helper ${helper} collides with a handwritten method`);
+}
 
 for (const entry of methods) {
   if (!entry.access || typeof entry.access.kind !== "string") {
@@ -119,7 +145,7 @@ for (const entry of methods) {
 
 function typeNameFromRef(entry, method, side) {
   const ref = entry?.schema?.$ref;
-  const prefix = "#/definitions/";
+  const prefix = "api.schema.json#/definitions/";
   if (typeof ref !== "string" || !ref.startsWith(prefix)) {
     throw new Error(`method ${method} ${side} schema is not a definitions ref`);
   }
@@ -146,11 +172,11 @@ const methodLines = [
   bannerComment.trimEnd(),
   'import type * as Api from "./types.js";',
   "",
-  "export const METHODS = [",
+  "export const OPERATIONS = [",
   ...methods.map((entry) => `  ${q(entry.method)},`),
   "] as const;",
   "",
-  "export const METHOD_INFO = {",
+  "export const OPERATION_INFO = {",
   ...methods.flatMap((entry) => [
     `  ${q(entry.method)}: {`,
     `    scope: ${q(entry.scope)},`,
@@ -167,29 +193,29 @@ const methodLines = [
   ...notifications.map((method) => `  ${q(method)},`),
   "] as const;",
   "",
-  "export type Method = (typeof METHODS)[number];",
-  "export type NotificationMethod = (typeof NOTIFICATIONS)[number];",
+  "export type OperationId = (typeof OPERATIONS)[number];",
+  "export type NotificationOperationId = (typeof NOTIFICATIONS)[number];",
   "",
-  "export interface MethodMap {",
+  "export interface OperationMap {",
   ...methods.flatMap((entry) => {
     const params = typeNameFromRef(entry.params, entry.method, "params");
-    const result = typeNameFromRef(entry.result, entry.method, "result");
+    const result = dataType(entry);
     return [
       ...jsDoc(entry, "  "),
       `  ${q(entry.method)}: {`,
       `    params: Api.${params};`,
-      `    result: Api.${result};`,
+      `    result: ${result};`,
       "  };",
     ];
   }),
   "}",
   "",
-  'export type MethodParams<M extends Method> = MethodMap[M]["params"];',
-  'export type MethodResult<M extends Method> = MethodMap[M]["result"];',
+  'export type OperationParams<M extends OperationId> = OperationMap[M]["params"];',
+  'export type OperationResult<M extends OperationId> = OperationMap[M]["result"];',
   "",
 ];
 
-await writeFile(path.join(generatedDir, "methods.ts"), methodLines.join("\n"));
+await writeFile(path.join(generatedDir, "operations.ts"), methodLines.join("\n"));
 
 const definitions = JSON.parse(await readFile(schemaPath, "utf8")).definitions;
 
@@ -202,14 +228,10 @@ function definitionOf(entry, method, side) {
   return { name, definition };
 }
 
-/** The type of a method's data, inside its `AgentApiOutcome` envelope. */
+/** The direct result DTO or downloaded bytes. */
 function dataType(entry) {
-  const { definition } = definitionOf(entry.result, entry.method, "result");
-  const ref = definition.properties?.result?.$ref;
-  if (typeof ref !== "string") {
-    throw new Error(`method ${entry.method} result has no named data type`);
-  }
-  return `Api.${ref.split("/").pop()}`;
+  if (entry.transfer === "sse") return "never";
+  return entry.result.type === "bytes" ? "Uint8Array" : `Api.${typeNameFromRef(entry.result, entry.method, "result")}`;
 }
 
 function helperLines(method, helper, targets) {
@@ -225,7 +247,7 @@ function helperLines(method, helper, targets) {
       throw new Error(`helper ${helper} takes ${target}, which is not a required ${method} param`);
     }
   }
-  for (const reserved of ["signal", "headers"]) {
+  for (const reserved of ["signal", "headers", "body", "contentLength"]) {
     if (properties.includes(reserved)) {
       throw new Error(`helper ${helper}: ${method} has a param named ${reserved}, which means call options here`);
     }
@@ -236,7 +258,7 @@ function helperLines(method, helper, targets) {
     : `Api.${paramsType} & CallOptions`;
   const optionsRequired = required.some((name) => !targets.includes(name));
   const args = [
-    ...targets.map((target) => `${target}: string`),
+    ...targets.map((target) => `${target}: Api.${paramsType}[${q(target)}]`),
     `options: ${optionsType}${optionsRequired ? "" : " = {}"}`,
   ];
   return [
@@ -261,27 +283,27 @@ await writeFile(
   [
     bannerComment.trimEnd(),
     'import type { CallOptions } from "../client.js";',
-    'import type { Method, MethodParams, MethodResult } from "./methods.js";',
+    'import type { OperationId, OperationParams, OperationResult } from "./operations.js";',
     'import type * as Api from "./types.js";',
     "",
-    "/** Helper name to the API method it calls. See scripts/helpers.mjs for which methods have one. */",
+    "/** Canonical named helpers covering every runtime operation, including handwritten transports. */",
     "export const CLIENT_HELPERS = {",
-    ...HELPERS.map(([method, helper]) => `  ${helper}: ${q(method)},`),
+    ...ALL_HELPERS.map(([method, helper]) => `  ${helper}: ${q(method)},`),
     "} as const;",
     "",
     "export abstract class LightspeedHelpers {",
-    "  abstract call<M extends Method>(",
+    "  abstract call<M extends OperationId>(",
     "    method: M,",
-    "    params: MethodParams<M>,",
+    "    params: OperationParams<M>,",
     "    options?: CallOptions,",
-    "  ): Promise<MethodResult<M>>;",
+    "  ): Promise<OperationResult<M>>;",
     "",
-    "  private async invoke<M extends Method>(",
+    "  private async invoke<M extends OperationId>(",
     "    method: M,",
     "    target: object,",
     "    options: CallOptions,",
-    '  ): Promise<MethodResult<M>["result"]> {',
-    "    const { signal, headers, ...params } = options;",
+    "  ): Promise<OperationResult<M>> {",
+    "    const { signal, headers, body, contentLength, ...params } = options;",
     "    const call: CallOptions = {};",
     "    if (signal) {",
     "      call.signal = signal;",
@@ -289,8 +311,8 @@ await writeFile(
     "    if (headers) {",
     "      call.headers = headers;",
     "    }",
-    "    const outcome = await this.call(method, { ...target, ...params } as MethodParams<M>, call);",
-    "    return outcome.result;",
+    "    const outcome = await this.call(method, { ...target, ...params } as OperationParams<M>, call);",
+    "    return outcome;",
     "  }",
     "",
     ...HELPERS.flatMap(([method, helper, ...targets]) => helperLines(method, helper, targets)).slice(0, -1),
@@ -310,3 +332,6 @@ await copyFile(
   path.join(schemaOutDir, "workflow.schema.json"),
 );
 await copyFile(workflowManifestPath, path.join(schemaOutDir, "workflow.json"));
+
+
+await generatePlatform();

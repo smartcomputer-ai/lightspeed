@@ -1,1 +1,0 @@
-ALTER TABLE "universes" ADD COLUMN "features" jsonb DEFAULT '{}'::jsonb NOT NULL;

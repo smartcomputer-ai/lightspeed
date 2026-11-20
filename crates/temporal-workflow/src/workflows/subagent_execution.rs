@@ -91,7 +91,8 @@ impl SubagentExecutionWorkflow {
                 (start, Some((child, deadline_at_ms, wait)))
             }
         };
-        if ctx.workflow_id() != start.execution_id
+        if ctx.workflow_id()
+            != crate::compose_workflow_tool_execution_id(start.universe_id, &start.execution_id)
             || start.universe_id != start.invocation.session_universe_id
         {
             return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
@@ -257,6 +258,9 @@ impl SubagentExecutionWorkflow {
                         Ok(SubagentLivenessActivityResult::Running) => continue,
                         // A store or Temporal blip says nothing about the child, so
                         // it never fails the delegation; the next check asks again.
+                        Err(error) if crate::workflows::session::activity_failure_has_type(&error, crate::UNIVERSE_UNKNOWN_ERROR_TYPE) => {
+                            return Err(execution_failure("liveness", &error));
+                        }
                         Err(_) => continue,
                     },
                 }
@@ -490,7 +494,11 @@ async fn emit_resolution(
     };
     let envelope = harness::EmissionEnvelope::source_resolution(
         universe_id,
-        ctx.workflow_id().to_owned(),
+        ctx.workflow_id()
+            .split_once('/')
+            .expect("validated execution identity")
+            .1
+            .to_owned(),
         &holder,
         reply_promise_id.clone(),
         resolution,

@@ -59,7 +59,7 @@ const caret = (label: string) => [...container.querySelectorAll<HTMLButtonElemen
 it("lists each session's sub-agents behind a caret after its title, one level at a time", async () => {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>
-      <SessionsPage admin={false} />
+      <SessionsPage />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });

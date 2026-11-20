@@ -13,7 +13,7 @@ use harness::{
     ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, LlmRequest, LlmUsage, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
     ObservedToolCall, ProviderApiKind, RemoteMcpExecution, RemoteMcpExposure, TokenEstimate,
-    TokenEstimateQuality, ToolCallId, ToolId, ToolKind, ToolName, storage::BlobStore,
+    TokenEstimateQuality, ToolCallId, ToolKind, ToolName, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::completions as oai_c};
 use serde_json::{Value, json};
@@ -191,6 +191,7 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
                 ),
             });
         }
+        let mcp = crate::mcp::RequestMcp::new(self.inventory.as_ref(), None);
         let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(
             self.blobs.as_ref(),
             &request.request,
@@ -198,11 +199,20 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
         .await?;
         let mut provider_request = materialize_request_with_catalog(
             self.blobs.as_ref(),
-            self.inventory.as_ref(),
+            &mcp,
             &request.request,
             &mut catalog,
         )
         .await?;
+        let notice = mcp
+            .notice(self.blobs.as_ref(), &request.request.context)
+            .await?;
+        if let Some((text, _)) = &notice {
+            provider_request
+                .messages
+                .push(text_message("user", text.clone()));
+        }
+
         // Route every turn of a session to the same prompt cache.
         provider_request.prompt_cache_key =
             Some(crate::prompt_cache::prompt_cache_key(&request.session_id));
@@ -240,6 +250,9 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
         )
         .await?;
         catalog.normalize(&mut result);
+        if let Some((_, entry)) = notice {
+            result.context_entries.insert(0, entry);
+        }
         let debug_dumps = store_debug_dumps(
             self.blobs.as_ref(),
             request_dump,
@@ -437,8 +450,27 @@ async fn materialize_messages_tracked(
     let mut last_assistant_source: Option<ContextEntrySource> = None;
     let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
 
+    let mut instruction_layers = Vec::new();
+    for entry in entries {
+        if matches!(entry.kind, ContextEntryKind::Instructions) {
+            reject_foreign_provider_kind(entry)?;
+            let text = read_text(blobs, &entry.content.content_ref).await?;
+            if !text.trim().is_empty() {
+                instruction_layers.push(text);
+                positions.push((entry.entry_id, 0));
+            }
+        }
+    }
+    if !instruction_layers.is_empty() {
+        messages.push(text_message(
+            dialect.instruction_role(),
+            instruction_layers.join("\n\n"),
+        ));
+    }
+
     for entry in entries {
         match &entry.kind {
+            ContextEntryKind::Instructions => continue,
             ContextEntryKind::ToolCall { .. } => {
                 require_completions_provider_kind(entry)?;
                 let raw = read_json(blobs, &entry.content.content_ref).await?;
@@ -735,12 +767,8 @@ async fn materialize_message(
                 ..Default::default()
             })
         }
-        ContextEntryKind::Instructions => Ok(text_message(
-            dialect.instruction_role(),
-            read_text(blobs, &entry.content.content_ref).await?,
-        )),
         ContextEntryKind::Catalog { .. } => Ok(text_message(
-            dialect.instruction_role(),
+            "user",
             crate::catalog_prompts::stored_catalog_text(blobs, entry, &entry.content.content_ref)
                 .await?,
         )),
@@ -752,7 +780,8 @@ async fn materialize_message(
             tool_call_id: Some(call_id.as_str().to_owned()),
             ..Default::default()
         }),
-        ContextEntryKind::ToolCall { .. }
+        ContextEntryKind::Instructions
+        | ContextEntryKind::ToolCall { .. }
         | ContextEntryKind::ReasoningState
         | ContextEntryKind::ProviderOpaque
         | ContextEntryKind::McpApprovalResponse { .. } => {
@@ -850,9 +879,10 @@ async fn materialize_tools(
                 )
                 .await?;
                 for (name, runtime_tool) in runtime_tools {
-                    catalog
-                        .names
-                        .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                    catalog.names.insert(
+                        ToolName::new(name.clone()),
+                        Some(runtime_tool.target(&tool.id, spec)),
+                    )?;
                     let description =
                         catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                     materialized.push(oai_c::CompletionTool {
@@ -1408,7 +1438,7 @@ async fn tool_call_context(
         },
         ObservedToolCall {
             call_id,
-            tool_id: Some(ToolId::new(tool_name.as_str())),
+            target: None,
             tool_name,
             provider_kind: Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned()),
             arguments_ref,
@@ -1466,8 +1496,8 @@ fn u64_to_u32(value: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use harness::ToolChoice;
     use harness::ToolSpec;
+    use harness::{ToolChoice, ToolId};
     use std::sync::{Arc, Mutex};
 
     use harness::{
@@ -1497,6 +1527,22 @@ mod tests {
                 ),
                 annotations: None,
             }])
+        }
+
+        async fn list_tools_with_status(
+            &self,
+            spec: &harness::RemoteMcpToolSpec,
+        ) -> Result<crate::mcp::McpListing, crate::McpInventoryError> {
+            if spec.server_id == "offline" {
+                return Ok(crate::mcp::McpListing {
+                    tools: vec![],
+                    warning: Some("tools/list failed: HTTP 401 (unauthorized)"),
+                });
+            }
+            Ok(crate::mcp::McpListing {
+                tools: self.list_tools(spec).await?,
+                warning: None,
+            })
         }
 
         async fn server_url(&self, _: &str) -> Result<Option<String>, crate::McpInventoryError> {
@@ -1625,6 +1671,7 @@ mod tests {
                     llm_clients::RequestAuth::None => "none".to_owned(),
                     llm_clients::RequestAuth::ApiKey(value) => format!("api_key:{value}"),
                     llm_clients::RequestAuth::Bearer(value) => format!("bearer:{value}"),
+                    llm_clients::RequestAuth::ScopedBearer(_) => "scoped bearer".to_owned(),
                 }));
             self.seen_endpoint
                 .lock()
@@ -1724,6 +1771,82 @@ mod tests {
             turn_id: TurnId::new(3),
             request,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_listing_failure_is_visible_once_and_recovery_updates_the_session() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let adapter = OpenAiCompletionsLlmAdapter::new(fake_api(), blobs.clone())
+            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory))
+            .with_debug_dumps(true);
+        let mut generation = generation_request(request(Vec::new()));
+        for id in ["offline", "healthy"] {
+            generation.request.tools.push(ToolSpec {
+                id: ToolId::new(format!("mcp_{id}")),
+                kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
+                    server_id: id.into(),
+                    record_revision: 1,
+                    server_label: id.into(),
+                    description_ref: None,
+                    allowed_tools: None,
+                    execution: RemoteMcpExecution::Runtime,
+                    exposure: RemoteMcpExposure::Inject,
+                    approval: harness::RemoteMcpApprovalPolicy::Never,
+                    defer_loading: None,
+                }),
+                execution: Default::default(),
+                parallelism: ToolParallelism::ParallelSafe,
+            });
+        }
+        let first = adapter.generate(generation.clone()).await.unwrap();
+        let wire = crate::blob_io::read_json(
+            blobs.as_ref(),
+            &first.debug_dumps.unwrap().provider_request_ref,
+        )
+        .await
+        .unwrap();
+        assert_eq!(wire["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(wire["tools"][0]["function"]["name"], "mcp_healthy__lookup");
+        let notice = &first.result.context_entries[0];
+        let reason = "offline: tools/list failed: HTTP 401";
+        assert!(wire["messages"].to_string().contains(reason));
+        assert!(
+            crate::blob_io::read_text(blobs.as_ref(), &notice.content.content_ref)
+                .await
+                .unwrap()
+                .contains(reason)
+        );
+
+        // Replay the notice exactly as the reducer would place it in context.
+        let mut prior = entry(
+            1,
+            notice.kind.clone(),
+            ContextEntrySource::AssistantOutput {
+                run_id: generation.run_id,
+                turn_id: generation.turn_id,
+            },
+            notice.content.content_ref.clone(),
+        );
+        prior.origin = notice.origin.clone();
+        generation.request.context.entries.push(prior);
+        let repeat = adapter.generate(generation.clone()).await.unwrap();
+        assert!(
+            repeat
+                .result
+                .context_entries
+                .iter()
+                .all(|e| !matches!(e.kind, ContextEntryKind::Catalog { .. }))
+        );
+        generation.request.tools.remove(0);
+        let cleared = adapter.generate(generation).await.unwrap();
+        let recovery = &cleared.result.context_entries[0];
+        assert!(matches!(recovery.kind, ContextEntryKind::Catalog { .. }));
+        assert!(
+            crate::blob_io::read_text(blobs.as_ref(), &recovery.content.content_ref)
+                .await
+                .unwrap()
+                .contains("no credential or tool-list failures")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2938,6 +3061,147 @@ mod tests {
             materialize_create_request(&blobs, &input_request).await,
             Err(LlmAdapterError::InvalidProviderRequest { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn instructions_share_the_leading_message_and_catalogs_stay_in_history() {
+        let blobs = InMemoryBlobStore::new();
+        let text_entry = async |id, kind, text: &str| {
+            entry(
+                id,
+                kind,
+                ContextEntrySource::ContextEdit,
+                blobs.insert_text(text).await,
+            )
+        };
+        let catalog = ContextEntryKind::Catalog {
+            title: "Skills".into(),
+        };
+        let user = ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        };
+        let original = text_entry(2, catalog.clone(), "skill-a").await;
+        let mut update = text_entry(6, catalog, "skill-b").await;
+        update.supersedes = Some(original.entry_id);
+        let entries = vec![
+            text_entry(1, ContextEntryKind::Instructions, "Profile").await,
+            original,
+            text_entry(3, ContextEntryKind::Instructions, "Environment").await,
+            text_entry(4, user.clone(), "List skills").await,
+            text_entry(
+                5,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                },
+                "skill-a",
+            )
+            .await,
+            update,
+            text_entry(7, user, "List skills again").await,
+        ];
+        for (provider, expected_role) in [
+            ("openai", "developer"),
+            ("openrouter", "developer"),
+            ("deepseek", "system"),
+            ("local-qwen", "system"),
+        ] {
+            let dialect = CompletionDialect::for_provider(provider);
+            let before = materialize_messages(&blobs, &entries[..5], dialect)
+                .await
+                .unwrap();
+            let (messages, positions) = materialize_messages_tracked(&blobs, &entries, dialect)
+                .await
+                .unwrap();
+            assert!(
+                messages.starts_with(&before),
+                "{provider}: catalog refresh rewrote history"
+            );
+            assert_eq!(
+                serde_json::to_value(&messages).unwrap(),
+                json!([
+                    {"role": expected_role, "content": "Profile\n\nEnvironment"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "Skills:\n\nskill-a"},
+                        {"type": "text", "text": "List skills"}
+                    ]},
+                    {"role": "assistant", "content": "skill-a"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": format!("{}\n\nSkills:\n\nskill-b", crate::catalog_prompts::CATALOG_UPDATE_HEADER)},
+                        {"type": "text", "text": "List skills again"}
+                    ]}
+                ]),
+                "{provider}"
+            );
+            assert_eq!(
+                positions,
+                [(1, 0), (3, 0), (2, 1), (4, 1), (5, 2), (6, 3), (7, 3)]
+                    .map(|(id, index)| (ContextEntryId::new(id), index))
+            );
+
+            let task = ContextCompactionTask {
+                model: model_for(provider, "test-model"),
+                context: request(entries.clone()).context,
+                request_fingerprint: "compact".into(),
+                target_tokens: None,
+                covered_entry_ids: vec![],
+                tools: vec![],
+                input_limit_tokens: None,
+            };
+            let compact = materialize_compact_request(&blobs, &task).await.unwrap();
+            assert!(
+                compact.messages.starts_with(&messages),
+                "{provider}: compaction context"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blank_instruction_layers_have_no_message_or_request_position() {
+        let blobs = InMemoryBlobStore::new();
+        let layer = async |id, text: &str| {
+            entry(
+                id,
+                ContextEntryKind::Instructions,
+                ContextEntrySource::ContextEdit,
+                blobs.insert_text(text).await,
+            )
+        };
+        let entries = [
+            layer(1, "  Keep the indentation.\n").await,
+            layer(2, "").await,
+            layer(3, " \t\n").await,
+            entry(
+                4,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                ContextEntrySource::ContextEdit,
+                blobs.insert_text("Hello").await,
+            ),
+        ];
+        let user = oai_c::CompletionMessage::user("Hello");
+        let (mixed, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::Compatible)
+                .await
+                .unwrap();
+        assert_eq!(
+            mixed,
+            [
+                text_message("system", "  Keep the indentation.\n".into()),
+                user.clone()
+            ]
+        );
+        assert_eq!(
+            positions,
+            [(entries[0].entry_id, 0), (entries[3].entry_id, 1)]
+        );
+
+        let (all_blank, positions) =
+            materialize_messages_tracked(&blobs, &entries[1..], CompletionDialect::Compatible)
+                .await
+                .unwrap();
+        assert_eq!(all_blank, [user]);
+        assert_eq!(positions, [(entries[3].entry_id, 0)]);
     }
 
     #[tokio::test(flavor = "current_thread")]

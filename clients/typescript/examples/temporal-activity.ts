@@ -20,7 +20,7 @@ export async function runLightspeedStep(input: RunLightspeedStepInput) {
   // the workflow's history.
   const lightspeed = new LightspeedClient({
     endpoint: required("LIGHTSPEED_API_URL"),
-    apiKey: required("LIGHTSPEED_API_KEY"),
+    token: required("LIGHTSPEED_RUNTIME_TOKEN"),
   });
 
   const { session } = await lightspeed.startSession({ sessionId: input.sessionId });

@@ -83,9 +83,7 @@ npm run dev:demo --workspace @lightspeed-ai/platform-web -- --host 127.0.0.1
 | `workspace-skill.png` | Create the `release-notes` workspace and save the skill from the Workspaces and skills guide at `.lightspeed/skills/release-review/SKILL.md`. Capture the tree and editor. |
 | `bot-event-outcome.png` | Bots → PR Reviewer → Activity; expand event #11. Capture the bot header, activity controls, expanded event, and neighboring outcomes. |
 | `environment-details.png` | Environments → CI runner → Details; capture the expanded machine card. |
-| `members-and-roles.png` | Members; capture the heading, Add member button, and member table showing the seeded Admin and Contributor roles. |
 | `session-share.png` | Fix flaky scheduler test → Session actions → Share with universe…; capture the confirmation, then cancel. |
-| `api-key-groups.png` | API keys → Create key; enter `Release automation`, keep Agent client selected, and capture the dialog including its private-session warning. Cancel without creating a key. |
 | `model-providers.png` | Models → Add provider; capture the provider catalogue before selecting a connection. |
 
 The release-notes workspace is created through the demo UI for this capture;

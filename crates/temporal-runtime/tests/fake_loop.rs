@@ -144,7 +144,7 @@ async fn assert_tool_loop(builtin: bool) {
     } else {
         (FAKE_TOOL_NAME, FAKE_TOOL_NAME)
     };
-    assert_eq!(calls[0].tool_id.as_ref().map(ToolId::as_str), Some(id));
+    assert_eq!(calls[0].tool_id().map(ToolId::as_str), Some(id));
     assert_eq!(calls[0].tool_name.as_str(), name);
     let content = completed.output.as_ref().expect("output content");
     let output = api_projection::project_content_text(blobs.as_ref(), content)

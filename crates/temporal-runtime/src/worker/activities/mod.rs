@@ -10,6 +10,7 @@ use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::universe::{UniverseError, UniverseRuntime};
+use crate::worker::universes::require_activity_universe;
 use crate::worker::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_AWAIT_ENVIRONMENT_READY,
     ACTIVITY_CANCEL_WORKFLOW_TOOL_EXECUTION, ACTIVITY_CHECK_WORKFLOW_TOOL_EXECUTION,
@@ -56,12 +57,8 @@ pub use state::{
     StorageActivityDeps, ToolActivityDeps,
 };
 
-/// Worker-side universe routing. Activities carry no universe field; the
-/// authoritative tenant identity is the composed workflow id
-/// (`{universe_id}/{session_id}`, asserted at workflow bootstrap), which every
-/// session activity task carries in its `ActivityContext`. System workflows
-/// with content-derived ids instead pass an explicitly validated universe in
-/// their activity input.
+/// Worker-side universe routing. Temporal's composed workflow identity is
+/// authoritative; explicit universe fields in activity inputs must match it.
 enum WorkerUniverses {
     /// One pre-built state for one universe. Used by tests and single-universe
     /// tools; activities for any other universe fail.
@@ -133,6 +130,15 @@ impl WorkerActivities {
         self.state_for_universe(universe_id).await
     }
 
+    async fn state_for_request(
+        &self,
+        ctx: &ActivityContext,
+        universe_id: uuid::Uuid,
+    ) -> Result<Arc<ActivityState>, ActivityError> {
+        require_activity_universe(ctx, universe_id)?;
+        self.state_for_universe(universe_id).await
+    }
+
     async fn state_for_universe(
         &self,
         universe_id: uuid::Uuid,
@@ -152,12 +158,15 @@ impl WorkerActivities {
                 Ok(state.clone())
             }
             WorkerUniverses::Runtime(runtime) => runtime
-                .state_for(universe_id, false)
+                .state_for(universe_id)
                 .await
                 .map(|state| state.activities.clone())
                 .map_err(|error| match error {
                     UniverseError::Unknown { .. } => ActivityError::application(
-                        ApplicationFailure::non_retryable(anyhow::anyhow!("{error}")),
+                        ApplicationFailure::builder(anyhow::anyhow!("{error}"))
+                            .type_name(temporal_workflow::UNIVERSE_UNKNOWN_ERROR_TYPE.to_owned())
+                            .non_retryable(true)
+                            .build(),
                     ),
                     UniverseError::Runtime(_) => ActivityError::application(
                         ApplicationFailure::new(anyhow::anyhow!("{error}")),
@@ -687,40 +696,42 @@ impl WorkerActivities {
     #[activity(name = ACTIVITY_ENVIRONMENT_JOB_START)]
     pub async fn environment_job_start(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: EnvironmentJobStartActivityRequest,
     ) -> Result<EnvironmentJobStartActivityResult, ActivityError> {
-        let state = self.state_for_universe(request.universe_id).await?;
+        let state = self.state_for_request(&ctx, request.universe_id).await?;
         environment_jobs::start(state.environment_jobs(), request).await
     }
 
     #[activity(name = ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL)]
     pub async fn environment_job_prepare_workflow_tool(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: temporal_workflow::EnvironmentJobPrepareWorkflowToolRequest,
     ) -> Result<temporal_workflow::EnvironmentJobWorkflowArgs, ActivityError> {
-        let state = self.state_for_universe(request.start.universe_id).await?;
+        let state = self
+            .state_for_request(&ctx, request.start.universe_id)
+            .await?;
         environment_jobs::prepare_workflow_tool(state.environment_jobs(), request).await
     }
 
     #[activity(name = ACTIVITY_ENVIRONMENT_JOB_POLL)]
     pub async fn environment_job_poll(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: EnvironmentJobPollActivityRequest,
     ) -> Result<EnvironmentJobPollActivityResult, ActivityError> {
-        let state = self.state_for_universe(request.universe_id).await?;
+        let state = self.state_for_request(&ctx, request.universe_id).await?;
         environment_jobs::poll(state.environment_jobs(), request).await
     }
 
     #[activity(name = ACTIVITY_ENVIRONMENT_JOB_CANCEL)]
     pub async fn environment_job_cancel(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: EnvironmentJobCancelActivityRequest,
     ) -> Result<temporal_workflow::EnvironmentJobCancelActivityResult, ActivityError> {
-        let state = self.state_for_universe(request.universe_id).await?;
+        let state = self.state_for_request(&ctx, request.universe_id).await?;
         environment_jobs::cancel(state.environment_jobs(), request).await
     }
 
@@ -769,40 +780,42 @@ impl WorkerActivities {
     #[activity(name = ACTIVITY_SUBAGENT_PREPARE)]
     pub async fn subagent_prepare(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: temporal_workflow::SubagentPrepareActivityRequest,
     ) -> Result<temporal_workflow::SubagentPrepareActivityResult, ActivityError> {
-        let state = self.state_for_universe(request.start.universe_id).await?;
+        let state = self
+            .state_for_request(&ctx, request.start.universe_id)
+            .await?;
         subagents::prepare(state.subagents(), request).await
     }
 
     #[activity(name = ACTIVITY_SUBAGENT_RESOLVE)]
     pub async fn subagent_resolve(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: temporal_workflow::SubagentResolveActivityRequest,
     ) -> Result<harness::PromiseResolution, ActivityError> {
-        let state = self.state_for_universe(request.universe_id).await?;
+        let state = self.state_for_request(&ctx, request.universe_id).await?;
         subagents::resolve(state.subagents(), request).await
     }
 
     #[activity(name = ACTIVITY_SUBAGENT_CLOSE)]
     pub async fn subagent_close(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: temporal_workflow::SubagentCloseActivityRequest,
     ) -> Result<(), ActivityError> {
-        let state = self.state_for_universe(request.universe_id).await?;
+        let state = self.state_for_request(&ctx, request.universe_id).await?;
         subagents::close(state.subagents(), request).await
     }
 
     #[activity(name = ACTIVITY_SUBAGENT_LIVENESS)]
     pub async fn subagent_liveness(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: temporal_workflow::SubagentLivenessActivityRequest,
     ) -> Result<temporal_workflow::SubagentLivenessActivityResult, ActivityError> {
-        let state = self.state_for_universe(request.universe_id).await?;
+        let state = self.state_for_request(&ctx, request.universe_id).await?;
         subagents::liveness(state.subagents(), request).await
     }
 }

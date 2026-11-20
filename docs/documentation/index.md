@@ -25,10 +25,9 @@ profiles, bots, workspaces, and environments.
 
 ## Use an existing installation
 
-Sign in with the account and universe supplied by your operator. A Contributor
-can start sessions using existing resources; configuring models and profiles
-requires an Operator or Admin. [People and roles](access-and-security/people-and-roles.md)
-explains how an administrator grants access.
+Sign in and choose a universe from the switcher. A Contributor can start
+sessions using existing profiles or the universe default. Configuring models
+and profiles requires Operator or Owner access.
 
 Start with [Sessions and runs](using-lightspeed/sessions-and-runs.md) for
 working with an agent. Use [Profiles and instructions](using-lightspeed/profiles-and-instructions.md)
@@ -36,17 +35,18 @@ to reuse its setup, [Bots and triggers](using-lightspeed/bots-and-triggers.md)
 to give it ongoing work, or [Environments](environments/overview.md) to connect
 compute. The sidebar contains the guides for each capability.
 
-## Manage access and evaluate security
+<a id="manage-access-and-evaluate-security"></a>
 
-[Access and security](access-and-security/overview.md) explains who can do
-what, where those rules are enforced, and how agent execution differs from a
-person's access to the web app.
+## Manage organizations and access
 
-Use [People and roles](access-and-security/people-and-roles.md) to manage
-members, [Company sign-in (SSO)](access-and-security/single-sign-on.md) to connect
-your identity provider, [API keys and service access](access-and-security/api-keys-and-service-access.md)
-to connect programs, and [Tenant isolation and data protection](access-and-security/tenant-isolation-and-data-protection.md)
-to assess a deployment.
+[How access works](access-and-security/overview.md) follows a request from
+sign-in to the universe where the work happens. See
+[Organizations, members, and roles](access-and-security/people-and-roles.md)
+to grant access, [Company sign-in](access-and-security/single-sign-on.md)
+to connect your identity provider, and
+[API keys and runtime tokens](access-and-security/api-keys-and-service-access.md)
+to give a program its own credentials. For deployment boundaries, see
+[Tenant isolation and data protection](access-and-security/tenant-isolation-and-data-protection.md).
 
 ## Deploy Lightspeed
 
@@ -64,12 +64,12 @@ For a specific setting or failure, use the
 
 [API and TypeScript](integrating-and-extending/api-and-typescript.md) walks
 through submitting a task and retrieving its result.
-[Configurator MCP](integrating-and-extending/configurator-mcp.md) connects an
-MCP client to resource management. To add capabilities, start with
+[Configurator MCP](integrating-and-extending/configurator-mcp.md) lets
+another agent manage Lightspeed through a restricted service user. To add capabilities, start with
 [Custom tools and model providers](integrating-and-extending/custom-tools-and-model-providers.md)
 and follow the guide for your extension.
 
-The [JSON-RPC reference](../../crates/api/contract/api-reference.md) and
+The [HTTP API reference](../../crates/api/contract/api-reference.md) and
 [workflow contract](../../crates/temporal-workflow/contract/workflow-contract.md)
 provide exact operations and payloads. To supply compute, follow
 [Implement an environment provider](integrating-and-extending/environment-providers.md)

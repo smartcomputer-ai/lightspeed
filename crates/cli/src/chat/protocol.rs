@@ -346,7 +346,6 @@ pub(crate) enum ChatToolDisplayGroup {
     Mcp,
     Agent,
     Bot,
-    Message,
     Other,
 }
 
