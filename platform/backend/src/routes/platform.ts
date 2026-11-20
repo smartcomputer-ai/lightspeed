@@ -6,7 +6,7 @@ import { ORGANIZATION_ROLES, PLATFORM_OPERATIONS, type OrganizationRole, type Pl
 import type { AppContext, ApiVariables } from "../context.js";
 import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
 import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, refusePersonalOrganization, requireOrganizationAction, withOwnerNames, type OrganizationAccess } from "../organization-access.js";
-import { serviceUserDeclarations, listFederatedCredentials, putFederatedCredential, deleteFederatedCredential } from "../federated-credentials.js";
+import { listDirectoryServiceUsers, listFederatedCredentials, putFederatedCredential, deleteFederatedCredential } from "../federated-credentials.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { effectiveUniverseQuota, listPlatformSettings, platformSettings, putPlatformSetting } from "../platform-settings.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
@@ -28,12 +28,6 @@ async function universeCounts(db: AppContext["db"], organizationIds: string[]) {
 function countsUniverses(access: Pick<OrganizationAccess, "actions">) { return access.actions.has("managePolicy") || access.actions.has("createUniverse"); }
 async function universeCount(db: AppContext["db"], organizationId: string) { return (await universeCounts(db, [organizationId])).get(organizationId) ?? 0; }
 function serviceUserView(serviceUser: typeof schema.serviceUsers.$inferSelect) { return { id: serviceUser.id, organizationId: serviceUser.organizationId, name: serviceUser.name, enabled: serviceUser.enabled, role: serviceUser.role, createdAt: serviceUser.createdAt }; }
-
-async function enrollmentDetails(ctx: AppContext, auth: AuthContext, ids: string[]) {
-  const table = schema.organizationEnrollments;
-  const rows = auth.principal.platformAdmin && ids.length ? await ctx.db.select().from(table).where(inArray(table.organizationId, ids)) : [];
-  return new Map(rows.map(({ organizationId, issuer, subject, subjectPattern }) => [organizationId, { issuer, subject, subjectPattern }]));
-}
 
 export function platformRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
@@ -93,15 +87,16 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       return { setting };
     }
     case "platform/organizations/list": {
-      const accessible = await listOrganizationsForPrincipal(ctx, auth);
+      const accessible = await listOrganizationsForPrincipal(ctx, auth, { includeEnrollment: true });
       const limits = auth.credential.restrictions;
       const canCreate = deploymentAllows(auth, "createOrganization")
         && !limits.readOnly && !limits.organizationIds && !limits.universeIds && (!limits.operations || limits.operations.includes("platform/organizations/create"));
-      const counts = await universeCounts(ctx.db, accessible.filter(access => countsUniverses(access)).map(access => access.organization.id));
-      const named = await withOwnerNames(ctx.db, accessible.map(access => access.organization));
-      const settings = await platformSettings(ctx.db, ctx.env);
-      const enrollments = await enrollmentDetails(ctx, auth, accessible.map(a => a.organization.id));
-      return { organizations: accessible.map((access, index) => ({ ...organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0, settings), enrollment: enrollments.get(access.organization.id) })), canCreate };
+      const [counts, named, settings] = await Promise.all([
+        universeCounts(ctx.db, accessible.filter(countsUniverses).map(access => access.organization.id)),
+        withOwnerNames(ctx.db, accessible.map(access => access.organization)),
+        platformSettings(ctx.db, ctx.env),
+      ]);
+      return { organizations: accessible.map((access, index) => ({ ...organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0, settings), enrollment: access.enrollment })), canCreate };
     }
     case "platform/organizations/create": {
       if (!deploymentAllows(auth, "createOrganization")) throw new GateRefusal(403, "deployment permission required: createOrganization");
@@ -123,10 +118,9 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       return { organization: organizationView(organization, access, 0, await platformSettings(ctx.db, ctx.env)) };
     }
     case "platform/organizations/read": {
-      const access = await organizationForPrincipal(ctx, auth, organizationId); if (!access) throw new GateRefusal(404, "organization not found");
+      const access = await organizationForPrincipal(ctx, auth, organizationId, { includeEnrollment: true }); if (!access) throw new GateRefusal(404, "organization not found");
       const [named] = await withOwnerNames(ctx.db, [access.organization]);
-      const enrollments = await enrollmentDetails(ctx, auth, [organizationId]);
-      return { organization: { ...organizationView(named!, access, countsUniverses(access) ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)), enrollment: enrollments.get(organizationId) } };
+      return { organization: { ...organizationView(named!, access, countsUniverses(access) ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)), enrollment: access.enrollment } };
     }
     case "platform/organizations/update": {
       const access = await requireOrganizationAction(ctx, auth, organizationId, "managePolicy");
@@ -153,8 +147,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       return { organization: organizationView(named!, access, await universeCount(ctx.db, organizationId), await platformSettings(ctx.db, ctx.env)) };
     }
     case "platform/organizations/members/list": {
-      await requireOrganizationDirectory(ctx, auth, organizationId);
-      const organization = (await organizationForPrincipal(ctx, auth, organizationId))!;
+      const organization = await requireOrganizationDirectory(ctx, auth, organizationId);
       const rows = await ctx.db.select({ user: schema.user, membership: schema.member }).from(schema.user).leftJoin(schema.member, and(eq(schema.member.userId, schema.user.id), eq(schema.member.organizationId, organizationId)));
       const members = rows.flatMap(({ user, membership }) => {
         const manual = ["member", "creator", "admin"].includes(membership?.role ?? "") ? membership!.role as OrganizationRole : undefined;
@@ -208,10 +201,9 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       return { ok: true };
     }
     case "platform/organizations/service-users/list": {
-      await requireOrganizationDirectory(ctx, auth, organizationId);
-      const serviceUsers = await ctx.db.select().from(schema.serviceUsers).where(eq(schema.serviceUsers.organizationId, organizationId));
-      const declarations = await serviceUserDeclarations(ctx, auth, organizationId, serviceUsers.map(user => user.id));
-      return { serviceUsers: serviceUsers.map(user => ({ ...serviceUserView(user), federatedCredentials: declarations.get(user.id) })) };
+      const access = await requireOrganizationDirectory(ctx, auth, organizationId);
+      const users = await listDirectoryServiceUsers(ctx, auth, access);
+      return { serviceUsers: users.map(({ user, declarations }) => ({ ...serviceUserView(user), federatedCredentials: declarations })) };
     }
     case "platform/organizations/service-users/create": {
       await requireOrganizationAction(ctx, auth, organizationId, "manageServiceUsers");
@@ -304,9 +296,9 @@ async function ownerAccess(ctx: AppContext, auth: AuthContext, reference: Univer
 }
 async function requireOrganizationDirectory(ctx: AppContext, auth: AuthContext, organizationId: string) {
   const organization = await organizationForPrincipal(ctx, auth, organizationId); if (!organization) throw new GateRefusal(404, "organization not found");
-  if (organization.actions.has("manageMembers")) return;
+  if (organization.actions.has("manageMembers")) return organization;
   // Choosing whom to grant a universe needs the organization's principals.
-  if ((await listUniverseAccesses(ctx, auth)).some(access => access.organization.id === organizationId && access.actions.has("administer"))) return;
+  if ((await listUniverseAccesses(ctx, auth)).some(access => access.organization.id === organizationId && access.actions.has("administer"))) return organization;
   throw new GateRefusal(403, "browsing organization principals requires manageMembers, or administer on one of its universes");
 }
 /** Only an Owner who is still in the organization keeps a universe owned. */

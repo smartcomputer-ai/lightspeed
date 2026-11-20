@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { ORGANIZATION_ROLES, highestRole, organizationActions, organizationRoleSchema, type OrganizationAction, type OrganizationRole, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { deploymentAllows, type AuthContext } from "./auth-context.js";
@@ -30,7 +30,22 @@ export function resourceScopeAllowed(auth: AuthContext, organizationId: string, 
     && (!universeId || !limits.universeIds || limits.universeIds.includes(universeId));
 }
 
+type Enrollment = Pick<typeof schema.organizationEnrollments.$inferSelect, "issuer" | "subject" | "subjectPattern">;
+
+type OrganizationRow = typeof schema.organization.$inferSelect & { enrollment?: Enrollment | null };
+
+function selectOrganizations(ctx: AppContext, auth: AuthContext, includeEnrollment: boolean) {
+  const { organization, organizationEnrollments } = schema;
+  if (includeEnrollment && auth.principal.platformAdmin) {
+    const { issuer, subject, subjectPattern } = organizationEnrollments;
+    return ctx.db.select({ ...getTableColumns(organization), enrollment: { issuer, subject, subjectPattern } }).from(organization)
+      .leftJoin(organizationEnrollments, eq(organizationEnrollments.organizationId, organization.id));
+  }
+  return ctx.db.select().from(organization);
+}
+
 export interface OrganizationAccess {
+  enrollment?: Enrollment;
   organization: typeof schema.organization.$inferSelect;
   /** The highest role held, for display. Decisions use `actions`. */
   role: OrganizationRole;
@@ -43,21 +58,21 @@ export interface OrganizationAccess {
 
 /** A principal's organization authority: the union of the role it holds
  * there and, for a deployment administrator, the Admin bundle. */
-function organizationAccess(auth: AuthContext, organization: typeof schema.organization.$inferSelect, held: OrganizationRole | undefined): OrganizationAccess | null {
+function organizationAccess(auth: AuthContext, { enrollment, ...organization }: OrganizationRow, held: OrganizationRole | undefined): OrganizationAccess | null {
   const roles: OrganizationRole[] = held ? [held] : [];
   if (deploymentAllows(auth, "administerOrganizations")) roles.push("admin");
   const role = highestRole(ORGANIZATION_ROLES, roles);
-  return role ? { organization, role, actions: organizationActions(roles), member: held !== undefined } : null;
+  return role ? { organization, enrollment: enrollment ?? undefined, role, actions: organizationActions(roles), member: held !== undefined } : null;
 }
 
-export async function organizationForPrincipal(ctx: AppContext, auth: AuthContext, organizationId: string): Promise<OrganizationAccess | null> {
+export async function organizationForPrincipal(ctx: AppContext, auth: AuthContext, organizationId: string, { includeEnrollment = false } = {}): Promise<OrganizationAccess | null> {
   if (!resourceScopeAllowed(auth, organizationId)) return null;
   if (auth.credential.restrictions.universeIds) {
     if (!auth.credential.restrictions.universeIds.length) return null;
     const [scoped] = await ctx.db.select({ id: schema.universes.id }).from(schema.universes).where(and(eq(schema.universes.organizationId, organizationId), inArray(schema.universes.lightspeedUniverseId, auth.credential.restrictions.universeIds))).limit(1);
     if (!scoped) return null;
   }
-  const [organization] = await ctx.db.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).limit(1);
+  const [organization] = await selectOrganizations(ctx, auth, includeEnrollment).where(eq(schema.organization.id, organizationId)).limit(1);
   if (!organization) return null;
   if (auth.principal.kind === "serviceUser") {
     const [serviceUser] = await ctx.db.select().from(schema.serviceUsers).where(and(eq(schema.serviceUsers.id, auth.principal.id), eq(schema.serviceUsers.organizationId, organizationId))).limit(1);
@@ -101,8 +116,8 @@ export async function refusePersonalOrganization(db: AppContext["db"], organizat
 
 /** Resolve organization inventory with a bounded query count, including declarations.
  * Directory policies are evaluated locally; no query is issued per organization. */
-export async function listOrganizationsForPrincipal(ctx: AppContext, auth: AuthContext): Promise<OrganizationAccess[]> {
-  const organizations = await ctx.db.select().from(schema.organization);
+export async function listOrganizationsForPrincipal(ctx: AppContext, auth: AuthContext, { includeEnrollment = false } = {}): Promise<OrganizationAccess[]> {
+  const organizations = await selectOrganizations(ctx, auth, includeEnrollment);
   const memberships = auth.principal.kind === "user"
     ? await ctx.db.select().from(schema.member).where(eq(schema.member.userId, auth.principal.id)) : [];
   const membershipRoles = new Map(memberships.map(member => [member.organizationId, organizationRoleSchema.safeParse(member.role).data]));
