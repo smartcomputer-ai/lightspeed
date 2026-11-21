@@ -3,11 +3,12 @@ import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { SessionDetail } from "@session-ui/SessionDetail";
+import type { SessionDetail } from "@lightspeed-ai/session-components";
 import { BotChat } from "./chat";
 
 vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: () => true }) }));
-vi.mock("@session-ui/SessionDetail", () => ({
+vi.mock("@lightspeed-ai/session-components", async original => ({
+  ...await original<typeof import("@lightspeed-ai/session-components")>(),
   SessionDetail: ({ sessionId, sessionHref, embedded }: ComponentProps<typeof SessionDetail>) => (
     <a data-embedded={embedded} href={sessionHref(sessionId)}>{sessionId}</a>
   ),

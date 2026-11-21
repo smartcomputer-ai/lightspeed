@@ -1,3 +1,5 @@
+import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAttached } from "@/components/profiles/resource-features";
+import type { UniverseState } from "./store";
 import type { Environment, ModelConfig } from "@/api";
 import { modelOf } from "./engine";
 
@@ -19,6 +21,17 @@ export function usableEnvironment(environment: Environment): boolean {
   );
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+/// Profiles select resources whose lifecycle is managed independently.
+export function resolveSessionEnvironment(
+  universe: UniverseState,
+  config: Record<string, unknown>,
+): { environmentId: string | null } | { error: string } {
+  if (environmentAttachments(config).some((attachment) => attachment.inherit)) return { error: "inherited environments require a parent session" };
+  const environmentId = defaultEnvironmentAttachment(config)?.environmentId;
+  if (!environmentId) return { environmentId: null };
+  if (!isEnvironmentAttached(config, environmentId)) return { error: `environment is not attached: ${environmentId}` };
+  const environment = universe.environments.get(environmentId);
+  if (!environment) return { error: `environment not found: ${environmentId}` };
+  if (!usableEnvironment(environment)) return { error: `environment is ${environment.status}: ${environmentId}` };
+  return { environmentId };
 }

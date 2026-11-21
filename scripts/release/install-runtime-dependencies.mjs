@@ -10,8 +10,8 @@ export function installRuntimeDependencies(directory, workspace) {
   const writeJson = (name, value) => fs.writeFileSync(path.join(directory, name), `${JSON.stringify(value, null, 2)}\n`);
   const manifest = readJson('package.json');
   const originalLock = readJson('package-lock.json');
-  for (const location of ['', ...manifest.workspaces]) {
-    const name = path.join(location, 'package.json');
+  const workspaceManifests = fs.globSync(manifest.workspaces.map(pattern => `${pattern}/package.json`), { cwd: directory });
+  for (const name of ['package.json', ...workspaceManifests]) {
     const item = readJson(name);
     delete item.devDependencies;
     writeJson(name, item);

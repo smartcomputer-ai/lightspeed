@@ -15,19 +15,18 @@ trap 'rm -rf "$stage_root"' EXIT
 
 copy_workspace_manifests() {
   local root="$1"
-  local workspace
   cp package.json package-lock.json tsconfig.json "$root/"
-  for workspace in \
-    clients/typescript \
-    docs/site \
-    platform/configurator-mcp \
-    platform/db \
-    platform/backend \
-    platform/shared \
-    platform/web; do
-    mkdir -p "$root/$workspace"
-    cp "$workspace/package.json" "$root/$workspace/"
-  done
+  node --input-type=module - "$root" <<'JS'
+import { copyFileSync, globSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import pkg from './package.json' with { type: 'json' };
+
+for (const manifest of globSync(pkg.workspaces.map(pattern => `${pattern}/package.json`))) {
+  const destination = join(process.argv[2], manifest);
+  mkdirSync(dirname(destination), { recursive: true });
+  copyFileSync(manifest, destination);
+}
+JS
 }
 
 stage_runtime() {
@@ -58,6 +57,7 @@ stage_runtime platform @lightspeed-ai/platform-backend \
   clients/typescript/dist \
   distributions/standard/api.ts \
   distributions/standard/catalog.ts \
+  distributions/standard/server.ts \
   modules/*/api \
   modules/*/module.ts \
   platform/backend/src \

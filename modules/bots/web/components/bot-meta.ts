@@ -3,7 +3,7 @@ import { ActivityIcon, InboxIcon, PrivateIcon, SharedIcon, SubAgentIcon } from "
 import type { Attribution, ResourceAccessSummary, BotEventView } from "@lightspeed-ai/sdk";
 import type { SessionSummary } from "@lightspeed-ai/platform-web/modules/client";
 import type { MetaItem, MetaTone } from "@lightspeed-ai/platform-web/modules/ui/meta";
-import { sessionName, SubAgentDetails, subAgentsTip } from "@lightspeed-ai/platform-web/modules/conversations";
+import { sessionName, SubAgentDetails, subAgentsTip } from "@lightspeed-ai/session-components";
 import type { ActivityTone } from "@lightspeed-ai/platform-web/modules/ui/status";
 
 /// A bot's meta items: one list for its list row and its page header.

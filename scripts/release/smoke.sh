@@ -59,7 +59,7 @@ test -f dist/configurator-mcp/dist/bin.js
 test -f dist/configurator-mcp/node_modules/@lightspeed-ai/sdk/dist/index.js
 
 tar -tzf dist/runtime/platform.tar.gz ./package.json >/dev/null
-tar -tzf dist/runtime/platform.tar.gz ./platform/backend/src/main.ts >/dev/null
+tar -tzf dist/runtime/platform.tar.gz ./distributions/standard/server.ts >/dev/null
 tar -tzf dist/runtime/platform.tar.gz ./platform/web/dist/index.html >/dev/null
 (cd dist && sha256sum --check checksums.txt)
 scripts/release/verify-manifest.mjs "$@"

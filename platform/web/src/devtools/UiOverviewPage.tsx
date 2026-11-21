@@ -102,7 +102,7 @@ import * as Icons from "@/icons";
 import type { IconComponent } from "@/icons";
 import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
-import { GROUP_ORDER, StepRow, groupStyle } from "@session-ui/components/tool-trace";
+import { GROUP_ORDER, StepRow, groupStyle } from "@/components/tool-activity";
 import { idColor, idHue } from "@/lib/identity-colors";
 import { useBundledModules } from "@/lib/web-modules";
 import { universeNavigation } from "@/components/universe-nav";
@@ -2233,7 +2233,7 @@ function EntitiesSection() {
         <EntityTable>
           <EntityRow
             entity="Thinking"
-            source="session/tool-trace.tsx"
+            source="components/tool-activity.tsx"
             icon={<Brain className="size-5" />}
             colored={<span className="flex size-8 items-center justify-center rounded-md bg-muted text-muted-foreground"><Brain className="size-4" /></span>}
             preview={<StepRow icon={<Brain />} tone="text-muted-foreground" verb="Thinking" target="Planning the retry fix" />}

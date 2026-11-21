@@ -1,5 +1,5 @@
 import { PreviewIcon } from "@/icons";
-import { MarkdownContent } from "@session-ui/components/markdown-content";
+import { MarkdownContent } from "@/components/markdown-content";
 import type { FileFacts, FileModeProps, FileProvider } from "../types";
 import { effectiveMediaType } from "../media-types";
 import { SOURCE_MODE, isText } from "./text";

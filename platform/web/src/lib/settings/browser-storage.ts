@@ -1,17 +1,12 @@
 import type { SettingsProvider, StorageArea, StoredChange } from "./provider";
 
-/// Device entries under a key prefix that are dropped once they have not
-/// been used (read or written) for a while, such as the drafts of sessions
-/// that were since deleted.
-export interface ExpiringEntries {
-  prefix: string;
-  maxAgeMs: number;
-}
-
 export interface BrowserStorageOptions {
-  expiring?: readonly ExpiringEntries[];
+  expiringPrefixes?: readonly string[];
   now?: () => number;
 }
+
+/** Device drafts and recovery data are retained for a month after last use. */
+const DEVICE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /// When each expiring entry was last used, by key.
 export const LAST_USED_KEY = "lightspeed:settings:last-used";
@@ -21,13 +16,17 @@ interface Pending {
   waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
 }
 
+interface BrowserStorageProvider extends SettingsProvider {
+  registerExpiry(prefixes: readonly string[]): void;
+}
+
 /// Keeps synced and device settings in `localStorage` and tab settings in
 /// `sessionStorage`, under the keys the registry names. It loads at once,
 /// follows changes other tabs make, and never throws on blocked or full
 /// storage: reads give nothing and saves reject.
-export function createBrowserStorageProvider(options: BrowserStorageOptions = {}): SettingsProvider {
+export function createBrowserStorageProvider(options: BrowserStorageOptions = {}): BrowserStorageProvider {
   const now = options.now ?? Date.now;
-  const expiring = options.expiring ?? [];
+  const expiring = new Set(options.expiringPrefixes);
   const pending = new Map<string, Pending>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timerDue = Infinity;
@@ -44,8 +43,11 @@ export function createBrowserStorageProvider(options: BrowserStorageOptions = {}
     }
   };
   const id = (area: StorageArea, key: string) => `${area}\u0000${key}`;
-  const expires = (area: StorageArea, key: string) =>
-    area === "local" && expiring.find((entry) => key.startsWith(entry.prefix));
+  const expires = (area: StorageArea, key: string) => {
+    if (area !== "local") return false;
+    for (const prefix of expiring) if (key.startsWith(prefix)) return true;
+    return false;
+  };
 
   const readLastUsed = (local: Storage): Record<string, number> => {
     try {
@@ -85,9 +87,10 @@ export function createBrowserStorageProvider(options: BrowserStorageOptions = {}
   /// for entries stored before they had one.
   const sweep = () => {
     const local = storage("local");
-    if (!local || expiring.length === 0) return;
+    if (!local) return;
     try {
       const index = readLastUsed(local);
+      if (expiring.size === 0 && !Object.keys(index).length) return;
       const at = now();
       const present = new Set<string>();
       for (let i = 0; i < local.length; i++) {
@@ -96,13 +99,13 @@ export function createBrowserStorageProvider(options: BrowserStorageOptions = {}
       }
       let changed = false;
       for (const key of present) {
-        const entry = expires("local", key);
-        if (!entry) continue;
-        const last = index[key];
+        // The index keeps a registered key expiring even on a page that omits its module.
+        const last = Object.hasOwn(index, key) ? index[key] : undefined;
         if (last === undefined) {
+          if (!expires("local", key)) continue;
           index[key] = at;
           changed = true;
-        } else if (at - last > entry.maxAgeMs) {
+        } else if (at - last > DEVICE_MAX_AGE_MS) {
           local.removeItem(key);
           delete index[key];
           changed = true;
@@ -169,6 +172,11 @@ export function createBrowserStorageProvider(options: BrowserStorageOptions = {}
 
   return {
     ready: Promise.resolve(),
+
+    registerExpiry(prefixes) {
+      for (const prefix of prefixes) expiring.add(prefix);
+      sweep();
+    },
 
     peek(area, key) {
       const source = storage(area);

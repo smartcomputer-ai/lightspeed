@@ -2,7 +2,7 @@ import { DownloadIcon, InfoIcon } from "@/icons";
 import { fileIcon } from "@/components/file-icon";
 import { fileTypeName } from "@/components/workspace-file-meta";
 import { Button } from "@/components/ui/button";
-import { formatBytes } from "@/lib/composer-attachments";
+import { formatBytes } from "@/lib/format-bytes";
 import type { FileModeProps, FileProvider } from "../types";
 
 /// What there is to know about a file no provider shows, and its download.

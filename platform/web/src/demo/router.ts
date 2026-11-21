@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { DemoStore } from "./store";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
-import { hookRoutes } from "./routes/bots";
+import { hookRoutes } from "./routes/bot-webhooks";
 import { environmentRoutes } from "./routes/environments";
 import { mcpRoutes } from "./routes/mcp";
 import { platformRoutes } from "./routes/platform";

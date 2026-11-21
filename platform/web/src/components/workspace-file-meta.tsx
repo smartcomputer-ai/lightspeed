@@ -11,7 +11,7 @@ import {
   MetaDetailsRow,
 } from "@/components/meta-details";
 import { fileIcon } from "@/components/file-icon";
-import { formatBytes } from "@/lib/composer-attachments";
+import { formatBytes } from "@/lib/format-bytes";
 
 /// The meta toolbar of an open workspace file, beside its path: what kind
 /// of file it is, how big (and, for text, how many lines), whether it runs,

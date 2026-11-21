@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { demoCanReadSession, demoUniverseActions } from "../access";
 import type { AgentNotification } from "@lightspeed-ai/sdk";
 import { sessionSummary, type DemoStore, type UniverseState } from "../store";
-import { listItemOf } from "./bots";
+import { listItemOf } from "../bot-runtime";
 
 /** The demo has no database change bus. Compare its small in-memory projections
  * on a short timer so scripted background activity uses the same browser stream.

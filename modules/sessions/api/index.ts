@@ -3,7 +3,7 @@ import { parseBody, type UniverseModuleEnv } from "@lightspeed-ai/platform-backe
 import { sessionCreateSchema, sessionListQuery } from "./collection.js";
 
 /** Standalone Sessions browser and launcher, mounted by the distribution. */
-export function sessionCollectionRoutes() {
+export default function sessionCollectionRoutes(): Hono<UniverseModuleEnv> {
   const app = new Hono<UniverseModuleEnv>();
 
   app.get("/", async (c) => {

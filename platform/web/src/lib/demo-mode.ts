@@ -1,5 +1,5 @@
 /// Whether the app runs on the in-browser demo backend, and how to reset its
-/// data. The demo entry (src/demo/main.ts) turns it on before it loads the
+/// data. The standard distribution’s demo entry turns it on before it loads the
 /// app, so the app draws demo notices itself (the welcome dialog, the reset
 /// in settings) instead of markup injected into the page.
 

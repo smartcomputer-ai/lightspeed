@@ -5,7 +5,7 @@ import { api } from "@lightspeed-ai/platform-web/modules/client";
 import { botLabel } from "../model";
 import type { BotControllerSnapshot, BotStateView, BotView } from "@lightspeed-ai/sdk";
 import { useActionPermissions } from "@lightspeed-ai/platform-web/modules";
-import { SessionDetail, sessionDraftKey } from "@lightspeed-ai/platform-web/modules/conversations";
+import { SessionDetail, sessionDraftKey } from "@lightspeed-ai/session-components";
 
 
 /** The first thing a freshly created bot hears; its answer is the smoke test. */

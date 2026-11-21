@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@lightspeed-ai/platform-web/modules/ui/dropdown-menu";
-import { MenuIdentity } from "@lightspeed-ai/platform-web/modules/conversations";
+import { MenuIdentity } from "@lightspeed-ai/session-components";
 import { useRowMenu } from "@lightspeed-ai/platform-web/modules/ui/lists";
 
 /**

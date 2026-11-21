@@ -1,6 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { createBrowserStorageProvider } from "./browser-storage";
-import { EXPIRING_SETTINGS } from "./registry";
 import type { Setting } from "./setting";
 import { createSettingsStore, type SettingsStore } from "./store";
 
@@ -11,9 +10,13 @@ export type { SettingsStore } from "./store";
 /// The one settings store of this page. Every setting is kept in browser
 /// storage for now, in the demo too. Saving synced settings with the account
 /// changes only this line, not the code that uses settings.
-export const settings: SettingsStore = createSettingsStore(
-  createBrowserStorageProvider({ expiring: EXPIRING_SETTINGS }),
-);
+const browserStorage = createBrowserStorageProvider();
+export const settings: SettingsStore = createSettingsStore(browserStorage);
+
+/** A module can expire stale local values even when it loads after the shell. */
+export function registerDeviceExpiry(prefixes: readonly string[]): void {
+  browserStorage.registerExpiry(prefixes);
+}
 
 /// A setting's value and a setter, like `useState`. Every component using the
 /// setting updates together, including when another tab changes it. Setting

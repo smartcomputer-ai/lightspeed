@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import type { IconComponent } from "@/icons";
 import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { PopoverClose } from "@/components/ui/popover";
-import type { ResourceTone } from "@session-ui/model/session-resources";
 import { cn } from "@/lib/utils";
 
 /// The content of a meta item's popover (`MetaItem.details`): what the item
@@ -25,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 /// A resource's tone as a status dot's: running is a steady green, busy
 /// waits in amber, a problem asks for attention.
+export type ResourceTone = "ok" | "idle" | "busy" | "problem";
 export const RESOURCE_STATUS_TONE: Record<ResourceTone, StatusTone> = {
   ok: "ready",
   idle: "idle",

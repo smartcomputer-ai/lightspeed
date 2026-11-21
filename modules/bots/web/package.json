@@ -1,0 +1,16 @@
+{
+  "name": "@lightspeed-ai/bots-web",
+  "private": true,
+  "type": "module",
+  "exports": "./index.ts",
+  "dependencies": {
+    "@lightspeed-ai/sdk": "*",
+    "@lightspeed-ai/session-components": "*"
+  },
+  "peerDependencies": {
+    "@lightspeed-ai/platform-web": "*",
+    "@tanstack/react-query": "^5.104.1",
+    "react": "^19.3.0",
+    "react-router-dom": "^7.18.4"
+  }
+}

@@ -1,4 +1,4 @@
-import { activeEnvironmentItems, sessionCollections, sessionMetaItems, sessionName } from "@lightspeed-ai/platform-web/modules/conversations";
+import { activeEnvironmentItems, sessionCollections, sessionMetaItems, sessionName } from "@lightspeed-ai/session-components";
 import { rosterQuery } from "./roster-query";
 import {
   useWatchConnected,

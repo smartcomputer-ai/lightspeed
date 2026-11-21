@@ -1,6 +1,6 @@
 import { createContext, useContext, type ComponentType } from "react";
 import type { PlatformModule, UniverseAction } from "@lightspeed-ai/platform-shared";
-import type { ControllerPresentationProps } from "@session-ui/controller-presentation";
+import type { ControllerPresentationProps } from "@/lib/session-controller";
 import type { Universe } from "@/api";
 import { useActiveUniverse } from "./universes";
 import { useOrganizationModules } from "@/lib/organization-modules";

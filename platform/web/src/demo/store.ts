@@ -1,6 +1,5 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import { applyEvents, emptyTranscript } from "@session-ui/model/transcript";
 import { effectiveFeatures, mergeFeatureOverrides, type AuditEvent, type PlatformSettingKey, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor, type OrganizationRole, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
@@ -395,18 +394,29 @@ function lastRunOf(record: SessionRecord): SessionSummary["lastRun"] {
 
 const PREVIEW_LIMIT = 200;
 
-/// The latest user or agent message of a session as one line of plain text:
-/// what the session list shows under each title. Read from the same
-/// transcript the session page draws, so it matches the last bubble.
-export function lastMessagePreviewOf(events: SessionRecord["events"]): string | undefined {
-  const entries = applyEvents(emptyTranscript(), events).entries;
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index]!;
-    if (entry.kind !== "message") continue;
-    const text = plainLine(entry.text);
-    if (text) return text.length > PREVIEW_LIMIT ? `${text.slice(0, PREVIEW_LIMIT - 1).trimEnd()}…` : text;
+/** Project the same applied messages that update the runtime's session summary. */
+function lastMessagePreviewOf(events: SessionRecord["events"]): string | undefined {
+  for (let eventIndex = events.length - 1; eventIndex >= 0; eventIndex--) {
+    const { kind } = events[eventIndex]!;
+    if (kind.type !== "contextEntriesApplied" && kind.type !== "contextKeyPrefixReplaced") continue;
+    for (let entryIndex = kind.entries.length - 1; entryIndex >= 0; entryIndex--) {
+      const preview = messagePreview(kind.entries[entryIndex]!);
+      if (preview) return preview;
+    }
   }
-  return undefined;
+}
+
+function messagePreview(entry: ContextEntryView): string | undefined {
+  if (entry.kind.type !== "message" || entry.source?.type === "runtime") return;
+  const { mime, providerKind } = entry.content;
+  const userMessage = entry.kind.role === "user";
+  if (userMessage && (providerKind != null || (mime != null && !mime.startsWith("text/")) || entry.preview?.startsWith("[document"))) return;
+  const content = userMessage ? entry.text ?? entry.preview : entry.preview ?? entry.text;
+  const text = plainLine(content ?? "");
+  if (!text) return;
+  const characters = Array.from(text);
+  if (characters.length <= PREVIEW_LIMIT) return text;
+  return characters.slice(0, PREVIEW_LIMIT - 1).join("").trimEnd() + "…";
 }
 
 /// Markdown reduced to the words: code blocks dropped, links to their text,

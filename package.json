@@ -5,6 +5,8 @@
   "workspaces": [
     "clients/typescript",
     "docs/site",
+    "modules/*/components",
+    "modules/*/web",
     "platform/configurator-mcp",
     "platform/db",
     "platform/backend",
@@ -31,6 +33,7 @@
     "generate": "npm run generate --workspace @lightspeed-ai/platform-db",
     "test": "npm run test --workspaces --if-present",
     "test:consumers": "npm run test --workspace clients/typescript --workspace platform --if-present",
+    "test:platform-host": "npm run test:host --workspace platform/backend --workspace platform/web",
     "test:build": "node --test scripts/ci/*.test.mjs scripts/release/*.test.mjs",
     "test:migrations": "npm run test:migrations --workspace @lightspeed-ai/platform-db",
     "test:release-packaging": "npm --prefix clients/typescript ci --ignore-scripts && npm --prefix platform/configurator-mcp ci --ignore-scripts && scripts/release/stage-runtimes.sh",

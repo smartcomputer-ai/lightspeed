@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ControllerPresentationProps } from "@session-ui/controller-presentation";
+import type { ControllerPresentationProps } from "@lightspeed-ai/platform-web/modules";
 import { settleQueries } from "@/test/settle-queries";
 import { BotSessionControllerPresentation } from "./session-controller-presentation";
 

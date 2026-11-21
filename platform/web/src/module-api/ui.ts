@@ -10,3 +10,8 @@ export { cn } from "../lib/utils";
 export { relativeTime } from "../lib/relative-time";
 export { idColor } from "../lib/identity-colors";
 export { useDialogWarp } from "../lib/dialog-warp";
+export { MarkdownContent, type MarkdownReferenceProps } from "../components/markdown-content";
+export {
+  MetadataEditor, MetadataMapEditor, metadataToRows, rowsToMetadata, sameMetadata, type MetadataRow,
+} from "../components/metadata-editor";
+export { prefersReducedMotion, subscribeReducedMotion } from "../lib/reduced-motion";

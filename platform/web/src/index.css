@@ -14,7 +14,7 @@
 @import "@fontsource/ibm-plex-mono/700-italic.css";
 
 @source "../../../modules/*/web";
-@source "../../session-ui";
+@source "../../../modules/*/components";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -23,15 +23,6 @@
    before first paint by index.html, kept current by src/lib/reduced-motion.ts. */
 @custom-variant motion-safe (&:where(:root[data-motion="full"], :root[data-motion="full"] *));
 @custom-variant motion-reduce (&:where(:root[data-motion="reduce"], :root[data-motion="reduce"] *));
-
-@keyframes transcript-enter {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-:root[data-motion="full"] .transcript-enter {
-    animation: transcript-enter var(--content-transition-duration) ease-out;
-}
 
 /* Status dots (StatusDot): all in CSS. The dot is its tone's text color
    (currentColor); live pulses, fading its fill (not its opacity, which would

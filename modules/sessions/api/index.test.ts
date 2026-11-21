@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { expect, it, vi } from "vitest";
 import type { UniverseModuleEnv } from "@lightspeed-ai/platform-backend/modules";
-import { sessionCollectionRoutes } from "./index.js";
+import sessionCollectionRoutes from "./index.js";
 
 function moduleApp() {
   const call = vi.fn();

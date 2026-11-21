@@ -34,7 +34,7 @@ docker run --rm --entrypoint /usr/local/bin/lightspeed "${tag}-runtime" config s
 docker run --rm --entrypoint node "${tag}-configurator-mcp" \
   --input-type=module -e 'await import("/app/dist/index.js")'
 docker run --rm --entrypoint node "${tag}-platform" -e \
-  'for (const file of ["/app/platform/backend/src/main.ts", "/app/platform/web/dist/index.html"]) require("node:fs").accessSync(file)'
+  'for (const file of ["/app/distributions/standard/server.ts", "/app/platform/web/dist/index.html"]) require("node:fs").accessSync(file)'
 for image in runtime platform; do
   test "$(docker image inspect "${tag}-${image}" \
     --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$git_sha"

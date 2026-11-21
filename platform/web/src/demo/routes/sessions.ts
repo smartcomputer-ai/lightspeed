@@ -1,4 +1,4 @@
-import { isEnvironmentAttached } from "@session-ui/model/resource-features";
+import { isEnvironmentAttached } from "@/components/profiles/resource-features";
 import { demoCanReadSession, demoUniverseActions } from "../access";
 import { modelFromConfig } from "@/lib/model-defaults";
 import { Hono, type Context } from "hono";
@@ -12,7 +12,8 @@ import {
   type MessageAttachment,
 } from "@lightspeed-ai/platform-shared";
 import type { SessionView } from "@/api";
-import { isRecord, sessionConfig, usableEnvironment } from "../session-config";
+import { isRecord } from "../input";
+import { sessionConfig, usableEnvironment } from "../session-config";
 import {
   refreshDemoCompactionView,
   PROFILE_INSTRUCTIONS_KEY,

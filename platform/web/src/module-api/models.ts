@@ -1,2 +1,2 @@
 export { ProviderReadinessBanner } from "../components/provider-readiness-banner";
-export { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults } from "../lib/model-defaults";
+export { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults, useModelDiscovery } from "../lib/model-defaults";

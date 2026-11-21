@@ -1,7 +1,9 @@
 import { botsApiPath, botListQuery } from "../queries";
 import {
-  defaultEnvironmentAttachment, hasSessionFeature, MetadataMapEditor, resourceFeatureDisableReasons, SessionConfigEditor, setupResourceFeatureError, useSessionConfigEditorOptions,
-} from "@lightspeed-ai/platform-web/modules/conversations";
+  defaultEnvironmentAttachment, hasSessionFeature, resourceFeatureDisableReasons,
+  SessionConfigEditor, setupResourceFeatureError, useSessionConfigEditorOptions,
+} from "@lightspeed-ai/platform-web/modules/profiles";
+import { MetadataMapEditor, cn } from "@lightspeed-ai/platform-web/modules/ui";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfigureIcon, CopiedIcon, CopyIcon, ExpandIcon, GoToIcon } from "@lightspeed-ai/platform-web/modules/ui/icons";
@@ -43,7 +45,6 @@ import { Switch } from "@lightspeed-ai/platform-web/modules/ui/switch";
 import { Textarea } from "@lightspeed-ai/platform-web/modules/ui/textarea";
 import { WithTooltip } from "@lightspeed-ai/platform-web/modules/ui/tooltip";
 import { openEnvironmentsQuery } from "@lightspeed-ai/platform-web/modules/environments";
-import { cn } from "@lightspeed-ai/platform-web/modules/ui";
 import { useActionPermissions } from "@lightspeed-ai/platform-web/modules";
 import { BotEnvironmentCard } from "./environment-card";
 import { BotAvatar } from "./face";

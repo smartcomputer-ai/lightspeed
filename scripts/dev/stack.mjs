@@ -313,7 +313,7 @@ function createPlan(profile, sourceEnv) {
       {
         name: "platform",
         command: tsx,
-        args: ["watch", "platform/backend/src/main.ts"],
+        args: ["watch", "distributions/standard/server.ts"],
         cwd: repoRoot,
         env,
         // First-login bootstrap checks the canonical administrator through the HTTP API.

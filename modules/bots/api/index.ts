@@ -28,7 +28,7 @@ async function jsonBody(c: {
   }
 }
 
-export function botRoutes() {
+export default function botRoutes(): Hono<UniverseModuleEnv> {
   const app = new Hono<UniverseModuleEnv>();
 
   app.get("/", async (c) => {

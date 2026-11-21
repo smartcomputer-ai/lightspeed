@@ -1,0 +1,32 @@
+import { DropdownMenuCheckboxItem, DropdownMenuGroup } from "@lightspeed-ai/platform-web/modules/ui/dropdown-menu";
+import { useUserPreferences } from "@lightspeed-ai/platform-web/modules/settings";
+
+/** Shared account-wide display controls in session and bot conversation menus. */
+export function SessionMenuPreferences() {
+  const preferences = useUserPreferences();
+  return (
+    <DropdownMenuGroup>
+        <DropdownMenuCheckboxItem
+          checked={preferences.collapseCompletedRuns}
+          onCheckedChange={preferences.setCollapseCompletedRuns}
+          closeOnClick={false}
+        >
+          Collapse completed runs
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={preferences.showRunStatistics}
+          onCheckedChange={preferences.setShowRunStatistics}
+          closeOnClick={false}
+        >
+          Show run statistics
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={preferences.showSessionResources}
+          onCheckedChange={preferences.setShowSessionResources}
+          closeOnClick={false}
+        >
+          Show session resources
+        </DropdownMenuCheckboxItem>
+    </DropdownMenuGroup>
+  );
+}

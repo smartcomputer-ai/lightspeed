@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
+import { universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -8,8 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { waitForUi } from "@/test/wait-for-ui";
 import { documentTitle } from "@/lib/document-title";
-import { standardWebModules } from "@distribution/web";
-import { WebModuleProvider } from "@/lib/web-modules";
+import { WebModuleProvider, type UniverseWebModule } from "@/lib/web-modules";
 import { BlobPage } from "./BlobPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -18,6 +17,11 @@ vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: 
 
 const digest = "c".repeat(64);
 const filePath = "docs/résumé #?.txt";
+const sessionLinks: UniverseWebModule = {
+  id: "sessions", label: "Sessions", action: "read", icon: () => null,
+  routes: [{ path: "", Page: () => null }],
+  sessionHref: (handle, id) => `/u/${handle}/sessions/${id}`,
+};
 let root: Root;
 let container: HTMLDivElement;
 let stored: string;
@@ -65,7 +69,7 @@ async function open(url: string) {
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <PermissionIdentityProvider userId="user" platformAdmin={false}>
-        <WebModuleProvider value={standardWebModules}><MemoryRouter initialEntries={[url]}>
+        <WebModuleProvider value={[sessionLinks]}><MemoryRouter initialEntries={[url]}>
           <Routes><Route path="/u/:handle/blobs/:digest" element={<BlobPage />} /></Routes>
         </MemoryRouter></WebModuleProvider>
       </PermissionIdentityProvider>
@@ -108,7 +112,7 @@ it("hands images to the browser and names unnamed blobs by digest", async () => 
 });
 
 it.each(["", "?type=text/markdown", "?name=notes.md"])(
-  "previews Markdown with the session renderer and preserves the source (%s)", async (query) => {
+  "previews Markdown and preserves the source (%s)", async (query) => {
     stored = "# Notes\n\n**Bold** and ~~removed~~\n\n| Name | Value |\n| --- | --- |\n| A | B |\n\n<script>alert(1)</script>\n\n[unsafe](javascript:alert)";
     await open(`/u/acme/blobs/${digest}${query}`);
     const button = (label: string) => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === label)!;

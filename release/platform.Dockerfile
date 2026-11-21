@@ -19,4 +19,4 @@ ADD --chown=node:node dist/runtime/platform.tar.gz /app/
 # Numeric IDs let Kubernetes verify runAsNonRoot from image metadata.
 USER 1000:1000
 EXPOSE 3000
-CMD ["node", "--import", "tsx", "platform/backend/src/main.ts"]
+CMD ["node", "--import", "tsx", "distributions/standard/server.ts"]

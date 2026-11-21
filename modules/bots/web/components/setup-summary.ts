@@ -1,4 +1,4 @@
-import { defaultEnvironmentAttachment } from "@lightspeed-ai/platform-web/modules/conversations";
+import { defaultEnvironmentAttachment } from "@lightspeed-ai/platform-web/modules/profiles";
 import type { BotView } from "@lightspeed-ai/sdk";
 import type { Environment } from "@lightspeed-ai/platform-web/modules/client";
 

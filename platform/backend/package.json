@@ -3,12 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./server": "./src/server.ts",
     "./modules": "./src/module-api.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
+    "dev": "tsx watch ../../distributions/standard/server.ts",
+    "start": "tsx ../../distributions/standard/server.ts",
     "test": "vitest run --passWithNoTests",
+    "test:host": "vitest run --mode host",
     "test:sso": "tsx scripts/check-sso.ts",
     "test:runtime": "tsx scripts/check-platform-runtime.ts"
   },

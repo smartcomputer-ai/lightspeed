@@ -1,5 +1,5 @@
 import { act } from "react";
-import { vi } from "vitest";
+import { TestRunner, vi } from "vitest";
 
 /** Retry an assertion after flushing React and queued query notifications.
  * The assertion determines readiness; yielding a task is not a loading budget.
@@ -11,5 +11,5 @@ export async function waitForUi<T>(assertion: () => T): Promise<T> {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
     return assertion();
-  });
+  }, { timeout: TestRunner.getCurrentTest()?.timeout });
 }

@@ -279,17 +279,35 @@ describe("device overrides", () => {
 
 describe("expiry", () => {
   const day = 24 * 60 * 60 * 1000;
-  const expiring = [{ prefix: "test:drafts:", maxAgeMs: 30 * day }];
+  const expiringPrefixes = ["test:drafts:"];
+
+  it("tracks a module’s keys after it loads and expires them on a later page without the module", () => {
+    const key = "module-draft:review";
+    let now = 100 * day;
+    localStorage.setItem(key, "review");
+    localStorage.setItem("module-preference", "keep");
+    const provider = createBrowserStorageProvider({ now: () => now });
+    expect(localStorage.getItem(LAST_USED_KEY)).toBeNull();
+
+    provider.registerExpiry(["module-draft:"]);
+    expect(JSON.parse(localStorage.getItem(LAST_USED_KEY)!)).toEqual({ [key]: now });
+
+    now += 31 * day;
+    createBrowserStorageProvider({ now: () => now });
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(localStorage.getItem("module-preference")).toBe("keep");
+    expect(localStorage.getItem(LAST_USED_KEY)).toBeNull();
+  });
 
   it("starts the clock for entries stored before expiry, and drops entries unused past their age", () => {
     let now = 1_000 * day;
     localStorage.setItem("test:drafts:old", "x");
     localStorage.setItem("test:other", "kept");
-    fresh({ expiring, now: () => now });
+    fresh({ expiringPrefixes, now: () => now });
     expect(JSON.parse(localStorage.getItem(LAST_USED_KEY)!)).toEqual({ "test:drafts:old": now });
 
     now += 31 * day;
-    fresh({ expiring, now: () => now });
+    fresh({ expiringPrefixes, now: () => now });
     expect(localStorage.getItem("test:drafts:old")).toBeNull();
     expect(localStorage.getItem("test:other")).toBe("kept");
     expect(localStorage.getItem(LAST_USED_KEY)).toBeNull();
@@ -306,14 +324,14 @@ describe("expiry", () => {
       parse: (stored) => (typeof stored === "string" ? stored : undefined),
     });
     localStorage.setItem("test:drafts:a", "x");
-    const store = fresh({ expiring, now: () => now });
+    const store = fresh({ expiringPrefixes, now: () => now });
     now += 20 * day;
     expect(store.get(setting)).toBe("x");
     await vi.advanceTimersByTimeAsync(1_000);
     expect(JSON.parse(localStorage.getItem(LAST_USED_KEY)!)).toEqual({ "test:drafts:a": now });
 
     now += 20 * day;
-    fresh({ expiring, now: () => now });
+    fresh({ expiringPrefixes, now: () => now });
     expect(localStorage.getItem("test:drafts:a")).toBe("x");
   });
 });

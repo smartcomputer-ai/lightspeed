@@ -1,6 +1,6 @@
 import { useLocation, useParams } from "react-router-dom";
 import { SessionIcon } from "@lightspeed-ai/platform-web/modules/ui/icons";
-import { SessionDetail, sessionDraftKey } from "@lightspeed-ai/platform-web/modules/conversations";
+import { SessionDetail, sessionDraftKey } from "@lightspeed-ai/session-components";
 import { DetailPrompt, LoadingNote, UniverseNotFound, cn } from "@lightspeed-ai/platform-web/modules/ui";
 import { useCreateParam, useActionPermissions, useActiveUniverse } from "@lightspeed-ai/platform-web/modules";
 import { ProviderReadinessBanner } from "@lightspeed-ai/platform-web/modules/models";

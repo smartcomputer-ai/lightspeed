@@ -1,0 +1,23 @@
+{
+  "name": "@lightspeed-ai/session-components",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./read-model": "./read-model.ts",
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@lightspeed-ai/platform-shared": "*",
+    "@lightspeed-ai/sdk": "*",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "unified": "^11.0.5"
+  },
+  "peerDependencies": {
+    "@lightspeed-ai/platform-web": "*",
+    "@tanstack/react-query": "^5.104.1",
+    "react": "^19.3.0",
+    "react-router-dom": "^7.18.4"
+  }
+}

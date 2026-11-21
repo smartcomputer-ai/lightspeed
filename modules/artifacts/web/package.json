@@ -1,0 +1,15 @@
+{
+  "name": "@lightspeed-ai/artifacts-web",
+  "private": true,
+  "type": "module",
+  "exports": "./index.ts",
+  "dependencies": {
+    "@lightspeed-ai/platform-shared": "*"
+  },
+  "peerDependencies": {
+    "@lightspeed-ai/platform-web": "*",
+    "@tanstack/react-query": "^5.104.1",
+    "react": "^19.3.0",
+    "react-router-dom": "^7.18.4"
+  }
+}

@@ -3,7 +3,7 @@ import type { VfsTreeEntry } from "@/api";
 import { ListLayout, ListRow, type ListRowTree } from "@/components/list-pane";
 import type { MetaItem } from "@/components/meta-toolbar";
 import { ExecuteToolIcon } from "@/icons";
-import { formatBytes } from "@/lib/composer-attachments";
+import { formatBytes } from "@/lib/format-bytes";
 import {
   WorkspaceContextMenu,
   useWorkspaceDropTarget,

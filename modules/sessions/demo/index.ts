@@ -1,12 +1,11 @@
 import { Hono } from "hono";
-import type { ProfileSessionRetention, ProfileSource } from "@/api";
-import type { ProfileInstructions } from "@lightspeed-ai/sdk";
-import { demoCanReadSession, demoUniverseActions } from "@/demo/access";
-import { newSession } from "@/demo/engine";
-import { isRecord, sessionConfig, usableEnvironment } from "@/demo/session-config";
-import { sessionSummary, type DemoStore, type UniverseState } from "@/demo/store";
-import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "@/demo/routes/common";
-import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAttached } from "@session-ui/model/resource-features";
+import type { ProfileInstructions, ProfileSessionRetention } from "@lightspeed-ai/sdk";
+import type { ProfileSource } from "@lightspeed-ai/platform-web/modules/client";
+import {
+  badRequest, conflict, demoCanReadSession, demoUniverseActions, intQuery, isRecord, newSession,
+  notFound, readBody, resolveSessionEnvironment, sessionConfig, sessionSummary, universeFor,
+  type DemoStore, type UniverseState,
+} from "@lightspeed-ai/platform-web/demo";
 import { sessionCreateSchema, sessionListQuery } from "../api/collection";
 
 /// What a session start consumes from a profile, whichever source it came
@@ -19,7 +18,7 @@ interface ResolvedProfile {
   instructions: ProfileInstructions | null;
 }
 
-export function sessionCollectionRoutes(store: DemoStore): Hono {
+export default function sessionCollectionRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
   /// Newest activity first; the cursor is a plain offset because the demo
@@ -79,7 +78,7 @@ export function sessionCollectionRoutes(store: DemoStore): Hono {
     const config = sessionConfig(profile.config, universe.modelDefaults.agentRun);
     if (!config) return c.json({ error: "No default agent model is selected. Choose a model in Models.", kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }, 400);
     const sessionId = store.nextId("session");
-    const resolved = resolveEnvironment(universe, profile);
+    const resolved = resolveSessionEnvironment(universe, profile.config);
     if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
     const session = newSession(store, universe, {
       id: sessionId,
@@ -125,21 +124,6 @@ function resolveProfile(universe: UniverseState, source: ProfileSource): Resolve
 function instructionText(store: DemoStore, instructions: ProfileInstructions | null): string | null {
   if (!instructions) return null;
   return instructions.type === "text" ? instructions.text : store.readText(instructions.blobRef);
-}
-
-/// Profiles select resources whose lifecycle is managed independently.
-function resolveEnvironment(
-  universe: UniverseState,
-  profile: ResolvedProfile,
-): { environmentId: string | null } | { error: string } {
-  if (environmentAttachments(profile.config).some((attachment) => attachment.inherit)) return { error: "inherited environments require a parent session" };
-  const environmentId = defaultEnvironmentAttachment(profile.config)?.environmentId;
-  if (!environmentId) return { environmentId: null };
-  if (!isEnvironmentAttached(profile.config, environmentId)) return { error: `environment is not attached: ${environmentId}` };
-  const environment = universe.environments.get(environmentId);
-  if (!environment) return { error: `environment not found: ${environmentId}` };
-  if (!usableEnvironment(environment)) return { error: `environment is ${environment.status}: ${environmentId}` };
-  return { environmentId };
 }
 
 function isStringMap(value: unknown): value is Record<string, string> {

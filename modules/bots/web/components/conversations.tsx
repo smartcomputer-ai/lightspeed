@@ -11,7 +11,7 @@ import {
   MetaDetailsRow,
   type MetaItem,
 } from "@lightspeed-ai/platform-web/modules/ui/meta";
-import { sessionName } from "@lightspeed-ai/platform-web/modules/conversations";
+import { sessionName } from "@lightspeed-ai/session-components";
 import { Popover, PopoverContent, PopoverTrigger } from "@lightspeed-ai/platform-web/modules/ui/popover";
 
 /// A bot's conversations, as its row in the bots list nests them and as

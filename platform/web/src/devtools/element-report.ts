@@ -178,7 +178,7 @@ export function sourceFileFromStack(stack: string | undefined): string | undefin
   if (!stack) return undefined;
   for (const frame of stack.split("\n")) {
     if (frame.includes("/node_modules/")) continue;
-    const file = frame.match(/\/((?:modules\/[^/]+\/web|platform\/session-ui)\/[^)?:\s]+)/)
+    const file = frame.match(/\/(modules\/[^/]+\/(?:web|components)\/[^)?:\s]+)/)
       ?? frame.match(/\/(src\/[^)?:\s]+)/);
     if (file) return file[1];
   }

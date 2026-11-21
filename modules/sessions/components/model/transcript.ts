@@ -1,0 +1,1256 @@
+import type { LlmUsageView, ToolItemStatus } from "@lightspeed-ai/sdk";
+import type {
+  SessionEvent, SessionItem, SessionRunView, ToolCallDisplay, ToolAttachmentView,
+} from "@lightspeed-ai/platform-web/modules/client";
+
+/// Folded chat model for a session. The event log is the source of truth;
+/// this module reduces it into renderable entries plus live-run state,
+/// incrementally — the tail hook applies event pages as they arrive.
+/// Patterns lifted from the Lightspeed chat TUI: entries dedupe by id
+/// (replaced context states repeat them), a tool call and its result merge
+/// into one entry, run-lifecycle events drive a human status vocabulary,
+/// and opaque engine reasoning markers are filtered out.
+
+/// Media the model was shown, named the way the model names it: `media:` plus
+/// the first twelve hex characters of the blob reference. Assistant text
+/// refers to it by that handle (`![…](media:3f9a2c1d4e7b)`), so the transcript
+/// resolves handles against the media it has folded.
+export interface TranscriptMedia {
+  handle: string;
+  blobRef: string;
+  mime: string;
+  kind: "image" | "document";
+  name?: string;
+  /// An object URL for media the user just sent, shown until the stored
+  /// entry replaces the optimistic echo.
+  localUrl?: string;
+}
+
+export type TranscriptEntry =
+  | {
+      kind: "message";
+      key: string;
+      role: "user" | "assistant";
+      origin?: string;
+      text: string;
+      /// Images and documents sent with the input, in order.
+      media?: TranscriptMedia[];
+      citations?: Array<{ url: string; title?: string | null; citedText?: string | null }>;
+      /// The run this entry belongs to, when the engine recorded one.
+      runId?: string;
+      turnId?: string;
+      contentRef?: string;
+      providerKind?: string;
+      /// A user message injected into a running run (steering) rather than
+      /// the input that started it.
+      steering?: boolean;
+      steeringId?: string;
+      /// Locally submitted in this view; preserve identity and skip entrance motion.
+      local?: boolean;
+    }
+  | {
+      kind: "system";
+      key: string;
+      text: string;
+      /// The stored instructions or catalog text, opened from the chip.
+      contentRef?: string;
+      /// A catalog version a newer version has updated; kept in context so
+      /// the rendered prefix stays cacheable, shown dimmed.
+      superseded?: boolean;
+    }
+  | { kind: "reasoning"; key: string; text: string; runId?: string; turnId?: string; providerKind?: string }
+  | TranscriptToolGroup
+  | TranscriptRunSummary
+  | { kind: "marker"; key: string; text: string; tone: "muted" | "error"; pending?: boolean };
+
+export interface TranscriptRunSummary {
+  kind: "run-summary";
+  key: string;
+  runId: string;
+  status: "completed" | "failed" | "cancelled";
+  /// null means the completed run explicitly has no output; undefined means unknown.
+  outputContentRef?: string | null;
+  error?: string;
+  /// The engine's classification of a failed run, e.g. `requestRejected`.
+  failureKind?: string;
+  contextTokens?: number;
+  usage?: RunUsage;
+  usageComplete: boolean;
+  toolCalls?: number;
+  durationMs?: number;
+}
+
+const RUN_FAILURE_LEADS: Record<string, string> = {
+  requestRejected: "The provider rejected the request",
+  outputTruncated: "The response was cut off",
+  contentFiltered: "The provider refused the response",
+};
+
+/// The line a failed run shows. A provider rejection names the provider as
+/// the source; its message is the provider's own text, shown unchanged. A
+/// truncated or refused response says which of the two it was.
+export function runFailureText(summary: Pick<TranscriptRunSummary, "error" | "failureKind">): string {
+  const lead = (summary.failureKind && RUN_FAILURE_LEADS[summary.failureKind]) || "Run failed";
+  return summary.error ? `${lead}: ${summary.error}` : lead;
+}
+
+export interface TranscriptToolCall {
+  callId: string;
+  toolId?: string | null;
+  /// The original name returned by the model, preserved across model changes.
+  toolName: string;
+  status: ToolItemStatus;
+  argumentsJson?: string | null;
+  output?: string | null;
+  outputContentRef?: string;
+  outputTruncated?: boolean;
+  error?: string | null;
+  isError: boolean;
+  /// The call began before the loaded history window. Older pages hydrate it.
+  continuation?: boolean;
+  display?: ToolCallDisplay | null;
+  attachments?: ToolAttachmentView[];
+  effects?: Array<{ kind?: string; data?: Record<string, string> }>;
+  /// Observed times of the call's dispatch and terminal result; the window
+  /// includes runtime scheduling overhead, which is what a reader waited.
+  startedAtMs?: number;
+  finishedAtMs?: number;
+  durationMs?: number;
+  /// Model-visible output size before the projection budget, when reported.
+  outputBytes?: number;
+  /// Media the call handed the model (MCP images, file reads, sub-agent
+  /// hand-offs), in the order the model saw it.
+  media?: TranscriptMedia[];
+}
+
+export interface TranscriptToolGroup {
+  kind: "tool-group";
+  key: string;
+  batchId?: string;
+  /// The run that issued the batch, when any event or item recorded it.
+  runId?: string;
+  status: TranscriptToolGroupStatus;
+  calls: TranscriptToolCall[];
+}
+
+export type TranscriptToolGroupStatus =
+  | ToolItemStatus
+  | "waiting"
+  | "completedWithErrors";
+
+type ToolBatchStartedEvent = Extract<
+  SessionEvent["kind"],
+  { type: "toolBatchStarted" }
+>;
+
+interface ToolCallLocation {
+  entryIndex: number;
+  callIndex: number;
+}
+
+export interface ActiveRun {
+  runId: string;
+  /// TUI status vocabulary: running / planning / thinking / running tools /
+  /// working / cancelling.
+  label: string;
+  /// A cancel was admitted; the run is draining to `cancelled`.
+  cancelling: boolean;
+  /// Committed wall-clock start, when the loaded history contains it.
+  startedAtMs?: number;
+}
+
+export interface QueuedRun {
+  runId: string;
+}
+
+/// Monotonic per-run lifecycle knowledge: a run only ever moves forward
+/// (queued → running → terminal), which is what lets a session snapshot be
+/// reconciled into the event-derived state without going backwards.
+export type RunPhase = "queued" | "running" | "terminal";
+
+export interface TranscriptState {
+  entries: TranscriptEntry[];
+  /// The run the engine is executing (running or cancelling), if any.
+  activeRun: ActiveRun | null;
+  /// Runs accepted behind the active run, in start order.
+  queuedRuns: QueuedRun[];
+  /// Bumped on run and compaction lifecycle changes so the page can refresh
+  /// the authoritative session view (queued runs, outcomes, compaction status).
+  runRevision: number;
+  closed: boolean;
+  /// One standalone operation, whose marker evolves from queued to finished.
+  compaction: { markerKey: string; phase: "queued" | "pending"; runId?: string } | null;
+  /// Entry ids already folded (context events repeat entries on replace).
+  seenItems: Set<string>;
+  seenEvents: Set<number>;
+  runPhases: Map<string, RunPhase>;
+  /// Terminal events actually consumed by the tail, independent of newer snapshots.
+  finishedRuns: Set<string>;
+  /// Accepted runs with no start, retained after queue removal. A terminal
+  /// snapshot can arrive before the cancellation event and clear queuedRuns.
+  unstartedRuns: Set<string>;
+  /// Client submission id → engine run id, from `runAccepted`. Lets an
+  /// optimistic send resolve its run before its own POST returns (the tail
+  /// is usually faster than the gateway's acceptance poll).
+  runBySubmission: Map<string, string>;
+  /// Client submission id → steering id, from `runSteeringAccepted`.
+  steeringBySubmission: Map<string, string>;
+  /// Tool event metadata, context items, and results arrive separately.
+  /// These indexes merge them into one stable group in the transcript.
+  toolCallByCallId: Map<string, ToolCallLocation>;
+  toolGroupByBatchId: Map<string, number>;
+  /// Provider-reported tokens per run, summed over generation and compaction, with the
+  /// share served from prompt cache — surfaced when the run finishes.
+  runUsage: Map<string, RunUsage>;
+  /// Input to each run's last generation, never the cumulative usage.
+  runContextTokens: Map<string, number>;
+  /// Unique requested calls, including provider-native tool entries.
+  runToolCalls: Map<string, Set<string>>;
+  /// Committed wall-clock start times used to calculate terminal duration.
+  runStartedAtMs: Map<string, number>;
+  /// Only a loaded runStarted event proves that accumulated usage is complete.
+  completeUsageRuns: Set<string>;
+}
+
+export interface RunUsage {
+  /// Undefined when any model operation omitted this count.
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  modelCalls: number;
+}
+
+export function emptyTranscript(): TranscriptState {
+  return {
+    entries: [],
+    activeRun: null,
+    queuedRuns: [],
+    runRevision: 0,
+    closed: false,
+    compaction: null,
+    seenItems: new Set(),
+    seenEvents: new Set(),
+    runPhases: new Map(),
+    finishedRuns: new Set(),
+    unstartedRuns: new Set(),
+    runBySubmission: new Map(),
+    steeringBySubmission: new Map(),
+    toolCallByCallId: new Map(),
+    toolGroupByBatchId: new Map(),
+    runUsage: new Map(),
+    runContextTokens: new Map(),
+    runToolCalls: new Map(),
+    runStartedAtMs: new Map(),
+    completeUsageRuns: new Set(),
+  };
+}
+
+export function formatTokens(count: number): string {
+  return count >= 1000 ? `${Number((count / 1000).toFixed(1))}k` : String(count);
+}
+
+/// Compact durations: whole milliseconds under 100 ms, tenths of a second up
+/// to 10 s, then seconds, minutes and hours.
+export function formatDuration(durationMs: number): string {
+  if (durationMs < 100) return `${durationMs}ms`;
+  if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)}s`;
+  const totalSeconds = Math.round(durationMs / 1_000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  if (totalSeconds < 3_600) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+/// A run is live when the engine is executing or has queued it; clients use
+/// this to offer stop/steer/queue instead of a plain send.
+export function runInProgress(state: TranscriptState): boolean {
+  return state.activeRun !== null || state.queuedRuns.length > 0;
+}
+
+/// Returns a new state object (fresh `entries` array identity for React);
+/// the dedup set/map are monotonic and carried over.
+export function applyEvents(
+  state: TranscriptState,
+  events: SessionEvent[],
+): TranscriptState {
+  const next: TranscriptState = {
+    entries: state.entries.slice(),
+    activeRun: state.activeRun,
+    queuedRuns: state.queuedRuns,
+    runRevision: state.runRevision,
+    closed: state.closed,
+    compaction: state.compaction,
+    seenItems: state.seenItems,
+    seenEvents: state.seenEvents,
+    runPhases: state.runPhases,
+    finishedRuns: state.finishedRuns,
+    unstartedRuns: state.unstartedRuns,
+    runBySubmission: state.runBySubmission,
+    steeringBySubmission: state.steeringBySubmission,
+    toolCallByCallId: state.toolCallByCallId,
+    toolGroupByBatchId: state.toolGroupByBatchId,
+    runUsage: state.runUsage,
+    runContextTokens: state.runContextTokens,
+    runToolCalls: state.runToolCalls,
+    runStartedAtMs: state.runStartedAtMs,
+    completeUsageRuns: state.completeUsageRuns,
+  };
+  for (const event of events) {
+    if (next.seenEvents.has(event.cursor.seq)) continue;
+    next.seenEvents.add(event.cursor.seq);
+    const kind = event.kind;
+    switch (kind.type) {
+      case "codeToolProgress":
+        // Retain its event position without inventing a model tool call or
+        // transcript entry for work owned by the parked outer invocation.
+        break;
+      case "contextEntriesApplied":
+      case "contextKeyPrefixReplaced":
+        applyItems(next, kind.entries);
+        break;
+      case "runAccepted":
+        if (kind.submissionId) {
+          next.runBySubmission.set(kind.submissionId, String(kind.runId));
+        }
+        enqueueRun(next, String(kind.runId));
+        break;
+      case "runStarted":
+        next.completeUsageRuns.add(String(kind.runId));
+        startRun(next, String(kind.runId), event.observedAtMs);
+        break;
+      case "runCancellationRequested":
+        if (next.activeRun?.runId === String(kind.runId)) {
+          next.activeRun = { ...next.activeRun, label: "cancelling", cancelling: true };
+          next.runRevision += 1;
+        }
+        break;
+      case "runSteeringAccepted":
+        if (event.joins.submissionId) {
+          next.steeringBySubmission.set(event.joins.submissionId, kind.steeringId);
+        }
+        next.runRevision += 1;
+        break;
+      case "approvalRequested":
+        next.runRevision += 1;
+        break;
+      case "approvalRunParked":
+        setRunLabel(next, "approval required");
+        next.runRevision += 1;
+        break;
+      case "approvalRunUnparked":
+        setRunLabel(next, "working");
+        next.runRevision += 1;
+        break;
+      case "approvalDecided":
+      case "approvalCancelled":
+        next.runRevision += 1;
+        break;
+      case "turnStarted":
+        setRunLabel(next, "planning");
+        break;
+      case "turnPlanned":
+      case "turnGenerationRequested":
+        setRunLabel(next, "thinking");
+        break;
+      case "turnGenerationCompleted": {
+        const runId = String(kind.runId);
+        recordModelUsage(next, runId, kind.usage, 1);
+        if (kind.usage?.inputTokens != null) {
+          next.runContextTokens.set(runId, kind.usage.inputTokens);
+        } else {
+          // An earlier call's measurement must not masquerade as the last call.
+          next.runContextTokens.delete(runId);
+        }
+        break;
+      }
+      case "toolBatchStarted":
+        for (const call of kind.calls) recordToolCall(next, String(kind.runId), call.callId);
+        applyToolBatchStarted(next, kind);
+        setRunLabel(next, "running tools");
+        break;
+      case "toolCallStarted":
+        recordToolCall(next, String(kind.runId), kind.callId);
+        ensureToolCall(next, kind.callId, kind.batchId, String(kind.runId));
+        updateToolCall(next, String(kind.callId), (call) => ({
+          ...call,
+          status: "running",
+          startedAtMs: call.startedAtMs ?? event.observedAtMs,
+        }));
+        setRunLabel(next, "running tools");
+        break;
+      case "toolCallCompleted": {
+        recordToolCall(next, String(kind.runId), kind.callId);
+        ensureToolCall(next, kind.callId, kind.batchId, String(kind.runId));
+        updateToolCall(next, String(kind.callId), (call) => ({
+          ...call,
+          status: kind.status,
+          finishedAtMs: event.observedAtMs,
+          ...(call.startedAtMs !== undefined
+            ? { durationMs: Math.max(0, event.observedAtMs - call.startedAtMs) }
+            : {}),
+          ...(kind.outputBytes != null ? { outputBytes: kind.outputBytes } : {}),
+          ...(kind.effects?.length ? { effects: kind.effects } : {}),
+          ...(kind.attachments?.length ? { attachments: kind.attachments } : {}),
+        }));
+        syncToolGroupStatusForCall(next, String(kind.callId));
+        break;
+      }
+      case "toolBatchParked":
+        updateToolGroupStatus(next, String(kind.batchId), "waiting");
+        setRunLabel(next, "waiting for tools");
+        break;
+      case "toolBatchUnparked":
+        updateToolGroupStatus(next, String(kind.batchId), "running");
+        setRunLabel(next, "running tools");
+        break;
+      case "toolBatchCompleted":
+        completeToolGroup(next, String(kind.batchId));
+        setRunLabel(next, "working");
+        break;
+      case "runCompleted": {
+        const runId = String(kind.runId);
+        next.finishedRuns.add(runId);
+        finishRun(next, runId);
+        next.entries.push({
+          ...runSummary(next, event, runId, "completed"),
+          outputContentRef: kind.output?.blobRef ?? null,
+        });
+        break;
+      }
+      case "runFailed": {
+        const runId = String(kind.runId);
+        next.finishedRuns.add(runId);
+        finishRun(next, runId);
+        next.entries.push({
+          ...runSummary(next, event, runId, "failed"),
+          error: String(kind.message ?? "unknown error"),
+          failureKind: kind.kind,
+        });
+        break;
+      }
+      case "runCancelled": {
+        const runId = String(kind.runId);
+        next.finishedRuns.add(runId);
+        const wasQueued = next.unstartedRuns.has(runId)
+          || next.queuedRuns.some((run) => run.runId === runId);
+        finishRun(next, runId);
+        // Removing unstarted input updates the queue, not the conversation.
+        // When converted, the steering input supplies the visible message.
+        if (!wasQueued) next.entries.push(runSummary(next, event, runId, "cancelled"));
+        break;
+      }
+      case "contextCompactionQueued": {
+        const runId = compactionRunId(next, event);
+        const markerKey = next.compaction?.markerKey ?? `evt-${event.cursor.seq}`;
+        next.compaction = { markerKey, phase: "queued", ...(runId ? { runId } : {}) };
+        setCompactionMarker(next, markerKey, "context compaction queued", "muted", true);
+        next.runRevision += 1;
+        break;
+      }
+      case "contextCompactionRequested": {
+        const runId = compactionRunId(next, event);
+        const markerKey = next.compaction?.markerKey ?? `evt-${event.cursor.seq}`;
+        next.compaction = { markerKey, phase: "pending", ...(runId ? { runId } : {}) };
+        setCompactionMarker(next, markerKey, "compacting context", "muted", true);
+        if (runId === next.activeRun?.runId) setRunLabel(next, "compacting context");
+        next.runRevision += 1;
+        break;
+      }
+      case "contextCompactionFinished": {
+        const runId = event.joins.runId != null ? String(event.joins.runId)
+          : next.compaction?.runId ?? compactionRunId(next, event);
+        const calls = kind.calls ?? 0;
+        if (runId && (calls > 0 || kind.usage != null)) {
+          recordModelUsage(next, runId, kind.usage, calls);
+        }
+        setCompactionMarker(next, next.compaction?.markerKey ?? `evt-${event.cursor.seq}`,
+          kind.status === "succeeded" ? "context compacted" : "context compaction failed",
+          kind.status === "succeeded" ? "muted" : "error");
+        next.compaction = null;
+        if (next.activeRun?.label === "compacting context") setRunLabel(next, "working");
+        next.runRevision += 1;
+        break;
+      }
+      case "sessionClosed":
+        if (next.compaction) {
+          setCompactionMarker(next, next.compaction.markerKey, "context compaction interrupted", "muted");
+          next.compaction = null;
+        }
+        next.activeRun = null;
+        next.queuedRuns = [];
+        next.runRevision += 1;
+        next.closed = true;
+        next.entries.push({
+          kind: "marker",
+          key: `evt-${event.cursor.seq}`,
+          text: "session closed",
+          tone: "muted",
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return next;
+}
+
+function runSummary(
+  state: TranscriptState,
+  event: SessionEvent,
+  runId: string,
+  status: TranscriptRunSummary["status"],
+): TranscriptRunSummary {
+  const usageComplete = state.completeUsageRuns.has(runId);
+  return {
+    kind: "run-summary",
+    key: `evt-${event.cursor.seq}`,
+    runId,
+    status,
+    contextTokens: state.runContextTokens.get(runId),
+    usage: usageComplete ? state.runUsage.get(runId) : undefined,
+    usageComplete,
+    toolCalls: usageComplete ? (state.runToolCalls.get(runId)?.size ?? 0) : undefined,
+    durationMs: runDurationMs(state, runId, event.observedAtMs),
+  };
+}
+
+function recordModelUsage(state: TranscriptState, runId: string, usage: LlmUsageView | null | undefined, calls: number) {
+  const current = state.runUsage.get(runId);
+  const sum = (previous: number | undefined, value: number | null | undefined) =>
+    value == null || (current && previous === undefined) ? undefined : (previous ?? 0) + value;
+  state.runUsage.set(runId, {
+    inputTokens: sum(current?.inputTokens, usage?.inputTokens),
+    outputTokens: sum(current?.outputTokens, usage?.outputTokens),
+    cachedInputTokens: sum(current?.cachedInputTokens, usage?.cachedInputTokens),
+    modelCalls: (current?.modelCalls ?? 0) + calls,
+  });
+}
+
+function compactionRunId(state: TranscriptState, event: SessionEvent): string | undefined {
+  if (event.joins.runId != null) return String(event.joins.runId);
+  // A reconciled snapshot may describe a run that started after this event.
+  // Only loaded run-start history proves attribution for unjoined events.
+  const runId = state.activeRun?.runId;
+  return runId && state.completeUsageRuns.has(runId) ? runId : undefined;
+}
+
+function setCompactionMarker(state: TranscriptState, key: string, text: string, tone: "muted" | "error", pending = false) {
+  const marker: TranscriptEntry = { kind: "marker", key, text, tone, ...(pending ? { pending: true } : {}) };
+  const index = state.entries.findIndex((entry) => entry.key === key);
+  if (index < 0) state.entries.push(marker);
+  else state.entries[index] = marker;
+}
+
+function setRunLabel(state: TranscriptState, label: string) {
+  if (state.activeRun && !state.activeRun.cancelling) {
+    state.activeRun = { ...state.activeRun, label };
+  }
+}
+
+function recordToolCall(state: TranscriptState, runId: string, callId: string) {
+  const calls = state.runToolCalls.get(runId) ?? new Set<string>();
+  calls.add(callId);
+  state.runToolCalls.set(runId, calls);
+}
+
+function enqueueRun(state: TranscriptState, runId: string) {
+  if (state.runPhases.has(runId)) {
+    return;
+  }
+  state.runPhases.set(runId, "queued");
+  state.unstartedRuns.add(runId);
+  state.queuedRuns = [...state.queuedRuns, { runId }];
+  state.runRevision += 1;
+}
+
+function startRun(state: TranscriptState, runId: string, observedAtMs?: number) {
+  state.unstartedRuns.delete(runId);
+  if (observedAtMs !== undefined && !state.runStartedAtMs.has(runId)) {
+    state.runStartedAtMs.set(runId, observedAtMs);
+  }
+  const phase = state.runPhases.get(runId);
+  if (phase === "running" || phase === "terminal") {
+    return;
+  }
+  state.runPhases.set(runId, "running");
+  state.queuedRuns = state.queuedRuns.filter((run) => run.runId !== runId);
+  const startedAtMs = state.runStartedAtMs.get(runId);
+  state.activeRun = {
+    runId,
+    label: "running",
+    cancelling: false,
+    ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+  };
+  state.runRevision += 1;
+}
+
+function runDurationMs(
+  state: TranscriptState,
+  runId: string,
+  finishedAtMs: number,
+): number | undefined {
+  const startedAtMs = state.runStartedAtMs.get(runId);
+  return startedAtMs === undefined ? undefined : Math.max(0, finishedAtMs - startedAtMs);
+}
+
+function finishRun(state: TranscriptState, runId: string) {
+  if (state.runPhases.get(runId) === "terminal") {
+    return;
+  }
+  state.runPhases.set(runId, "terminal");
+  state.queuedRuns = state.queuedRuns.filter((run) => run.runId !== runId);
+  if (state.activeRun?.runId === runId) {
+    state.activeRun = null;
+  }
+  state.runRevision += 1;
+}
+
+/// Fold the authoritative session view into the event-derived state. Only
+/// forward moves are applied (a snapshot can be older than the tail): a run
+/// the snapshot shows terminal is cleared, a running run the tail has not
+/// seen yet becomes the active run, a queued run the tail has not seen is
+/// enqueued. This is what heals a truncated catch-up or a missed page.
+export function reconcileRuns(
+  state: TranscriptState,
+  runs: SessionRunView[],
+): TranscriptState {
+  const next: TranscriptState = { ...state, entries: state.entries };
+  let changed = false;
+  for (const run of runs) {
+    const runId = String(run.id);
+    if (run.startedAtMs != null && !next.runStartedAtMs.has(runId)) {
+      next.runStartedAtMs.set(runId, run.startedAtMs);
+    }
+    if (run.startedAtMs != null) next.unstartedRuns.delete(runId);
+    const phase = next.runPhases.get(runId);
+    // Parking covers tool promises and timers as well as human approvals.
+    const parkedLabel = run.pendingApprovals?.length ? "approval required" : "waiting for tools";
+    switch (run.status) {
+      case "completed":
+      case "failed":
+      case "cancelled":
+        if (run.status === "cancelled" && (phase === undefined || phase === "queued")
+          && !next.runStartedAtMs.has(runId)) {
+          next.unstartedRuns.add(runId);
+        }
+        if (phase !== "terminal") {
+          finishRun(next, runId);
+          changed = true;
+        }
+        break;
+      case "running":
+      case "parked":
+      case "cancelling":
+        if (phase === undefined || phase === "queued") {
+          startRun(next, runId);
+          if (run.status === "cancelling" && next.activeRun?.runId === runId) {
+            next.activeRun = { ...next.activeRun, label: "cancelling", cancelling: true };
+          } else if (run.status === "parked" && next.activeRun?.runId === runId) {
+            next.activeRun = { ...next.activeRun, label: parkedLabel };
+          }
+          changed = true;
+        } else if (
+          run.status === "cancelling" &&
+          next.activeRun?.runId === runId &&
+          !next.activeRun.cancelling
+        ) {
+          next.activeRun = { ...next.activeRun, label: "cancelling", cancelling: true };
+          changed = true;
+        } else if (
+          run.status === "parked" &&
+          next.activeRun?.runId === runId &&
+          !next.activeRun.cancelling &&
+          next.activeRun.label !== parkedLabel
+        ) {
+          next.activeRun = { ...next.activeRun, label: parkedLabel };
+          changed = true;
+        }
+        break;
+      case "queued":
+        if (phase === undefined) {
+          enqueueRun(next, runId);
+          changed = true;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return changed ? next : state;
+}
+
+function applyItems(state: TranscriptState, items: SessionItem[]) {
+  let generatedToolGroup: number | null = null;
+  // A tool commits its result and the media it hands the model in one
+  // event, media after result; the media folds into that call.
+  let lastToolResultCallId: string | null = null;
+  // Run input commits its text and media items together; they fold into
+  // one band. Steering batches are their own bands.
+  let openInputEntry: number | null = null;
+  let openInputKey: string | null = null;
+
+  for (const item of items) {
+    if (state.seenItems.has(item.id)) {
+      continue;
+    }
+    state.seenItems.add(item.id);
+    const kind = item.kind;
+    const source = item.source;
+    // Replacement context is model input, not newly spoken conversation.
+    // Its standalone lifecycle event owns the single visible marker.
+    if (source?.type === "runtime" && ["standalone_compaction_prefix", "provider_standalone_compaction"].includes(source.label)) continue;
+    const runId = source && "runId" in source ? String(source.runId) : undefined;
+
+    if (kind.type === "message" && kind.role === "user" && (item.content.mediaHandle || isAttachedTextDocument(item))) {
+      const media = transcriptMedia(item);
+      if (source?.type === "tool") {
+        if (lastToolResultCallId) {
+          const callId = lastToolResultCallId;
+          updateToolCall(state, callId, (call) => ({ ...call, media: [...(call.media ?? []), media] }));
+        }
+      } else {
+        const key = inputBandKey(item);
+        if (key !== openInputKey) openInputEntry = null;
+        openInputKey = key;
+        openInputEntry = appendInputMedia(state, openInputEntry, item, media, runId);
+      }
+      continue;
+    }
+    if (kind.type === "toolResult") {
+      lastToolResultCallId = kind.callId;
+    } else if (kind.type !== "message") {
+      lastToolResultCallId = null;
+    }
+    if (kind.type === "message" && kind.role === "user" && item.text && source?.type !== "tool") {
+      const key = inputBandKey(item);
+      if (key !== openInputKey) openInputEntry = null;
+      openInputKey = key;
+      openInputEntry = appendInputText(state, openInputEntry, item, runId);
+      continue;
+    }
+    if (kind.type === "message") {
+      openInputEntry = null;
+      openInputKey = null;
+    }
+    if (source && "runId" in source) {
+      if (kind.type === "toolCall" || kind.type === "toolResult") {
+        recordToolCall(state, String(source.runId), kind.callId);
+      } else if (kind.type === "providerOpaque" && item.display?.toolName
+        && !["openai.responses.compaction", "anthropic.messages.compaction"].includes(item.content.providerKind ?? "")) {
+        recordToolCall(state, String(source.runId), item.id);
+      }
+    }
+
+    if (kind.type === "toolCall") {
+      const existing = state.toolCallByCallId.get(kind.callId);
+      if (existing) {
+        updateToolCall(state, kind.callId, (call) => ({
+          ...call,
+          toolName: item.display?.toolName ?? kind.name,
+          continuation: false,
+          argumentsJson: item.display?.arguments ?? call.argumentsJson,
+          display: item.display?.summary ?? call.display,
+        }));
+        continue;
+      }
+      if (generatedToolGroup === null) {
+        generatedToolGroup = createToolGroup(state, item.id, "requested", runId);
+      }
+      appendToolCall(state, generatedToolGroup, {
+        callId: kind.callId,
+        toolName: item.display?.toolName ?? kind.name,
+        status: item.display?.status ?? "requested",
+        argumentsJson: item.display?.arguments,
+        display: item.display?.summary,
+        isError: false,
+      });
+      syncToolGroupStatusForCall(state, kind.callId);
+      continue;
+    }
+
+    applyNonToolCallItem(state, item, kind);
+  }
+}
+
+function applyNonToolCallItem(
+  state: TranscriptState,
+  item: SessionItem,
+  kind: SessionItem["kind"],
+) {
+  switch (kind.type) {
+    case "message":
+      if (item.text && (kind.role === "user" || kind.role === "assistant")) {
+        const source = item.source ?? null;
+        const runId = source && "runId" in source ? String(source.runId) : undefined;
+        state.entries.push({
+          kind: "message",
+          key: item.id,
+          role: kind.role,
+          text: item.text,
+          contentRef: item.content.blobRef,
+          ...(item.content.providerKind ? { providerKind: item.content.providerKind } : {}),
+          ...(source && "turnId" in source ? { turnId: String(source.turnId) } : {}),
+          ...(item.origin ? { origin: item.origin } : {}),
+          ...(kind.role === "assistant" && item.citations?.length
+            ? { citations: item.citations }
+            : {}),
+          ...(runId ? { runId } : {}),
+          ...(source?.type === "steering" ? { steering: true, steeringId: source.steeringId } : {}),
+        });
+      }
+      break;
+    case "reasoningState": {
+      const text = (item.text ?? item.preview ?? "").trim();
+      if (displayableReasoningText(text)) {
+        const source = item.source;
+        const runId = source && "runId" in source ? String(source.runId) : undefined;
+        state.entries.push({
+          kind: "reasoning", key: item.id, text, ...(runId ? { runId } : {}),
+          ...(source && "turnId" in source ? { turnId: String(source.turnId) } : {}),
+          ...(item.content.providerKind ? { providerKind: item.content.providerKind } : {}),
+        });
+      }
+      break;
+    }
+    case "instructions":
+      if (displayableSystemText(item.preview ?? "")) {
+        state.entries.push({
+          kind: "system",
+          key: item.id,
+          text: item.preview ?? "",
+          contentRef: item.content.blobRef,
+          ...(item.supersededBy ? { superseded: true } : {}),
+        });
+      }
+      break;
+    case "catalog": {
+      // A catalog renders its title; a superseded version stays
+      // in context for prefix stability and is shown dimmed.
+      const text = kind.title || item.preview || "";
+      if (displayableSystemText(text)) {
+        state.entries.push({
+          kind: "system",
+          key: item.id,
+          text: item.supersedes ? `${text} (updated)` : text,
+          contentRef: item.content.blobRef,
+          ...(item.supersededBy ? { superseded: true } : {}),
+        });
+      }
+      break;
+    }
+    case "providerOpaque":
+      if (["openai.responses.compaction", "anthropic.messages.compaction"].includes(item.content.providerKind ?? "")) {
+        state.entries.push({
+          kind: "marker",
+          key: item.id,
+          text: "context compacted",
+          tone: "muted",
+        });
+      } else if (item.display?.toolName) {
+        const groupIndex = createToolGroup(
+          state,
+          item.id,
+          item.display.status,
+        );
+        appendToolCall(state, groupIndex, {
+          callId: item.id,
+          toolName: item.display.toolName,
+          status: item.display.status,
+          argumentsJson: item.display.arguments,
+          output: item.display.output,
+          error: item.display.error,
+          isError: item.display.isError === true,
+          display: item.display.summary,
+        });
+      }
+      break;
+    case "toolResult": {
+      const isError = kind.isError;
+      const source = item.source;
+      ensureToolCall(
+        state,
+        kind.callId,
+        source?.type === "tool" ? source.batchId : undefined,
+        source && "runId" in source ? String(source.runId) : undefined,
+      );
+      updateToolCall(state, kind.callId, (call) => ({
+        ...call,
+        toolName: item.display?.toolName ?? call.toolName,
+        status: item.display?.status ?? (isError ? "failed" : "succeeded"),
+        output: item.display?.output ?? item.text,
+        outputContentRef: item.content.blobRef,
+        outputTruncated: item.textTruncated === true,
+        error: item.display?.error ?? (isError ? item.display?.output ?? item.text : null),
+        isError,
+      }));
+      syncToolGroupStatusForCall(state, kind.callId);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function transcriptMedia(item: SessionItem): TranscriptMedia {
+  const mime = item.content.mime ?? "application/octet-stream";
+  const name = mediaPreviewName(item.preview);
+  return {
+    handle: item.content.mediaHandle ?? mediaHandleFor(item.content.blobRef),
+    blobRef: item.content.blobRef,
+    mime,
+    kind: mime.startsWith("image/") ? "image" : "document",
+    ...(name ? { name } : {}),
+  };
+}
+
+/// A text file attached as input (Markdown, CSV, JSON, plain text). The
+/// model reads it as text, so it carries no media handle, but its preview
+/// names the file; typed messages have no preview. Shown as a document chip
+/// rather than as the file's contents.
+function isAttachedTextDocument(item: SessionItem): boolean {
+  return item.source?.type !== "tool" && /^\[document: .+\]$/.test(item.preview?.trim() ?? "");
+}
+
+/// The handle the model uses for a blob: `media:` plus the first twelve hex
+/// characters of its reference. Mirrors the server's derivation for media
+/// items that carry no explicit handle (run input items, for example).
+export function mediaHandleFor(blobRef: string): string {
+  const hex = blobRef.slice(blobRef.lastIndexOf(":") + 1);
+  return `media:${hex.slice(0, 12)}`;
+}
+
+/// The name in a media preview, `[image: photo.png]` → `photo.png`.
+function mediaPreviewName(preview: string | null | undefined): string | undefined {
+  const match = preview?.trim().match(/^\[[a-z]+: (.+)\]$/);
+  const name = match?.[1]?.trim();
+  return name ? name : undefined;
+}
+
+/// Items that belong in the same band: the same run's input, or the same
+/// steering batch. Anything else starts a new band.
+function inputBandKey(item: SessionItem): string {
+  const source = item.source;
+  if (!source) return "input";
+  if (source.type === "steering") return `steering:${source.runId}:${source.steeringId}`;
+  return "runId" in source ? `${source.type}:${source.runId}` : source.type;
+}
+
+/// User input folds its text and media items, committed together, into one
+/// band; `open` is the band still being assembled in this event, if any.
+function inputEntry(
+  state: TranscriptState,
+  open: number | null,
+  item: SessionItem,
+  runId: string | undefined,
+): number {
+  const source = item.source ?? null;
+  if (open !== null) {
+    const entry = state.entries[open];
+    if (entry?.kind === "message" && entry.role === "user" && entry.runId === runId) {
+      return open;
+    }
+  }
+  state.entries.push({
+    kind: "message",
+    key: item.id,
+    role: "user",
+    text: "",
+    ...(item.origin ? { origin: item.origin } : {}),
+    ...(runId ? { runId } : {}),
+    ...(source?.type === "steering" ? { steering: true, steeringId: source.steeringId } : {}),
+  });
+  return state.entries.length - 1;
+}
+
+function appendInputText(
+  state: TranscriptState,
+  open: number | null,
+  item: SessionItem,
+  runId: string | undefined,
+): number {
+  const index = inputEntry(state, open, item, runId);
+  const entry = state.entries[index];
+  if (entry?.kind === "message") {
+    const text = entry.text ? `${entry.text}\n\n${item.text ?? ""}` : (item.text ?? "");
+    state.entries[index] = { ...entry, text };
+  }
+  return index;
+}
+
+function appendInputMedia(
+  state: TranscriptState,
+  open: number | null,
+  item: SessionItem,
+  media: TranscriptMedia,
+  runId: string | undefined,
+): number {
+  const index = inputEntry(state, open, item, runId);
+  const entry = state.entries[index];
+  if (entry?.kind === "message") {
+    state.entries[index] = { ...entry, media: [...(entry.media ?? []), media] };
+  }
+  return index;
+}
+
+/// Every media item the transcript has folded, by handle, for resolving the
+/// `media:` links assistant text writes.
+export function mediaByHandle(entries: TranscriptEntry[]): Map<string, TranscriptMedia> {
+  const map = new Map<string, TranscriptMedia>();
+  for (const entry of entries) {
+    if (entry.kind === "message") {
+      for (const media of entry.media ?? []) map.set(media.handle, media);
+    } else if (entry.kind === "tool-group") {
+      for (const call of entry.calls) {
+        for (const media of call.media ?? []) map.set(media.handle, media);
+      }
+    }
+  }
+  return map;
+}
+
+function ensureToolCall(
+  state: TranscriptState,
+  callId: string,
+  batchId?: string | null,
+  runId?: string,
+) {
+  if (state.toolCallByCallId.has(callId)) return;
+  let group = batchId ? state.toolGroupByBatchId.get(batchId) : undefined;
+  if (group === undefined) {
+    group = createToolGroup(state, batchId ? `tool-${batchId}` : `tool-call-${callId}`, "running", runId);
+    if (batchId) {
+      state.toolGroupByBatchId.set(batchId, group);
+      const entry = state.entries[group] as TranscriptToolGroup;
+      state.entries[group] = { ...entry, batchId };
+    }
+  }
+  appendToolCall(state, group, {
+    callId, toolName: "Tool activity (continued)", status: "running",
+    isError: false, continuation: true,
+  });
+}
+
+function createToolGroup(
+  state: TranscriptState,
+  key: string,
+  status: TranscriptToolGroupStatus,
+  runId?: string,
+): number {
+  const index = state.entries.length;
+  state.entries.push({ kind: "tool-group", key, status, calls: [], ...(runId ? { runId } : {}) });
+  return index;
+}
+
+function appendToolCall(
+  state: TranscriptState,
+  entryIndex: number,
+  call: TranscriptToolCall,
+) {
+  const entry = state.entries[entryIndex];
+  if (!entry || entry.kind !== "tool-group") {
+    return;
+  }
+  const callIndex = entry.calls.length;
+  state.entries[entryIndex] = { ...entry, calls: [...entry.calls, call] };
+  state.toolCallByCallId.set(call.callId, { entryIndex, callIndex });
+}
+
+function updateToolCall(
+  state: TranscriptState,
+  callId: string,
+  update: (call: TranscriptToolCall) => TranscriptToolCall,
+) {
+  const location = state.toolCallByCallId.get(callId);
+  if (!location) {
+    return;
+  }
+  const entry = state.entries[location.entryIndex];
+  const call = entry?.kind === "tool-group" ? entry.calls[location.callIndex] : undefined;
+  if (!entry || entry.kind !== "tool-group" || !call) {
+    return;
+  }
+  const calls = entry.calls.slice();
+  calls[location.callIndex] = update(call);
+  state.entries[location.entryIndex] = { ...entry, calls };
+}
+
+function applyToolBatchStarted(
+  state: TranscriptState,
+  kind: ToolBatchStartedEvent,
+) {
+  const batchId = kind.batchId;
+  const calls = kind.calls;
+  const existingGroup = calls
+    .map((call) => state.toolCallByCallId.get(call.callId)?.entryIndex)
+    .find((index) => index !== undefined);
+  const runId = String(kind.runId);
+  const entryIndex = existingGroup ?? createToolGroup(state, `tool-${batchId}`, "running", runId);
+  const entry = state.entries[entryIndex];
+  if (entry?.kind === "tool-group") {
+    state.entries[entryIndex] = { ...entry, batchId, runId, status: "running" };
+    state.toolGroupByBatchId.set(batchId, entryIndex);
+  }
+
+  for (const raw of calls) {
+    const callId = raw.callId;
+    const display = raw.display ?? undefined;
+    if (state.toolCallByCallId.has(callId)) {
+      updateToolCall(state, callId, (call) => ({
+        ...call,
+        toolId: raw.toolId,
+        toolName: raw.toolName,
+        continuation: false,
+        status: isTerminalToolStatus(call.status) ? call.status : "requested",
+        argumentsJson: raw.arguments ?? call.argumentsJson,
+        display: display ?? call.display,
+      }));
+    } else {
+      appendToolCall(state, entryIndex, {
+        callId,
+        toolId: raw.toolId,
+        toolName: raw.toolName,
+        status: "requested",
+        argumentsJson: raw.arguments,
+        display,
+        isError: false,
+      });
+    }
+  }
+}
+
+function updateToolGroupStatus(
+  state: TranscriptState,
+  batchId: string,
+  status: TranscriptToolGroupStatus,
+) {
+  const entryIndex = state.toolGroupByBatchId.get(batchId);
+  const entry = entryIndex !== undefined ? state.entries[entryIndex] : undefined;
+  if (entry && entry.kind === "tool-group") {
+    state.entries[entryIndex!] = { ...entry, status };
+  }
+}
+
+function completeToolGroup(state: TranscriptState, batchId: string) {
+  const entryIndex = state.toolGroupByBatchId.get(batchId);
+  const entry = entryIndex !== undefined ? state.entries[entryIndex] : undefined;
+  if (!entry || entry.kind !== "tool-group") {
+    return;
+  }
+  state.entries[entryIndex!] = {
+    ...entry,
+    status: completedToolGroupStatus(entry.calls),
+  };
+}
+
+function syncToolGroupStatusForCall(state: TranscriptState, callId: string) {
+  const location = state.toolCallByCallId.get(callId);
+  const entry = location ? state.entries[location.entryIndex] : undefined;
+  if (!entry || entry.kind !== "tool-group") {
+    return;
+  }
+  const terminal = entry.calls.length > 0 && entry.calls.every((call) =>
+    isTerminalToolStatus(call.status),
+  );
+  if (terminal) {
+    state.entries[location!.entryIndex] = {
+      ...entry,
+      status: completedToolGroupStatus(entry.calls),
+    };
+  }
+}
+
+function completedToolGroupStatus(
+  calls: TranscriptToolCall[],
+): TranscriptToolGroupStatus {
+  if (calls.some(isFailedToolCall)) {
+    return "completedWithErrors";
+  }
+  if (calls.some((call) => call.status === "cancelled")) {
+    return "cancelled";
+  }
+  return "succeeded";
+}
+
+export function isFailedToolCall(call: TranscriptToolCall): boolean {
+  if (call.status === "cancelled") {
+    return false;
+  }
+  return call.isError || call.status === "failed" || call.status === "unavailable";
+}
+
+export function isTerminalToolStatus(
+  status: ToolItemStatus | TranscriptToolGroupStatus,
+): boolean {
+  return [
+    "succeeded",
+    "completedWithErrors",
+    "failed",
+    "cancelled",
+    "unavailable",
+  ].includes(status);
+}
+
+/// The engine emits opaque state markers as system events; the TUI hides
+/// them and so do we.
+function displayableSystemText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return !["context item", "reasoning state", "compaction state"].some((prefix) =>
+    trimmed.startsWith(prefix),
+  );
+}
+
+/// Reasoning state entries can either carry a human-readable provider
+/// summary or an opaque continuation token. Only the summary is useful UI.
+function displayableReasoningText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const lower = trimmed.toLowerCase();
+  return !(
+    lower === "context item" ||
+    lower === "reasoning state" ||
+    lower.startsWith("reasoning state rs_") ||
+    lower === "compaction state" ||
+    lower.startsWith("compaction state ")
+  );
+}
+
+/// Friendly fallback when an older event or provider item has no semantic
+/// display metadata: pick the most recognizable argument.
+export function toolTarget(argumentsJson: string | null | undefined): string | null {
+  if (!argumentsJson) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const args = parsed as Record<string, unknown>;
+  if (Array.isArray(args.argv)) {
+    const command = args.argv.filter((part): part is string => typeof part === "string").join(" ");
+    if (command) {
+      return command.length > 80 ? `${command.slice(0, 77)}…` : command;
+    }
+  }
+  for (const key of ["path", "file", "filePath", "file_path", "cwd", "command", "cmd", "url", "workspaceId", "query"]) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.length > 80 ? `${value.slice(0, 77)}…` : value;
+    }
+  }
+  return null;
+}

@@ -24,7 +24,7 @@ const DEVTOOLS_ATTRIBUTE = "data-devtools";
 /// The debug toolbar: Ctrl+D shows or hides it in the bottom-right corner.
 /// Feedback picks an element on the page and opens a report about it to
 /// copy; Design opens the design-token editor window, whose changes every
-/// app window applies live, toolbar shown or not. Mounted by main.tsx only
+/// app window applies live, toolbar shown or not. Mounted by the shell only
 /// when debug mode is enabled. The editor window itself gets neither.
 export default function DebugToolbar() {
   return isDesignConfigurationWindow() ? null : <Toolbar />;

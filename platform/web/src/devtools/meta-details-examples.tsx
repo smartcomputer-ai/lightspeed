@@ -26,10 +26,10 @@ import {
   MetaDetailsNote,
   MetaDetailsRow,
   RESOURCE_STATUS_TONE,
+  type ResourceTone,
 } from "@/components/meta-details";
 import { MetaToolbar, type MetaItem } from "@/components/meta-toolbar";
 import { Popover } from "@/components/ui/popover";
-import type { ResourceTone } from "@session-ui/model/session-resources";
 
 /// Examples of the meta details parts for the UI overview: the content of
 /// every meta item popover the app has, drawn open on the popover surface,

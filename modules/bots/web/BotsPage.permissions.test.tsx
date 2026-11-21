@@ -16,23 +16,25 @@ vi.mock("@/lib/universes", () => ({
   useFeature: () => true,
 }));
 // The conversation, with the header the bot page gives it (its switcher and ⋯ menu).
-vi.mock("@session-ui/SessionDetail", () => ({
+vi.mock("@lightspeed-ai/session-components", async original => ({
+  ...await original<typeof import("@lightspeed-ai/session-components")>(),
   SessionDetail: ({ embeddedHeader }: { embeddedHeader?: { title: ReactNode; actions?: ReactNode } }) => (
     <div>{embeddedHeader?.title}{embeddedHeader?.actions}Readable transcript</div>
   ),
+  SessionActionsMenu: ({ onCompact, compactionLabel }: { onCompact?: () => void; compactionLabel?: string }) => onCompact
+    ? <button disabled={Boolean(compactionLabel)} onClick={onCompact}>{compactionLabel ?? "Compact context"}</button>
+    : null,
 }));
-vi.mock("@session-ui/model/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
-vi.mock("@session-ui/components/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
+vi.mock("@lightspeed-ai/platform-web/modules/profiles", async original => ({
+  ...await original<typeof import("@lightspeed-ai/platform-web/modules/profiles")>(),
+  useSessionConfigEditorOptions: () => ({}),
+  SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div>,
+}));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));
 // The ⋯ menu's popup is slow in jsdom; what it is offered is what matters here.
 vi.mock("./components/bot-actions-menu", () => ({
   BotActionsMenu: ({ pause }: { pause?: { enabled: boolean } }) => pause
     ? <button type="button">{pause.enabled ? "Pause bot" : "Resume bot"}</button>
-    : null,
-}));
-vi.mock("@session-ui/components/session-actions-menu", () => ({
-  SessionActionsMenu: ({ onCompact, compactionLabel }: { onCompact?: () => void; compactionLabel?: string }) => onCompact
-    ? <button disabled={Boolean(compactionLabel)} onClick={onCompact}>{compactionLabel ?? "Compact context"}</button>
     : null,
 }));
 let root: Root;

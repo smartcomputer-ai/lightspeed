@@ -48,8 +48,8 @@ describe("element report", () => {
       "    at SessionList (http://localhost:5173/app/@fs/repo/modules/sessions/web/session-list.tsx?t=17:412:9)",
     ].join("\n");
     expect(sourceFileFromStack(chrome)).toBe("modules/sessions/web/session-list.tsx");
-    const firefox = "jsxDEV@http://localhost:5173/app/node_modules/.vite/deps/react.js:1:2\nSessionDetail@http://localhost:5173/app/@fs/repo/platform/session-ui/SessionDetail.tsx:412:9";
-    expect(sourceFileFromStack(firefox)).toBe("platform/session-ui/SessionDetail.tsx");
+    const firefox = "jsxDEV@http://localhost:5173/app/node_modules/.vite/deps/react.js:1:2\nSessionDetail@http://localhost:5173/app/@fs/repo/modules/sessions/components/SessionDetail.tsx:412:9";
+    expect(sourceFileFromStack(firefox)).toBe("modules/sessions/components/SessionDetail.tsx");
     expect(sourceFileFromStack("at App (http://localhost:5173/app/src/App.tsx:12:9)")).toBe("src/App.tsx");
     expect(sourceFileFromStack(undefined)).toBeUndefined();
   });

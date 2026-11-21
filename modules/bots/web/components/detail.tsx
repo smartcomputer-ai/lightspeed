@@ -1,5 +1,5 @@
 import { botsApiPath } from "../queries";
-import { compactSessionId, SessionActionsMenu, sessionName, useSessionCompaction } from "@lightspeed-ai/platform-web/modules/conversations";
+import { compactSessionId, SessionActionsMenu, sessionName, useSessionCompaction } from "@lightspeed-ai/session-components";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfigureIcon, GoToIcon, LoadingIcon, PauseIcon, ResetIcon, ResumeIcon } from "@lightspeed-ai/platform-web/modules/ui/icons";

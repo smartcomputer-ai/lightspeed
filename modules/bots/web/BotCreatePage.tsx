@@ -1,10 +1,11 @@
 import { botsApiPath, botListQuery } from "./queries";
 import {
-  defaultEnvironmentAttachment, MetadataMapEditor, SessionConfigEditor, setupResourceFeatureError, useSessionConfigEditorOptions,
-} from "@lightspeed-ai/platform-web/modules/conversations";
+  defaultEnvironmentAttachment, SessionConfigEditor, setupResourceFeatureError,
+  useSessionConfigEditorOptions,
+} from "@lightspeed-ai/platform-web/modules/profiles";
+import { MetadataMapEditor, useDialogWarp, cn } from "@lightspeed-ai/platform-web/modules/ui";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDialogWarp, cn } from "@lightspeed-ai/platform-web/modules/ui";
 import { DeleteIcon } from "@lightspeed-ai/platform-web/modules/ui/icons";
 import { NavLink, useNavigate } from "react-router-dom";
 import { api, type ProfileDocument, type ProfileSummary } from "@lightspeed-ai/platform-web/modules/client";

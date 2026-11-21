@@ -1,4 +1,4 @@
-import { PlainSessionController, type ControllerPresentationProps } from "@session-ui/controller-presentation";
+import { PlainSessionController, type ControllerPresentationProps } from "@/lib/session-controller";
 import { useActiveUniverse } from "@/lib/universes";
 import { useAvailableWebModules } from "@/lib/web-modules";
 

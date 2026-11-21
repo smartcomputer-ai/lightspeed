@@ -1,4 +1,4 @@
-import { sessionCollectionMeta } from "@lightspeed-ai/platform-web/modules/conversations";
+import { sessionCollectionMeta } from "@lightspeed-ai/session-components";
 
 interface RosterFilters {
   showClosed: boolean;

@@ -16,8 +16,11 @@ vi.mock("@/lib/universes", async (original) => ({
   useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])] }, handle: "factory", isLoading: false }),
   useFeature: () => true,
 }));
-vi.mock("@session-ui/model/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
-vi.mock("@session-ui/components/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor" /> }));
+vi.mock("@lightspeed-ai/platform-web/modules/profiles", async original => ({
+  ...await original<typeof import("@lightspeed-ai/platform-web/modules/profiles")>(),
+  useSessionConfigEditorOptions: () => ({}),
+  SessionConfigEditor: () => <div data-testid="config-editor" />,
+}));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));
 // The warp is only a look: these tests open the created bot without waiting it out.
 vi.mock("@/lib/dialog-warp", () => ({

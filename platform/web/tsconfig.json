@@ -14,9 +14,21 @@
     "useDefineForClassFields": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@session-ui/*": ["../session-ui/*"],
       "@distribution/*": ["../../distributions/standard/*"]
     }
   },
-  "include": ["src", "vite.config.ts", "../session-ui", "../../modules/*/web/**/*.ts", "../../modules/*/web/**/*.tsx", "../../distributions/standard/web.ts"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "vitest.host.config.ts",
+    "../../modules/*/components/**/*.ts",
+    "../../modules/*/components/**/*.tsx",
+    "../../modules/*/demo/**/*.ts",
+    "../../modules/*/web/**/*.ts",
+    "../../modules/*/web/**/*.tsx",
+    "../../distributions/standard/web.ts",
+    "../../distributions/standard/main.ts",
+    "../../distributions/standard/demo-main.ts",
+    "../../distributions/standard/test/web"
+  ]
 }

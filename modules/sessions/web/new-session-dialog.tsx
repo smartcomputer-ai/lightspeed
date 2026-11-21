@@ -1,6 +1,9 @@
+import { MetadataMapEditor } from "@lightspeed-ai/platform-web/modules/ui";
 import {
-  MetadataMapEditor, ProfileRetentionEditor, resourceFeatureDisableReasons, sessionCollections, SessionConfigEditor, SetupEditorSection, setupResourceFeatureError, useSessionConfigEditorOptions,
-} from "@lightspeed-ai/platform-web/modules/conversations";
+  ProfileRetentionEditor, resourceFeatureDisableReasons, SessionConfigEditor,
+  setupResourceFeatureError, useSessionConfigEditorOptions,
+} from "@lightspeed-ai/platform-web/modules/profiles";
+import { sessionCollections, SetupEditorSection } from "@lightspeed-ai/session-components";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
