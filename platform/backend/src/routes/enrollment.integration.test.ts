@@ -87,6 +87,12 @@ it("creates one ordinary organization, one admin binding and one enrollment audi
   expect(workloadView).toMatchObject({ canCreate: false, organizations: [{ id: first.organizationId, role: "admin" }] });
   expect(workloadView.organizations[0]).not.toHaveProperty("enrollment");
   const cookie = responseCookies(await fixture.request("/api/auth/sign-in/email", { email: identityEnv.adminEmail, password: identityEnv.adminPassword }));
+  const inventory = await fixture.request("/api/v1/platform/organizations", undefined, cookie);
+  const { organizations } = await inventory.json() as { organizations: { id: string; personal: boolean; enrollment?: object }[] };
+  expect(organizations.find(o => o.id === first.organizationId)?.enrollment).toEqual({
+    issuer: source.issuer, subject: source.subject, subjectPattern: "system:serviceaccount:team-*:apply",
+  });
+  expect(organizations.find(o => o.personal)).not.toHaveProperty("enrollment");
   const details = await fixture.request(`/api/v1/platform/organizations/${first.organizationId}`, undefined, cookie);
   expect(await details.json()).toMatchObject({ organization: { enrollment: {
     issuer: source.issuer, subject: source.subject, subjectPattern: "system:serviceaccount:team-*:apply",
