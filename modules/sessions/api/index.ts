@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { parseBody, type UniverseModuleEnv } from "@lightspeed-ai/platform-backend/modules";
 import { sessionCreateSchema, sessionListQuery } from "./collection.js";
 
-/** Standalone Sessions browser and launcher, mounted by the distribution. */
+/** Collection and launcher for the standalone Session Browser. */
 export default function sessionCollectionRoutes(): Hono<UniverseModuleEnv> {
   const app = new Hono<UniverseModuleEnv>();
 

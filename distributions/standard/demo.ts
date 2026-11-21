@@ -4,8 +4,8 @@ import { createDemoRouter } from "@/demo/router";
 import type { DemoStore } from "@/demo/store";
 import { standardModules } from "./catalog";
 
-const routes = Object.fromEntries(entries.map(({ id, module }) => [id, module]));
+const modules = withModuleRoutes(standardModules, Object.fromEntries(entries.map(({ id, module }) => [id, module])));
 
 export function createStandardDemoRouter(store: DemoStore) {
-  return createDemoRouter(store, withModuleRoutes(standardModules, routes));
+  return createDemoRouter(store, modules);
 }

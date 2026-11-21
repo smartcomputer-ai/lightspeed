@@ -54,9 +54,56 @@ it("refuses to start with a mismatch between public operations and implemented e
     permissions: { read: "read" }, operations: [{ id: "list", method: "GET", path: "/", permission: "read" }],
   };
   expect(() => buildApp(fixture.context, [api])).toThrow(/without an API implementation/);
-  expect(() => buildApp(fixture.context, [{ ...api, routes: () => new Hono<UniverseModuleEnv>() }])).toThrow(/missing the handler/);
+  expect(() => buildApp(fixture.context, [{ ...api, browserRoutes: () => new Hono<UniverseModuleEnv>() }])).toThrow(/without an API implementation/);
+  expect(() => buildApp(fixture.context, [{ ...api, publicOperations: () => new Hono<UniverseModuleEnv>() }])).toThrow(/missing the handler/);
   const router = new Hono<UniverseModuleEnv>().get("/", c => c.json([])).post("/forgotten", c => c.text("extra"));
-  expect(() => buildApp(fixture.context, [{ ...api, routes: () => router }])).toThrow(/undeclared route/);
+  expect(() => buildApp(fixture.context, [{ ...api, publicOperations: () => router }])).toThrow(/undeclared route/);
+  expect(() => buildApp(fixture.context, [{ ...api, operations: [], publicOperations: () => router }])).toThrow(/without declared operations/);
+});
+
+it("validates modules passed directly to the host before loading their handlers", () => {
+  const op = { id: "read", method: "GET", path: "/:recordId", permission: "inspect" } as const;
+  const publicOperations = vi.fn(() => new Hono<UniverseModuleEnv>().get("/:recordId", c => c.text("record")));
+  const api: ApiModule = {
+    id: "sample", name: "Sample", description: "", defaultEnabled: true,
+    permissions: { inspect: "read" }, operations: [op], publicOperations,
+  };
+  const build = (...modules: ApiModule[]) => buildApp(fixture.context, modules);
+  expect(() => build({ ...api, id: "invalid/id" })).toThrow(/module ID/);
+  expect(() => build(api, api)).toThrow(/duplicate module ID/);
+  expect(() => build({ ...api, operations: [{ ...op, permission: "unknown" }] })).toThrow(/undeclared permission/);
+  expect(() => build({ ...api, operations: [op, { ...op, id: "other", path: "/:anotherId" }] })).toThrow(/Ambiguous module operation path/);
+  expect(publicOperations).not.toHaveBeenCalled();
+});
+
+it("admits browser and public contributions independently for a module offering both", async () => {
+  const mixed = buildApp(fixture.context, [{
+    id: "reports", name: "Reports", description: "", defaultEnabled: true,
+    permissions: { inspect: "read" }, operations: [{ id: "list", method: "GET", path: "/", permission: "inspect" }],
+    publicOperations: () => new Hono<UniverseModuleEnv>().get("/", c => c.text("public records")),
+    browserRoutes: () => new Hono<UniverseModuleEnv>().get("/", c => c.text("browser view")).get("/filters", c => c.text("filters")),
+  }]);
+  const browserUrl = "/api/ui/universes/work/modules/reports";
+  const publicUrl = "/api/v1/universes/work/modules/reports";
+  const viaBrowser = (path: string) => mixed.request(path, { headers: { cookie } });
+  expect(await (await viaBrowser(browserUrl)).text()).toBe("browser view");
+  expect(await (await viaBrowser(publicUrl)).text()).toBe("public records");
+  expect(await (await viaBrowser(browserUrl + "/filters")).text()).toBe("filters");
+  expect((await viaBrowser(publicUrl + "/filters")).status).toBe(404);
+
+  const key = await request("/api/v1/platform/credentials", "POST", { name: "Reports client" });
+  expect(key.status).toBe(201);
+  const { secret } = await key.json() as { secret: string };
+  const headers = { authorization: `Bearer ${secret}` };
+  expect((await mixed.request(browserUrl, { headers })).status).toBe(401);
+  expect((await mixed.request(publicUrl, { headers })).status).toBe(200);
+  const disabled = await mixed.request("/api/v1/platform/organizations/organization-a/modules/reports", {
+    method: "PUT", headers: { cookie, "content-type": "application/json", origin: fixture.env.baseUrl },
+    body: JSON.stringify({ enabled: false }),
+  });
+  expect(disabled.status).toBe(200);
+  expect((await viaBrowser(browserUrl)).status).toBe(404);
+  expect((await mixed.request(publicUrl, { headers })).status).toBe(404);
 });
 
 it("copies a permitted source once and isolates the publication across restarts, installations and tenants", async () => {
@@ -103,13 +150,42 @@ it("copies a permitted source once and isolates the publication across restarts,
   expect(upstream).not.toHaveBeenCalled();
 });
 
-it("intersects declared module permissions with credential restrictions before reading the source", async () => {
-  const key = async (restrictions: object) => {
-    const created = await request("/api/v1/platform/credentials", "POST", { name: "Artifacts reader", restrictions });
-    expect(created.status).toBe(201);
-    return ((await created.json()) as { secret: string }).secret;
+async function key(restrictions: object) {
+  const created = await request("/api/v1/platform/credentials", "POST", { name: "Scoped reader", restrictions });
+  expect(created.status).toBe(201);
+  return ((await created.json()) as { secret: string }).secret;
+}
+
+it("keeps Core and module operations distinct even when their local names match", async () => {
+  const sessionModule: ApiModule = {
+    id: "session", name: "Session reports", description: "", defaultEnabled: true,
+    permissions: { read: "read" }, operations: [{ id: "list", method: "GET", path: "/", permission: "read" }],
+    publicOperations: () => new Hono<UniverseModuleEnv>().get("/", c => c.json({ reports: [] })),
   };
-  const token = await key({ operations: ["artifacts/list"], universeIds: [fixture.universe.lightspeedUniverseId] });
+  const host = buildApp(fixture.context, [sessionModule]);
+  const core = "/api/v1/universes/work/sessions";
+  const reports = "/api/v1/universes/work/modules/session";
+  const coreKey = await key({ operations: ["session/list"] });
+  const reportKey = await key({ operations: ["modules/session/list"] });
+  const get = (url: string, secret: string) => host.request(url, { headers: { authorization: `Bearer ${secret}` } });
+  const runtime = vi.fn((input: Request | URL | string, init?: RequestInit) => {
+    const call = decodeHttpRequest(input, init);
+    if (call.method === "initialize") return Response.json({ contractRevision: HTTP_CONTRACT_REVISION, runtime: "runtime" });
+    if (call.method === "session/list") return Response.json({ sessions: [] });
+    throw new Error(`Unexpected runtime operation ${call.method}`);
+  });
+  vi.stubGlobal("fetch", runtime);
+  expect((await get(reports, coreKey)).status).toBe(403);
+  expect((await get(core, reportKey)).status).toBe(403);
+  expect(await (await get(reports, reportKey)).json()).toEqual({ reports: [] });
+  expect(runtime).not.toHaveBeenCalled();
+  expect(await (await get(core, coreKey)).json()).toMatchObject({ sessions: [] });
+});
+
+it("intersects declared module permissions with credential restrictions before reading the source", async () => {
+  const token = await key({ operations: ["modules/artifacts/list"], universeIds: [fixture.universe.lightspeedUniverseId] });
+  const legacy = await key({ operations: ["artifacts/list"] });
+  expect((await request(root, "GET", undefined, legacy)).status).toBe(403);
   expect((await request(root, "GET", undefined, token)).status).toBe(200);
   expect(await (await request(root, "GET", undefined, token)).json()).toMatchObject({ permissions: { publish: false, retract: false } });
   const item = `${root}/${crypto.randomUUID()}`;
@@ -148,7 +224,7 @@ it("admits a service user only in its granted universe and stops access when the
     universeId: fixture.universe.id, serviceUserId: service!.id, role: "viewer",
   });
   const issued = await request(`/api/v1/platform/organizations/organization-a/service-users/${service!.id}/credentials`, "POST", {
-    name: "Read publication metadata", restrictions: { operations: ["artifacts/list"] },
+    name: "Read publication metadata", restrictions: { operations: ["modules/artifacts/list"] },
   });
   expect(issued.status).toBe(201);
   const { secret } = await issued.json() as { secret: string };

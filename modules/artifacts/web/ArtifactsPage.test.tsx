@@ -37,7 +37,7 @@ beforeEach(async () => {
   store = new DemoStore({ id: "author", name: "Author", email: "author@example.org", role: "user",
     emailVerified: true, banned: false, image: null, createdAt: "", updatedAt: "" });
   store.addUniverse({ id: "test-universe", handle: "test", name: "Test" });
-  server = createDemoRouter(store, [{ ...artifacts, routes: artifactRoutes }]);
+  server = createDemoRouter(store, [{ ...artifacts, publicOperations: artifactRoutes }]);
   reads = [];
   vi.stubGlobal("fetch", (path: string, init: RequestInit) => { reads.push(path); return server.request(path, init); });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -98,7 +98,7 @@ it("retains module records across router reassembly, rejects stale publication, 
   const response = await post(collection, input);
   expect(response.status).toBe(201);
   const { artifact } = await response.json();
-  server = createDemoRouter(store, [{ ...artifacts, routes: artifactRoutes }]);
+  server = createDemoRouter(store, [{ ...artifacts, publicOperations: artifactRoutes }]);
   expect((await server.request(collection + "/" + artifact.id)).status).toBe(200);
   expect((await server.request(collection + "/" + artifact.id, { method: "DELETE" })).status).toBe(204);
   expect((await server.request(collection + "/" + artifact.id + "/content")).status).toBe(404);

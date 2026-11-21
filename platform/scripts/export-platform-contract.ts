@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { PLATFORM_OPERATIONS, platformConnectionDetailsSchema } from "../shared/src/platform-api.js";
+import { MODULE_OPERATION_PREFIX } from "../shared/src/module-operations.js";
 
 const output = fileURLToPath(new URL("../shared/contract/", import.meta.url));
 await mkdir(output, { recursive: true });
@@ -12,6 +13,9 @@ definitions.PlatformConnectionDetails = discoveryDetails;
 const helpers = new Set<string>();
 const runtime = JSON.parse(await readFile(new URL("../../crates/api/contract/http.json", import.meta.url), "utf8")) as { operations: Array<{ operationId: string; method: string; path: string }> };
 const operationIds = new Set(runtime.operations.map(operation => operation.operationId));
+for (const id of [...operationIds, ...Object.keys(PLATFORM_OPERATIONS)]) {
+  if (id.startsWith(MODULE_OPERATION_PREFIX)) throw new Error(`Operation ID reserved for Platform modules: ${id}`);
+}
 const routeKey = (method: string, path: string) => `${method} ${path.replace(/\{[^}]+\}/g, "{}")}`;
 const routes = new Set(runtime.operations.map(operation => routeKey(operation.method, operation.path)));
 const operations = Object.entries(PLATFORM_OPERATIONS).map(([operationId, spec]) => {

@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import type { ModuleRouteEntries } from "@lightspeed-ai/platform-shared";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -71,13 +72,23 @@ function moduleEntries(kind: "web" | "demo"): Plugin {
       if (id !== internalId) return;
       const imports: string[] = [];
       const entries: string[] = [];
-      for (const module of standardModules) {
-        const specifier = module[kind];
-        if (!specifier) continue;
+      const importEntry = (specifier: string) => {
         const source = specifier.startsWith(".") ? path.resolve(distributionDir, specifier) : specifier;
         const binding = `module${imports.length}`;
         imports.push(`import ${binding} from ${JSON.stringify(source)};`);
-        entries.push(`{ id: ${JSON.stringify(module.id)}, module: ${binding} }`);
+        return binding;
+      };
+      const importDemoRoutes = (routes: ModuleRouteEntries<string>) => {
+        const factories: string[] = [];
+        if (routes.browserRoutes) factories.push(`browserRoutes: ${importEntry(routes.browserRoutes)}`);
+        if (routes.publicOperations) factories.push(`publicOperations: ${importEntry(routes.publicOperations)}`);
+        return `{ ${factories.join(", ")} }`;
+      };
+      for (const module of standardModules) {
+        const entry = module[kind];
+        if (!entry) continue;
+        const value = typeof entry === "string" ? importEntry(entry) : importDemoRoutes(entry);
+        entries.push(`{ id: ${JSON.stringify(module.id)}, module: ${value} }`);
       }
       return [...imports, `export default [${entries.join(", ")}];`].join("\n");
     },

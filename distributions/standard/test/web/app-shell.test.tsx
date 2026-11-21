@@ -24,7 +24,7 @@ vi.mock("@/lib/universes", async (original) => ({
 vi.mock("@/components/universe-switcher", () => ({ UniverseSwitcher: () => null }));
 vi.mock("@/components/user-menu", () => ({ UserMenu: () => null }));
 
-const WORK = ["Bots", "Sessions", "Artifacts", "Workspaces"];
+const WORK = ["Bots", "Session Browser", "Artifacts", "Workspaces"];
 const SETUP = ["Profiles", "Environments", "MCP servers", "Models"];
 
 let root: Root;
@@ -105,7 +105,7 @@ it("gives an Owner the universe's own settings and members in its menu", async (
 
 it("leaves bots out of the menu", async () => {
   expect(await sidebarFor("owner", { bots: false })).toMatchObject({
-    "": ["Sessions", "Artifacts", "Workspaces"],
+    "": ["Session Browser", "Artifacts", "Workspaces"],
     Settings: ["General", "Members"],
   });
 });
@@ -116,8 +116,8 @@ it("titles the tab with the page and its universe, read backwards", async () => 
 });
 
 it.each([
-  ["/u/test/sessions", ["Sessions", "Test"]],
-  ["/u/test/sessions/s-1", ["Sessions", "Test"]],
+  ["/u/test/sessions", ["Session Browser", "Test"]],
+  ["/u/test/sessions/s-1", ["Session Browser", "Test"]],
   ["/u/test/workspaces/w-1/files/src/main.rs", ["Workspaces", "Test"]],
   ["/u/test/mcp-servers", ["MCP servers", "Test"]],
   ["/u/test/blobs/abc", ["Test"]],
@@ -132,7 +132,7 @@ it.each([
 });
 
 it("leaves the universe out until it has loaded", () => {
-  expect(shellTitleTrail("/u/test/sessions", undefined, universeNavigation(standardWebModules))).toEqual(["Sessions"]);
+  expect(shellTitleTrail("/u/test/sessions", undefined, universeNavigation(standardWebModules))).toEqual(["Session Browser"]);
 });
 
 it("links each page at its flat route", async () => {

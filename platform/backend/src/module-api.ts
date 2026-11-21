@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import type { PlatformModule, UniverseAction } from "@lightspeed-ai/platform-shared";
+import type { ModuleRouteEntries, PlatformModule, UniverseAction } from "@lightspeed-ai/platform-shared";
 import type { LightspeedClient } from "@lightspeed-ai/sdk";
 import type { Db } from "@lightspeed-ai/platform-db";
 
@@ -22,8 +22,9 @@ export type UniverseModuleEnv = {
   };
 };
 
-export interface ApiModule extends PlatformModule {
+export type ModuleRouteFactory = (services: ModuleServices) => Hono<UniverseModuleEnv>;
+
+export interface ApiModule extends PlatformModule, ModuleRouteEntries<ModuleRouteFactory> {
   /** Absolute path to the selected module's Drizzle migration directory. */
   migrationsFolder?: string;
-  routes?: (services: ModuleServices) => Hono<UniverseModuleEnv>;
 }

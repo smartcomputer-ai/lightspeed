@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { schema } from "@lightspeed-ai/platform-db";
+import { LightspeedClient } from "@lightspeed-ai/sdk";
 import { HTTP_CONTRACT_REVISION } from "@lightspeed-ai/sdk/server";
 import { buildStandardApi } from "../../api.js";
-import { decodeHttpRequest } from "../../../../platform/test/http-fixture.js";
+import { decodeHttpRequest, problemResponse } from "../../../../platform/test/http-fixture.js";
 import { organizationFixture } from "../../../../platform/backend/test/organization-fixture.js";
 import { responseCookies } from "../../../../platform/backend/test/identity-fixture.js";
 import { buildApp } from "../../../../platform/backend/src/api.js";
@@ -34,14 +35,24 @@ beforeEach(async () => {
   await fixture.db.update(schema.user).set({ role: "admin" }).where(eq(schema.user.id, actor));
   await fixture.db.update(schema.universes).set({ features: { bots: true } }).where(eq(schema.universes.id, fixture.universe.id));
   runtimeCalls.length = 0;
+  const sessions = [{ id: "conversation", displayName: "Conversation", access: { visibility: "universe" } }];
   vi.stubGlobal("fetch", async (input: Request | URL | string, init?: RequestInit) => {
-    const call = decodeHttpRequest(input, init);
+    const body = init?.body instanceof ReadableStream ? await new Response(init.body).text() : init?.body;
+    const call = decodeHttpRequest(input, { ...init, body });
     runtimeCalls.push(call);
     switch (call.method) {
       case "initialize": return Response.json({ contractRevision: HTTP_CONTRACT_REVISION, runtime: "runtime" });
       case "bots/list": return Response.json({ bots: [{ botId: "planner" }] });
-      case "session/list": return Response.json({ sessions: [{ id: "conversation" }] });
-      case "session/read": return Response.json({ session: { id: "conversation", access: { visibility: "universe" } } });
+      case "session/start": {
+        const session = { id: "started-session", displayName: call.params.displayName, access: { visibility: "restricted" } };
+        sessions.push(session);
+        return Response.json({ session });
+      }
+      case "session/list": return Response.json({ sessions });
+      case "session/read": {
+        const session = sessions.find(({ id }) => id === call.params.sessionId);
+        return session ? Response.json({ session }) : problemResponse({ status: 404, kind: "notFound", detail: "session not found" });
+      }
       default: throw new Error(`Unexpected upstream operation ${call.method}`);
     }
   });
@@ -58,7 +69,32 @@ async function setEnabled(id: string, enabled: boolean) {
   expect(result.status).toBe(200);
 }
 
-it("mounts each installed browser API and keeps shared conversations and public SDK operations independent", async () => {
+it.each(["disabled", "omitted"] as const)("keeps the core session SDK available when Session Browser is %s", async state => {
+  if (state === "disabled") await setEnabled("sessions", false);
+  const target = state === "disabled" ? app : buildApp(fixture.context);
+  expect((await request(`${base}/modules/sessions`, "GET", undefined, target)).status).toBe(404);
+  expect((await request(`${base}/modules/sessions`, "POST", {}, target)).status).toBe(404);
+  expect(runtimeCalls).toHaveLength(0);
+
+  const client = new LightspeedClient({
+    endpoint: fixture.env.baseUrl,
+    universe: "work",
+    headers: { cookie, origin: fixture.env.baseUrl },
+    fetch: async (input, init) => target.request(input, init),
+  });
+  const { session } = await client.startSession({ displayName: "Started through the SDK" });
+  expect(session.id).toBe("started-session");
+  expect((await client.listSessions()).sessions).toEqual(expect.arrayContaining([expect.objectContaining({ id: session.id })]));
+  expect((await client.readSession(session.id)).session).toMatchObject({ id: session.id, displayName: "Started through the SDK" });
+  const calls = runtimeCalls.filter(call => call.method !== "initialize");
+  expect(calls.map(call => call.method)).toEqual(["session/start", "session/list", "session/read"]);
+  for (const call of calls) {
+    expect(call.universe).toBe(fixture.universe.lightspeedUniverseId);
+    expect(call.headers.get("x-lightspeed-actor")).toBe(actor);
+  }
+});
+
+it("mounts each installed browser API and keeps shared conversations independent", async () => {
   expect(await (await request(`${base}/modules/sessions`)).json()).toMatchObject({ sessions: [{ id: "conversation" }] });
   expect(await (await request(`${base}/modules/bots`)).json()).toEqual({ bots: [{ botId: "planner" }] });
   expect(runtimeCalls.map(call => [call.universe, call.headers.get("x-lightspeed-actor")])).toEqual([
@@ -66,11 +102,8 @@ it("mounts each installed browser API and keeps shared conversations and public 
   ]);
 
   await setEnabled("sessions", false);
-  expect((await request(`${base}/modules/sessions`)).status).toBe(404);
-  expect((await request(`${base}/modules/sessions`, "POST", {})).status).toBe(404);
   expect((await request(`${base}/sessions/conversation`)).status).toBe(200);
   expect((await request(`${base}/modules/bots`)).status).toBe(200);
-  expect((await request("/api/v1/universes/work/sessions")).status).toBe(200);
 
   await setEnabled("sessions", true);
   await setEnabled("bots", false);

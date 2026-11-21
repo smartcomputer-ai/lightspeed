@@ -10,7 +10,7 @@ import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withApiErrors } from "./http.js";
 import { Hono } from "hono";
 import { desc, eq, sql } from "drizzle-orm";
-import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared";
+import { auditQuerySchema, validateModuleDefinitions, type AuditPage } from "@lightspeed-ai/platform-shared";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { moduleRoutes } from "./module-routes.js";
@@ -25,6 +25,7 @@ import { publicAuthConfig } from "./auth.js";
 
 
 export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
+  validateModuleDefinitions(modules);
   const app = new Hono();
   app.onError((error, c) => {
     if (error instanceof CredentialRateLimit) return error.response();
@@ -62,12 +63,13 @@ export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
     await next();
     if (admission.renewedToken) c.header("set-auth-token", admission.renewedToken);
   };
+  const { browserRoutes, publicOperations } = moduleRoutes(ctx, modules);
   const shared = new Hono<{ Variables: ApiVariables }>();
   shared.use("*", authenticated);
   shared.route("/platform", sessionRoutes(ctx));
   shared.route("/platform", credentialRoutes(ctx));
   shared.route("/platform", platformRoutes(ctx, modules));
-  shared.route("/universes", moduleRoutes(ctx, modules, "public"));
+  shared.route("/universes", publicOperations);
   shared.route("/", runtimeHttpRoutes(ctx));
   app.route("/api/v1", shared);
 
@@ -102,7 +104,7 @@ export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
   api.route("/universes", universeRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));
   api.route("/universes", conversationRoutes(ctx));
-  api.route("/universes", moduleRoutes(ctx, modules, "browser"));
+  api.route("/universes", browserRoutes);
   api.route("/admin", sessionAdminRoutes(ctx));
   api.route("/admin", environmentDeploymentRoutes(ctx));
 

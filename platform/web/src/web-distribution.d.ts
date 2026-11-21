@@ -4,7 +4,7 @@ declare module "virtual:lightspeed/web-module-entries" {
 }
 
 declare module "virtual:lightspeed/demo-module-entries" {
-  type DemoRoutes = NonNullable<import("@/demo/router").DemoModule["routes"]>;
+  type DemoRoutes = import("@/demo/router").DemoRoutes;
   const entries: ReadonlyArray<{ id: string; module: DemoRoutes }>;
   export default entries;
 }

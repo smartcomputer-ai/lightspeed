@@ -1,5 +1,12 @@
 import type { ModuleOperation } from "./modules.js";
 
+/** Reserved in both the runtime and the native Platform credential catalogs. */
+export const MODULE_OPERATION_PREFIX = "modules/";
+
+export function moduleCredentialOperationId(moduleId: string, operationId: string): string {
+  return `${MODULE_OPERATION_PREFIX}${moduleId}/${operationId}`;
+}
+
 /** Pair each public operation with its own handler chain before mounting it.
  * An unlisted handler or missing implementation is a distribution error. */
 export function bindModuleOperations<T extends { method: string; path: string }>(

@@ -1,4 +1,7 @@
-import { auditQuerySchema, bindModuleOperations, modulePermissions, type AuditPage, type ModuleOperation, type PlatformModule } from "@lightspeed-ai/platform-shared";
+import {
+  auditQuerySchema, bindModuleOperations, modulePermissions, validateModuleDefinitions,
+  type AuditPage, type ModuleOperation, type ModuleRouteEntries, type PlatformModule,
+} from "@lightspeed-ai/platform-shared";
 import { demoDeploymentAllows, demoUniverseActions } from "./access";
 import { organizationRoutes } from "./routes/organizations";
 import { watchRoutes } from "./routes/watch";
@@ -18,11 +21,11 @@ import { transcriptionRoutes } from "./routes/transcriptions";
 import { conversationRoutes } from "./routes/sessions";
 import { workspaceRoutes } from "./routes/workspaces";
 
-export interface DemoModule extends PlatformModule {
-  routes?: (store: DemoStore) => Hono;
-}
+export type DemoRoutes = ModuleRouteEntries<(store: DemoStore) => Hono>;
+export type DemoModule = PlatformModule & DemoRoutes;
 
 export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[] = []): Hono {
+  validateModuleDefinitions(modules);
   const app = new Hono();
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
   app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
@@ -88,8 +91,6 @@ export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[
     api.route("/universes", routes(store));
   }
   for (const module of modules) {
-    if (!module.routes) continue;
-    const scoped = new Hono();
     const admit = (operation?: ModuleOperation): MiddlewareHandler => async (c, next) => {
       const state = store.universe(c.req.param("id"));
       if (!state) return c.json({ error: "not found" }, 404);
@@ -105,16 +106,21 @@ export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[
       }
       await next();
     };
-    const router = new Hono().route("/", module.routes(store));
-    if (module.operations) {
+    const base = `/universes/:id/modules/${module.id}`;
+    if (module.browserRoutes) {
+      const scoped = new Hono().use("*", admit());
+      scoped.route("/", module.browserRoutes(store));
+      api.route(base, scoped);
+    }
+    if (module.publicOperations) {
+      if (!module.operations?.length) throw new Error(`Module ${module.id} provides a public API implementation without declared operations`);
+      const scoped = new Hono();
+      // Wrapping the contributed router preserves its own error handler.
+      const router = new Hono().route("/", module.publicOperations(store));
       for (const { operation, routes } of bindModuleOperations(module.id, module.operations, router.routes)) {
         scoped.on(operation.method, operation.path, admit(operation), ...routes.map(route => route.handler));
       }
-      app.route(`/api/v1/universes/:id/modules/${module.id}`, scoped);
-    } else {
-      scoped.use("*", admit());
-      scoped.route("/", router);
-      api.route(`/universes/:id/modules/${module.id}`, scoped);
+      app.route(`/api/v1${base}`, scoped);
     }
   }
   app.route("/api/ui", api);

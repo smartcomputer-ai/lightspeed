@@ -1,12 +1,12 @@
 # Platform modules on a shared Lightspeed deployment
 
-**Status** — Sessions, Bots, and Artifacts are installed as Platform modules on this branch. Moving the Bots worker and its storage out of Rust is a separate proposal.
+**Status** — Session Browser, Bots, and Artifacts are installed as Platform modules on this branch. Moving the Bots worker and its storage out of Rust is a separate proposal.
 
-Lightspeed teams can ship a feature inside the shared Platform as a **module**. The distribution selects which modules to bundle. Each organization chooses which of those modules to enable. Platform hosts their pages and browser APIs, and checks permissions on the operations they use. The core runtime continues to own the session lifecycle.
+Lightspeed teams can ship a feature inside the shared Platform as a **module**. The distribution selects which modules to bundle. Each organization chooses which of those modules to enable. A module can add pages, browser-only routes, or public API operations. Platform authenticates callers and enforces access to each contribution. Every distribution provides the Core session API through the gateway. Session Browser adds a standalone place to browse and launch those sessions.
 
 ## Try the prototype
 
-Run `./dev.sh demo`. In **Software Factory**, open **Bots → Planner** and its conversation. In **Organization settings → Modules**, turn off **Sessions** and return to Planner. Its transcript and composer still work. Switch Sessions back on, open a bot-managed session in Sessions, then turn off **Bots**. The standalone conversation still works, with the recorded workflow kind and no bot-management actions. A direct visit to the disabled module’s page shows its unavailable state.
+Run `./dev.sh demo`. In **Software Factory**, open **Bots → Planner** and its conversation. In **Organization settings → Modules**, turn off **Session Browser** and return to Planner. Its transcript and composer still work. Switch Session Browser back on, open a bot-managed session there, then turn off **Bots**. The standalone conversation still works, with the recorded workflow kind and no bot-management actions. A direct visit to the disabled module’s page shows its unavailable state.
 
 For the self-contained module example, open **Personal Assistant → Workspaces → Briefs** in the demo. Choose **Workspace actions → View artifacts → Publish artifact**, select a file, and publish it. Open its title to read the saved snapshot. Editing or removing the source file leaves the publication readable. **Retract** removes the publication and leaves the source file in place.
 
@@ -14,16 +14,16 @@ For the self-contained module example, open **Personal Assistant → Workspaces 
 
 | Owner | Implemented on this branch |
 | --- | --- |
-| Sessions module | Standalone routes, filtered and paginated session browser, list preferences, new-session form, and private browser endpoints for listing and creating sessions. [Web](../../../modules/sessions/web/index.ts) · [API](../../../modules/sessions/api/index.ts) |
+| Session Browser module | Standalone routes, filtered and paginated session browser, list preferences, new-session form, and private browser endpoints for listing and creating sessions. [Web](../../../modules/sessions/web/index.ts) · [API](../../../modules/sessions/api/index.ts) |
 | Bots module | Bot list and editor, chat and activity routes, triggers and events, controller links and actions in a shared conversation, and the private browser endpoints for these features. [Web](../../../modules/bots/web/index.ts) · [API](../../../modules/bots/api/index.ts) |
-| Sessions component library | Sessions owns the embeddable transcript, composer, conversation settings, and their read models. Both the Sessions page and Bots chat import this library. [Components](../../../modules/sessions/components/index.ts) · [Bot chat](../../../modules/bots/web/components/chat.tsx) |
+| Sessions component library | The session-components package owns the embeddable transcript, composer, conversation settings, and their read models. Session Browser and Bots chat both import it. [Components](../../../modules/sessions/components/index.ts) · [Bot chat](../../../modules/bots/web/components/chat.tsx) |
 | Artifacts module | Workspace action, publication browser and preview, public HTTP operations, permission definitions, PostgreSQL tables and migrations. [Module](../../../modules/artifacts/module.ts) · [API](../../../modules/artifacts/api/index.ts) · [Storage](../../../modules/artifacts/db/schema.ts) |
 | Platform gateway | Browsers can open a permitted session by ID, send messages, handle approvals, and follow child sessions. Deployment-admin purge uses a separate permission. [Conversation handlers](../../../platform/backend/src/routes/conversations.ts) |
-| Rust runtime | The public session and bot contracts, durable records, and Temporal execution. Platform exposes these contracts to SDK and CLI callers through its authenticated gateway. [Gateway](../../../platform/backend/src/runtime-http.ts) |
+| Rust runtime | The public session contract, durable records, and Temporal execution. Rust also serves the current bot operations pending extraction. Platform exposes these contracts to SDK and CLI callers through its authenticated gateway. [Gateway](../../../platform/backend/src/runtime-http.ts) |
 
 ```mermaid
 flowchart LR
-    sessions["Sessions page"] --> collection["Sessions browser API<br/>list and start"]
+    sessions["Session Browser"] --> collection["Private browser routes<br/>list and start"]
     bots["Bots pages"] --> management["Bots browser API<br/>manage bots, triggers and events"]
     sessions --> view["Sessions component library<br/>transcript, composer and settings"]
     bots --> view
@@ -36,19 +36,24 @@ flowchart LR
     gateway --> core
 ```
 
-Each web contribution is an npm workspace. Bots and the standalone Sessions page both depend on `@lightspeed-ai/session-components`. That package has no module registration or installation check. Bundling Bots alone brings the components it uses. A distribution that selects only Artifacts can omit both the Sessions and Bots source directories. The shell supplies authentication, permission hooks, design primitives, and the controller presentation contract. [Library manifest](../../../modules/sessions/components/package.json) · [Standard web entry](../../../distributions/standard/main.ts)
+Each web contribution is an npm workspace. Bots and Session Browser both depend on `@lightspeed-ai/session-components`. That package has no module registration or installation check. Bundling Bots alone brings the components it uses. A distribution that selects only Artifacts can omit both the Sessions and Bots source directories. The shell supplies authentication, permission hooks, design primitives, and the controller presentation contract. [Library manifest](../../../modules/sessions/components/package.json) · [Standard web entry](../../../distributions/standard/main.ts)
 
 To test Platform with the modules and distribution source directories omitted, run `npm run test:platform-host`. Tests that exercise the assembled application live with the distribution. [Distribution tests](../../../distributions/standard/test)
 
-The standard distribution lists each module and its contributions in one catalog. A module can supply a web package, API handlers, migrations, and demo handlers. The web build bundles the selected pages. The API host loads the selected route factories and applies their migrations before serving requests. [Distribution catalog](../../../distributions/standard/catalog.ts) · [Web build](../../../distributions/standard/vite.config.ts) · [API assembly](../../../distributions/standard/api.ts)
+The standard distribution lists each module and its contributions in one catalog. A module can supply a web package, API handlers, migrations, and demo handlers. The catalog registers two kinds of API handler independently. A module can supply either, both, or neither. The web build bundles the selected pages, and the API host applies the selected migrations at startup. [Distribution catalog](../../../distributions/standard/catalog.ts) · [Web build](../../../distributions/standard/vite.config.ts) · [API assembly](../../../distributions/standard/api.ts)
 
-For example, opening the Sessions list calls `GET /api/ui/universes/:id/modules/sessions`. The host authenticates the browser, resolves the universe and its organization, and checks that Sessions is enabled. The module calls `session/list` on the client the host supplies. That client applies the caller’s permissions and visibility restrictions. A request to a disabled module returns 404. Bots also requires the universe’s existing Bots feature switch. [Host admission](../../../platform/backend/src/module-routes.ts)
+| API contribution | Caller and purpose | Example |
+| --- | --- | --- |
+| `browserRoutes` under `/api/ui` | A signed-in browser requests a view or action tailored to a page. The handler uses the caller’s scoped client for Core access. | Session Browser loads its filtered list. |
+| `publicOperations` under `/api/v1` | A signed-in browser or an API credential calls a supported domain operation. Each method and path has a declared permission. | The Artifacts page and an integration can publish a file through the same endpoint. |
 
-Organization choices persist in PostgreSQL in the running Platform. The demo stores them in the browser until reload. The organization switch governs a module’s pages and all endpoints it registers, including its public HTTP operations. Core SDK operations retain their own permission checks and runtime feature policies.
+For example, opening Session Browser calls `GET /api/ui/universes/:id/modules/sessions`. The host authenticates the browser, resolves the universe and its organization, and checks that Session Browser is enabled. The module calls `session/list` on the client the host supplies. That client applies the caller’s permissions and visibility restrictions. A request to a disabled module returns 404. Bots also requires the universe’s existing Bots feature switch. [Host admission](../../../platform/backend/src/module-routes.ts)
+
+Organization choices persist in PostgreSQL in the running Platform. The demo stores them in the browser until reload. The organization switch governs a module’s pages and all endpoints it registers, including its public HTTP operations. The gateway always serves authorized Core session operations such as `session/start`, `session/list`, and `session/read`. A deployment can omit Session Browser entirely and still serve SDK clients and embedded conversations.
 
 ## Artifacts from publication to retraction
 
-Artifacts has three jobs. A Contributor can publish a file; a Viewer can browse, preview, or download it; an Operator can retract it. The module maps its three permissions to existing universe actions. When a client uses a scoped credential, Platform also checks its allowed operations, organization and universe, and read-only setting. A key limited to `artifacts/list` can list metadata. Reading the saved bytes requires `artifacts/content`. The browser uses the same public API. [Declared operations and permissions](../../../modules/artifacts/module.ts) · [Host admission](../../../platform/backend/src/module-routes.ts)
+Artifacts has three jobs. A Contributor can publish a file; a Viewer can browse, preview, or download it; an Operator can retract it. The module maps its three permissions to existing universe actions. When a client uses a scoped credential, Platform also checks its allowed operations, organization and universe, and read-only setting. A key limited to `modules/artifacts/list` can list metadata. Reading the saved bytes requires `modules/artifacts/content`. The `modules/<module>/<operation>` credential namespace keeps these grants distinct from Core and native Platform grants. The browser uses the same public API. [Declared operations and permissions](../../../modules/artifacts/module.ts) · [Host admission](../../../platform/backend/src/module-routes.ts)
 
 ```mermaid
 flowchart LR
@@ -109,14 +114,14 @@ The **Core runtime** owns sessions, runs, durable state, and tool execution. It 
 
 | Module | What the module owns | How a request runs |
 | --- | --- | --- |
-| **Sessions** | Standalone session browser and launcher, including their browser endpoints. | The module uses the shared conversation view and runtime client. Other clients can still start sessions when the distribution omits the module. |
+| **Session Browser** | Standalone session browser and launcher, including their browser endpoints. | The module uses the shared conversation view and runtime client. Other clients can still start sessions when the distribution omits the module. |
 | **Workspaces** | The file browser and editor for VFS. It can also contribute a handler to the Platform backend if an editor action needs server-side logic. | Platform authorizes the request. The handler can compose Core workspace operations, and Core owns the snapshots and blobs. |
 | **Bots** | Bot pages, public operations, records and migrations, and a Temporal worker for controllers and triggers. | Platform forwards authorized bot operations to the Bots API. The worker calls Core through the gateway and receives workflow notifications over Temporal. |
 
 ```mermaid
 flowchart TB
     subgraph shell["Shared Platform web shell"]
-        sessions["Sessions pages"]
+        sessions["Session Browser"]
         workspaces["Workspace editor"]
         botsUI["Bots pages"]
     end
@@ -142,7 +147,7 @@ An organization can disable the Workspaces module while its agents still use VFS
 
 Suppose Acme enables Bots for its support universe. A Contributor opens **Bots → Support triage → Activity** and sends the bot an event. The page, the public bot operations, and the process that does the work all belong to the Bots team. They ship in different places.
 
-The **Bots UI package** contributes the `/u/:handle/bots` routes and their navigation entry. Sending an event is a domain operation, so the Activity page, CLI, and SDK use the same supported `bots/events/admit` API. A UI-specific endpoint may assemble the activity history and session summaries for that page using the caller's permissions on each resource. The **Bots worker** runs the controller and trigger workflows. An Activity page change ships with the shell. A compatible trigger fix can ship with the worker alone.
+The **Bots UI package** contributes the `/u/:handle/bots` routes and their navigation entry. Sending an event is a domain operation, so the Activity page, CLI, and SDK use the same event-admission API. The existing runtime operation is `bots/events/admit`. Under module ownership its credential operation ID would be `modules/bots/events/admit`. A UI-specific endpoint may assemble the activity history and session summaries for that page using the caller's permissions on each resource. The **Bots worker** runs the controller and trigger workflows. An Activity page change ships with the shell. A compatible trigger fix can ship with the worker alone.
 
 Bots owns its records, triggers, events, and database migrations. It could use a separate database or a schema in the shared PostgreSQL instance, where the module's database role determines which tables it can access. A deployment that omits the entire module should still be able to run sessions and collect unused blobs. Today, core session access queries and blob collection both reference bot tables. Their replacements must preserve session visibility and retain blobs that bot events still use. [Session access](../../../crates/store-pg/src/access.rs) · [Blob collection](../../../crates/store-pg/src/cas_sweep.rs)
 
@@ -177,7 +182,7 @@ Before committing to a TypeScript rewrite, exercise one event end to end using o
 
 ## Shared design and product language
 
-Use a shared session view for the transcript, composer, and session attribution. Bots and Sessions both embed `SessionDetail` from the Sessions component library. The shell asks enabled modules whether they can present the recorded controller. For “Started by Support triage,” the view owns the wording, translations, placement, and fallback. Bots supplies the display name and, when the caller may open the bot, a link. If Bots is disabled later, the session still shows its recorded workflow kind as plain text. [Bot chat](../../../modules/bots/web/components/chat.tsx)
+Use a shared session view for the transcript, composer, and session attribution. Bots and Session Browser both embed `SessionDetail` from the Sessions component library. The shell asks enabled modules whether they can present the recorded controller. For “Started by Support triage,” the view owns the wording, translations, placement, and fallback. Bots supplies the display name and, when the caller may open the bot, a link. If Bots is disabled later, the session still shows its recorded workflow kind as plain text. [Bot chat](../../../modules/bots/web/components/chat.tsx)
 
 The broader question remains open. When a module introduces a new visual pattern or term, what would justify moving it into the shared design system? For general-purpose UI slots or transcript renderers, identify a concrete feature that needs an extension point before defining its interface.
 
@@ -190,11 +195,11 @@ These YAML excerpts illustrate three decisions. The field names are proposals fo
 ```yaml
 id: bots
 operations:
-  bots/events/admit: { action: invokeBot }
-  bots/triggers/put: { action: manageBot }
+  events/admit: { action: invokeBot }
+  triggers/put: { action: manageBot }
 ```
 
-**2. The distribution selects native modules. The deployment operator makes services available.** The distribution's list selects the web and API contributions for the shared application. Sessions contributes pages and private browser handlers. In the proposed service design, Bots also contributes public operations, so the operator supplies its service endpoint. Acme's approvals link opens the client's own UI.
+**2. The distribution selects native modules. The deployment operator makes services available.** The distribution's list selects the web and API contributions for the shared application. Session Browser contributes pages and private browser handlers. In the proposed service design, Bots also contributes public operations, so the operator supplies its service endpoint. Acme's approvals link opens the client's own UI.
 
 ```yaml
 distribution:
@@ -218,11 +223,24 @@ modules:
   bots: { enabled: true, universes: [support] }
 ```
 
-The organization installation governs who can use Bots and in which universes. It also gives the operator a scope for lifecycle decisions.
+### What disabling Bots means
 
-- **Access.** Removing a universe from the installation closes access to the module there. Today, turning off Bots in a universe gates member requests while scheduled work can continue. Existing universe choices should carry over.
-- **Suspension.** Define what happens to the next trigger, queued events, and a run already in progress. Today's per-bot **Pause** stops schedule and poll production and pauses delivery while an active run continues. Installation-wide suspension needs an explicit policy for each of those cases.
-- **Deletion.** Define when Bots removes its triggers, events, and records, and how Core's session retention policy applies to conversations that outlive the bot. [Current Bots lifecycle](../../documentation/using-lightspeed/bots-and-triggers.md#pause-update-reset-or-close)
+**On this branch**, disabling Bots for an organization hides its pages and closes its private browser routes. The gateway still serves the Rust bot API to permitted SDK callers when the universe enables Bots. The universe feature gates member requests. Schedules and existing runs can continue. [Distribution tests](../../../distributions/standard/test/api/module-routes.integration.test.ts) · [Current Bots lifecycle](../../documentation/using-lightspeed/bots-and-triggers.md#pause-update-reset-or-close)
+
+**For extraction**, make the organization installation the authority for new bot management and invocation through the browser, SDK and service credentials. A universe may narrow an enabled installation. An organization-wide disable applies even to a universe that previously enabled Bots. Keep the Core session contract available under its existing caller and controller permissions.
+
+The gateway can adopt this rule while Rust still serves the bot endpoints. Keep an explicit list of always-available Core operations. Let the distribution register the reviewed bot operations against the Bots installation at their existing SDK URLs, preserving each operation’s permission checks. Omitting Bots then omits those registrations. A module cannot claim a Core operation. The worker also needs to check the effective installation when admitting trigger events and starting runs, because scheduled work can enter through Temporal without passing through HTTP.
+
+The following behaviors are proposed acceptance criteria for the independent worker. Treat the installation change as effective when it commits. Use the durable Core run admission to distinguish an active run from an event still waiting for delivery.
+
+| When Bots is disabled | Expected behavior |
+| --- | --- |
+| A user or service opens a bot, edits a trigger, or sends an event | Every public and browser entry point checks the same effective installation. Reject the request before it changes state. Core session calls still work for authorized callers. |
+| A webhook arrives or a schedule or poll becomes due | Close webhook admission and suspend production. Resuming the installation starts with the next due occurrence. Missed ticks do not create a backlog. |
+| An accepted bot event is waiting for a run | Preserve the event and hold delivery. On resume, recheck the installation, universe and per-bot pause state before delivering it once. |
+| Core has already admitted a run | Let it finish. The worker may reconcile that run and record its outcome, including after restart. A duplicate completion must yield one outcome. Starting a follow-up run requires a new admission. |
+
+Disabling an installation preserves its records and per-bot pause choices. Deletion and retention need a separate decision, including the lifetime of Core conversations that outlive their bot.
 
 ## Proposed project structure
 
@@ -291,7 +309,7 @@ environments/                Environment daemon and standalone providers
 Only the distribution's assembly code depends on both the hosts and the concrete modules. Module metadata uses `@lightspeed-ai/platform-shared`. Browser code uses `@lightspeed-ai/platform-web/modules` and its feature interfaces. A hosted browser handler uses `@lightspeed-ai/platform-backend/modules` to receive the admitted caller and runtime client.
 
 - **Frontend.** `distributions/standard/web.ts` supplies the selected UI contributions, such as the pages exported by `modules/bots/web/`. The shell builds its router and navigation from these exports. At sign-in or when switching organizations, it shows entries according to the organization's installations and the caller's permissions.
-- **API.** `distributions/standard/api.ts` supplies the selected handlers. Sessions registers its browser collection under `/api/ui/universes/:id/modules/sessions`. Artifacts declares its public operations under `/api/v1/universes/:id/modules/artifacts`. A future separately deployed service could use the same admission boundary.
+- **API.** `distributions/standard/api.ts` supplies the selected handlers. Session Browser registers its browser collection under `/api/ui/universes/:id/modules/sessions`. Artifacts declares its public operations under `/api/v1/universes/:id/modules/artifacts`. A future separately deployed service could use the same admission boundary.
 
 The web and API entries for a feature share its module ID. The deployment starts the Bots worker separately. Temporal workflows, task queues, and database migrations belong to Bots and run under its deployment lifecycle.
 

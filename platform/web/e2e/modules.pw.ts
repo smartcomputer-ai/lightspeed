@@ -60,11 +60,11 @@ test("a workspace publishes an artifact and its organization controls both contr
   await expect(page.getByText("No published artifacts")).toBeVisible();
 });
 
-test("Bots keeps its shared session view when the Sessions module is disabled", async ({ page }) => {
+test("Bots can send messages when Session Browser is disabled", async ({ page }) => {
   await page.goto("u/software-factory/bots/planner");
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await expect(composer).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("link", { name: "Sessions", exact: true }).click();
+  await page.getByRole("link", { name: "Session Browser", exact: true }).click();
   await page.getByRole("link", { name: /^Fix flaky scheduler test/ }).click();
   await expect(page).toHaveURL(/\/sessions\/session-flaky-scheduler$/);
   await expect(composer).toBeVisible();
@@ -73,15 +73,22 @@ test("Bots keeps its shared session view when the Sessions module is disabled", 
   await expect(page).toHaveURL(/\/bots\/planner$/);
 
   await openOrganizationSettings(page);
-  const enabled = page.getByRole("switch", { name: "Sessions" });
+  const enabled = page.getByRole("switch", { name: "Session Browser", exact: true });
   await expect(enabled).toBeChecked();
   await enabled.click();
   await expect(enabled).not.toBeChecked();
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(/\/bots\/planner$/);
-  await expect(page.getByRole("link", { name: "Sessions", exact: true })).toHaveCount(0);
-  await expect(composer).toBeVisible();
+  await expect(page.getByRole("link", { name: "Session Browser", exact: true })).toHaveCount(0);
+  const message = "Which tasks are ready for review?";
+  await composer.fill(message);
+  await composer.press("Enter");
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Bots", exact: true }).click();
+  await expect(page).toHaveURL(/\/bots$/);
+  await page.goBack();
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
 });
 
 test("disabling Bots removes its routes and controller UI while managed sessions remain readable", async ({ page }) => {

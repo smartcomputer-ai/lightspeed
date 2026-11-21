@@ -13,7 +13,7 @@ export { buildApp };
 export { migrateModuleDatabases };
 export type { AppContext } from "./context.js";
 
-/** Start the Platform with the private routes chosen by the distribution. */
+/** Start the Platform with the modules selected by the distribution. */
 export async function startPlatformServer(modules: readonly ApiModule[]): Promise<void> {
   const env = loadEnv();
   const { db, pool } = createDb(env.databaseUrl, env.databaseWorkloadIdentity);
