@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { PlatformOperationParams } from "@lightspeed-ai/platform-shared";
 import type { AppContext } from "./context.js";
 import { requireCredentialManagement, type AuthContext } from "./auth-context.js";
-import { organizationForPrincipal, requireOrganizationAction } from "./organization-access.js";
+import { requireOrganizationAction, type OrganizationAccess } from "./organization-access.js";
 import { auditAsSubject } from "./identity-audit.js";
 import { GateRefusal } from "./runtime-client.js";
 
@@ -13,46 +13,40 @@ type Owner = PlatformOperationParams<"platform/service-users/federated-credentia
 type Put = PlatformOperationParams<"platform/service-users/federated-credentials/put">;
 type Delete = PlatformOperationParams<"platform/service-users/federated-credentials/delete">;
 
-function view(ctx: AppContext, binding: typeof bindings.$inferSelect) {
+function declaration(ctx: AppContext, binding: Pick<typeof bindings.$inferSelect, "issuer" | "subject" | "serviceAccountUid" | "restrictions">) {
   const issuer = ctx.env.federation?.config.issuers.find((i) => i.issuer === binding.issuer);
   return {
-    id: binding.id,
     issuer: issuer?.name ?? binding.issuer,
     subject: binding.subject,
     serviceAccountUid: binding.serviceAccountUid,
     restrictions: binding.restrictions,
-    lastUsedAt: binding.lastUsedAt?.toISOString() ?? null,
   };
 }
 
+function view(ctx: AppContext, binding: typeof bindings.$inferSelect) {
+  return { ...declaration(ctx, binding), id: binding.id, lastUsedAt: binding.lastUsedAt?.toISOString() ?? null };
+}
+
+type DirectoryUser = { user: typeof serviceUsers.$inferSelect; declarations?: ReturnType<typeof declaration>[] };
+
 /** Include exportable declarations only for callers who can read credential inventory. */
-export async function serviceUserDeclarations(
-  ctx: AppContext,
-  auth: AuthContext,
-  organizationId: string,
-  users: string[],
-) {
-  const result = new Map<string, Omit<ReturnType<typeof view>, "id" | "lastUsedAt">[]>();
-  if (
-    !users.length ||
-    (auth.credential.restrictions.operations &&
-      !auth.credential.restrictions.operations.includes("platform/service-users/federated-credentials/list"))
-  )
-    return result;
-  const access = await organizationForPrincipal(ctx, auth, organizationId);
-  if (!access?.actions.has("manageServiceUsers")) return result;
-  const rows = await ctx.db
-    .select()
-    .from(bindings)
-    .where(inArray(bindings.serviceUserId, users))
-    .orderBy(bindings.issuer, bindings.subject);
-  for (const row of rows) {
-    const { issuer, subject, restrictions, serviceAccountUid } = view(ctx, row);
-    const entries = result.get(row.serviceUserId) ?? [];
-    entries.push({ issuer, subject, restrictions, serviceAccountUid });
-    result.set(row.serviceUserId, entries);
+export async function listDirectoryServiceUsers(ctx: AppContext, auth: AuthContext, access: OrganizationAccess): Promise<DirectoryUser[]> {
+  const inOrganization = eq(serviceUsers.organizationId, access.organization.id);
+  const operations = auth.credential.restrictions.operations;
+  if (!access.actions.has("manageServiceUsers") || (operations && !operations.includes("platform/service-users/federated-credentials/list"))) {
+    return ctx.db.select({ user: serviceUsers }).from(serviceUsers).where(inOrganization);
   }
-  return result;
+  const { issuer, subject, serviceAccountUid, restrictions } = bindings;
+  const rows = await ctx.db.select({ user: serviceUsers, binding: { issuer, subject, serviceAccountUid, restrictions } })
+    .from(serviceUsers).leftJoin(bindings, eq(bindings.serviceUserId, serviceUsers.id))
+    .where(inOrganization).orderBy(issuer, subject);
+  const users = new Map<string, DirectoryUser>();
+  for (const { user, binding } of rows) {
+    const entry = users.get(user.id) ?? { user };
+    if (binding) (entry.declarations ??= []).push(declaration(ctx, binding));
+    users.set(user.id, entry);
+  }
+  return [...users.values()];
 }
 
 async function requireOwner(ctx: AppContext, auth: AuthContext, owner: Owner) {

@@ -22,6 +22,34 @@ afterAll(async () => {
   await issuer?.close();
 });
 
+it("lists each service user once and shows its bindings only with inventory access", async () => {
+  const id = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id, slug: id, name: "Directory", createdAt: new Date() });
+  const [bound, unbound] = await fixture.db.insert(schema.serviceUsers).values([
+    { organizationId: id, name: "Bound", role: "admin" },
+    { organizationId: id, name: "Unbound" },
+  ]).returning();
+  const directoryOnly = { operations: ["platform/organizations/service-users/list"] };
+  await fixture.db.insert(schema.federatedCredentials).values([
+    { serviceUserId: bound!.id, issuer: issuer.issuer, subject: "directory-b", restrictions: directoryOnly },
+    { serviceUserId: bound!.id, issuer: issuer.issuer, subject: "directory-a" },
+  ]);
+  const path = `/api/v1/platform/organizations/${id}/service-users`;
+  const response = await fixture.request(path, undefined, cookie);
+  const { serviceUsers } = await response.json() as { serviceUsers: { id: string; federatedCredentials?: object[] }[] };
+  expect(serviceUsers).toHaveLength(2);
+  expect(serviceUsers.find(user => user.id === bound!.id)?.federatedCredentials).toEqual([
+    { issuer: "cluster", subject: "directory-a", serviceAccountUid: null, restrictions: {} },
+    { issuer: "cluster", subject: "directory-b", serviceAccountUid: null, restrictions: directoryOnly },
+  ]);
+  expect(serviceUsers.find(user => user.id === unbound!.id)).not.toHaveProperty("federatedCredentials");
+  const token = await issuer.mint({ sub: "directory-b" });
+  const restricted = await fixture.app.request(path, { headers: { authorization: `Bearer ${token}` } });
+  const hidden = await restricted.json() as { serviceUsers: object[] };
+  expect(hidden.serviceUsers).toHaveLength(2);
+  for (const user of hidden.serviceUsers) expect(user).not.toHaveProperty("federatedCredentials");
+});
+
 it("manages bindings within an organization and includes the non-secret declaration in its directory", async () => {
   const id = crypto.randomUUID();
   await fixture.db
