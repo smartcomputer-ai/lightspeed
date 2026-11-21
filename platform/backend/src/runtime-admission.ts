@@ -1,3 +1,5 @@
+import type { PlatformModule } from "@lightspeed-ai/platform-shared";
+
 /** Reviewed operations exposed to signed-in Platform users. New runtime operations
  * are denied until their Platform policy is reviewed and added here. Routes and
  * wire types still come exclusively from the runtime contract. */
@@ -102,26 +104,52 @@ export const MEMBER_OPERATIONS: ReadonlySet<string> = new Set([
   "credentials/providers/delete",
   "credentials/github/installations/list",
   "credentials/github/installations/grant",
-  "bots/create",
-  "bots/put",
-  "bots/read",
-  "bots/list",
-  "bots/close",
-  "bots/delete",
-  "bots/state/read",
-  "bots/sessions/rotate",
-  "bots/triggers/put",
-  "bots/triggers/read",
-  "bots/triggers/list",
-  "bots/triggers/secrets/read",
-  "bots/triggers/delete",
-  "bots/events/admit",
-  "bots/events/replay",
-  "bots/events/list",
-  "bots/events/read",
-  "bots/filters/test",
   "blobs/upload",
 ]);
+
+/** Existing runtime URLs that a distribution may register against their owning
+ * module. The host reviews each operation as it does for permanent Core routes. */
+export const REVIEWED_MODULE_OPERATIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["bots", new Set([
+    "bots/create",
+    "bots/put",
+    "bots/read",
+    "bots/list",
+    "bots/close",
+    "bots/delete",
+    "bots/state/read",
+    "bots/sessions/rotate",
+    "bots/triggers/put",
+    "bots/triggers/read",
+    "bots/triggers/list",
+    "bots/triggers/secrets/read",
+    "bots/triggers/delete",
+    "bots/events/admit",
+    "bots/events/replay",
+    "bots/events/list",
+    "bots/events/read",
+    "bots/filters/test",
+  ])],
+]);
+
+/** Hosted clients need the installed owner, including for browser-only modules.
+ * A known operation with no owner in this distribution stays unavailable. */
+export type RuntimeOperationOwners = ReadonlyMap<string, PlatformModule | undefined>;
+
+export function runtimeOperationOwners(modules: readonly PlatformModule[]): RuntimeOperationOwners {
+  const selected = new Map<string, PlatformModule>();
+  for (const module of modules) {
+    if (module.exposeRuntimeOperations === true && !REVIEWED_MODULE_OPERATIONS.has(module.id)) {
+      throw new Error(`No reviewed runtime operations for module ${module.id}`);
+    }
+    selected.set(module.id, module);
+  }
+  const owners = new Map<string, PlatformModule | undefined>();
+  for (const [id, operations] of REVIEWED_MODULE_OPERATIONS) {
+    for (const operation of operations) owners.set(operation, selected.get(id));
+  }
+  return owners;
+}
 
 /** Deployment administration that has no Platform-owned lifecycle side effect. */
 export const ADMIN_OPERATIONS: ReadonlySet<string> = new Set([

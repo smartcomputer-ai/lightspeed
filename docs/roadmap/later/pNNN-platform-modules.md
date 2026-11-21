@@ -33,7 +33,9 @@ flowchart LR
     detail --> client
     client --> core["Rust runtime"]
     sdk["SDK or CLI"] --> gateway["Public Platform gateway<br/>/api/v1"]
-    gateway --> core
+    gateway -->|Core session operations| core
+    gateway -->|Reviewed bot operations| installation["Bots installation in this organization<br/>and universe feature"]
+    installation --> core
 ```
 
 Each web contribution is an npm workspace. Bots and Session Browser both depend on `@lightspeed-ai/session-components`. That package has no module registration or installation check. Bundling Bots alone brings the components it uses. A distribution that selects only Artifacts can omit both the Sessions and Bots source directories. The shell supplies authentication, permission hooks, design primitives, and the controller presentation contract. [Library manifest](../../../modules/sessions/components/package.json) · [Standard web entry](../../../distributions/standard/main.ts)
@@ -225,11 +227,13 @@ modules:
 
 ### What disabling Bots means
 
-**On this branch**, disabling Bots for an organization hides its pages and closes its private browser routes. The gateway still serves the Rust bot API to permitted SDK callers when the universe enables Bots. The universe feature gates member requests. Schedules and existing runs can continue. [Distribution tests](../../../distributions/standard/test/api/module-routes.integration.test.ts) · [Current Bots lifecycle](../../documentation/using-lightspeed/bots-and-triggers.md#pause-update-reset-or-close)
+**On this branch**, the organization switch controls new bot requests from the UI, SDK, CLI and service credentials. For example, when Acme disables Bots, listing bots or sending a bot event through Platform returns 404 for an otherwise permitted caller. Another organization on the same deployment can keep using Bots. Enabling it again restores access only in universes with the Bots feature enabled, subject to the caller’s existing grants. Core session reads, starts and messages continue under their own permissions.
 
-**For extraction**, make the organization installation the authority for new bot management and invocation through the browser, SDK and service credentials. A universe may narrow an enabled installation. An organization-wide disable applies even to a universe that previously enabled Bots. Keep the Core session contract available under its existing caller and controller permissions.
+The standard distribution sets `exposeRuntimeOperations: true` on Bots. That registers 18 gateway-reviewed operations at their existing URLs and preserves credential scopes such as `bots/list` and `bots/events/admit`. A distribution can also ship the Bots browser routes alone and use the private handler’s scoped client to reach Rust. The public SDK routes are present only when the distribution registers them. A bot call made through another module’s scoped client checks the same Bots installation. [Catalog](../../../distributions/standard/catalog.ts) · [Reviewed operations](../../../platform/backend/src/runtime-admission.ts) · [Distribution tests](../../../distributions/standard/test/api/module-routes.integration.test.ts)
 
-The gateway can adopt this rule while Rust still serves the bot endpoints. Keep an explicit list of always-available Core operations. Let the distribution register the reviewed bot operations against the Bots installation at their existing SDK URLs, preserving each operation’s permission checks. Omitting Bots then omits those registrations. A module cannot claim a Core operation. The worker also needs to check the effective installation when admitting trigger events and starting runs, because scheduled work can enter through Temporal without passing through HTTP.
+A new universe watch includes bot events only where Bots is available. A request for bots alone receives 403 when they are unavailable. A mixed watch still receives its permitted collections, such as sessions. An already-open Platform watch can deliver bot events until it reconnects. The gateway limits a connection to 60 seconds and rechecks access on each connection. [Gateway](../../../platform/backend/src/runtime-http.ts)
+
+**During extraction**, the worker and webhook ingress need their own installation checks. Today the Rust public listener accepts webhook deliveries and Temporal handles schedules, polls, queued events and active runs independently of the Platform switch. [Runtime ingress](../../documentation/reference/environment-variables.md) · [Current bot lifecycle](../../documentation/using-lightspeed/bots-and-triggers.md#pause-update-reset-or-close)
 
 The following behaviors are proposed acceptance criteria for the independent worker. Treat the installation change as effective when it commits. Use the durable Core run admission to distinguish an active run from an event still waiting for delivery.
 

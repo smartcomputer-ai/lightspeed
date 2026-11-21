@@ -2,6 +2,7 @@ import {
   deploymentActions,
   PLATFORM_SETTINGS,
   type PlatformOperationResult,
+  type PlatformModule,
   organizationActions,
   organizationRoleSchema,
   universeActions,
@@ -35,6 +36,12 @@ export function demoUniverseActions(store: DemoStore, state: UniverseState): Rea
   if (granted) roles.push(granted);
   if (demoOrganizationActions(store, state.universe.organizationRole).has("administerUniverses")) roles.push("owner");
   return universeActions(roles);
+}
+
+export function demoModuleEnabled(store: DemoStore, universe: UniverseState, module: PlatformModule): boolean {
+  const organizationId = universe.universe.organizationId;
+  const override = organizationId ? store.organizationModules.get(organizationId)?.get(module.id) : undefined;
+  return override ?? module.defaultEnabled;
 }
 
 /** All descendants inherit the visibility of their session tree's root. */

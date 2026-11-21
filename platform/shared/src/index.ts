@@ -5,6 +5,16 @@ export * from "./access.js";
 export * from "./universe-appearance.js";
 export * from "./workspace-transfers.js";
 
+export const WATCH_KINDS = ["session", "bot", "environment", "workspace"] as const;
+const watchKindsSchema = z.array(z.enum(WATCH_KINDS));
+
+/** An omitted kinds query selects every collection. Invalid names reject the whole request. */
+export function requestedWatchKinds(values: readonly string[]) {
+  if (values.length === 0) return [...WATCH_KINDS];
+  const requested = watchKindsSchema.safeParse(values);
+  return requested.success ? requested.data : undefined;
+}
+
 /// Input shapes shared by the API (validation) and the CLI (request typing).
 
 /// A universe's handle is its deployment-unique name; the UUID remains stable

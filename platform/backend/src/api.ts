@@ -14,6 +14,7 @@ import { auditQuerySchema, validateModuleDefinitions, type AuditPage } from "@li
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { moduleRoutes } from "./module-routes.js";
+import { runtimeOperationOwners } from "./runtime-admission.js";
 import type { ApiModule } from "./module-api.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { environmentDeploymentRoutes } from "./routes/environment-deployment.js";
@@ -63,14 +64,15 @@ export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
     await next();
     if (admission.renewedToken) c.header("set-auth-token", admission.renewedToken);
   };
-  const { browserRoutes, publicOperations } = moduleRoutes(ctx, modules);
+  const operationOwners = runtimeOperationOwners(modules);
+  const { browserRoutes, publicOperations } = moduleRoutes(ctx, modules, operationOwners);
   const shared = new Hono<{ Variables: ApiVariables }>();
   shared.use("*", authenticated);
   shared.route("/platform", sessionRoutes(ctx));
   shared.route("/platform", credentialRoutes(ctx));
   shared.route("/platform", platformRoutes(ctx, modules));
   shared.route("/universes", publicOperations);
-  shared.route("/", runtimeHttpRoutes(ctx));
+  shared.route("/", runtimeHttpRoutes(ctx, operationOwners));
   app.route("/api/v1", shared);
 
   const api = new Hono<{ Variables: ApiVariables }>();

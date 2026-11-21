@@ -1,4 +1,4 @@
-import type { BotListItem } from "@lightspeed-ai/sdk";
+import { readEventStream, type BotListItem } from "@lightspeed-ai/sdk";
 import type { AuditPage } from "@lightspeed-ai/platform-shared";
 import { defaultEnvironmentAttachment, environmentAttachments } from "@/components/profiles/resource-features";
 import { describe, expect, it, vi } from "vitest";
@@ -59,6 +59,42 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("renews the watch when bot access changes and keeps mixed subscriptions useful", async () => {
+    const store = createDemoStore();
+    const app = createStandardDemoRouter(store);
+    const universe = store.universeByHandle("software-factory")!;
+    const path = "/api/v1/universes/software-factory/events";
+    const bot = universe.bots.get("planner")!;
+    const watch = await app.request(path + "?kinds=bot");
+    expect(watch.status).toBe(200);
+    const stream = readEventStream(watch.body!);
+    try {
+      expect((await stream.next()).value?.event).toBe("watch/reset");
+      bot.bot.brief = "First change";
+      expect((await stream.next()).value?.event).toBe("bots/changed");
+      const setting = await app.request(`/api/v1/platform/organizations/${universe.universe.organizationId}/modules/bots`, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }),
+      });
+      expect(setting.status).toBe(200);
+      expect((await stream.next()).done).toBe(true);
+    } finally {
+      await stream.return(undefined);
+    }
+    expect((await app.request(path + "?kinds=bot")).status).toBe(403);
+    const mixed = await app.request(path + "?kinds=bot&kinds=workspace");
+    expect(mixed.status).toBe(200);
+    const changes = readEventStream(mixed.body!);
+    try {
+      expect((await changes.next()).value?.event).toBe("watch/reset");
+      bot.bot.brief = "Second change";
+      const workspace = [...universe.workspaces.values()][0]!;
+      workspace.row.revision += 1;
+      expect((await changes.next()).value?.event).toBe("workspaces/changed");
+    } finally {
+      await changes.return(undefined);
+    }
+  });
+
   it("paginates audit events by time and id while new events arrive", async () => {
     const { store, call } = await boot();
     const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;

@@ -12,6 +12,7 @@ import {
 } from "@lightspeed-ai/sdk";
 import {
   FEATURES,
+  WATCH_KINDS,
   canCloseSession,
   canDeleteSession,
   effectiveFeatures,
@@ -105,7 +106,7 @@ export class UniverseClient extends LightspeedClient {
 
   authorizeWatch(params: UniverseWatchParams = {}): UniverseWatchParams {
     if (!this.can("read")) throw new GateRefusal(403, "universe permission required: read");
-    const requested = params.kinds ?? ["session", "bot", "environment", "workspace"];
+    const requested = params.kinds ?? WATCH_KINDS;
     const kinds: WatchKind[] = requested.filter(kind => kind !== "bot" || this.features.bots);
     if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
     return {

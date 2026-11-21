@@ -1,17 +1,17 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import { and, eq } from "drizzle-orm";
-import { schema } from "@lightspeed-ai/platform-db";
 import { bindModuleOperations, moduleCredentialOperationId, modulePermissions, type ModuleOperation } from "@lightspeed-ai/platform-shared";
 import { credentialRefusal, enforceRestrictions } from "./auth-context.js";
 import type { AppContext, ApiVariables } from "./context.js";
 import type { ApiModule, UniverseModuleEnv } from "./module-api.js";
+import { organizationModuleEnabled } from "./module-installation.js";
 import { universeForPrincipal } from "./routes/universes.js";
-import { featureRefusal, universeClient } from "./runtime-client.js";
+import type { RuntimeOperationOwners } from "./runtime-admission.js";
+import { featureRefusal, GateRefusal, universeClient } from "./runtime-client.js";
 
 type ModuleEnv = { Variables: ApiVariables & UniverseModuleEnv["Variables"] };
 
 /** Only declared operation handlers can enter the public router. */
-export function moduleRoutes(ctx: AppContext, modules: readonly ApiModule[]) {
+export function moduleRoutes(ctx: AppContext, modules: readonly ApiModule[], operationOwners: RuntimeOperationOwners) {
   const browserRoutes = new Hono<{ Variables: ApiVariables }>();
   const publicOperations = new Hono<{ Variables: ApiVariables }>();
   for (const module of modules) {
@@ -26,11 +26,7 @@ export function moduleRoutes(ctx: AppContext, modules: readonly ApiModule[]) {
     const admit = (operation?: ModuleOperation): MiddlewareHandler<ModuleEnv> => async (c, next) => {
       const access = await universeForPrincipal(ctx, c.get("auth"), c.req.param("id")!);
       if (!access) return c.json({ error: "not found" }, 404);
-      const table = schema.organizationModules;
-      const [setting] = await ctx.db.select({ enabled: table.enabled }).from(table).where(and(
-        eq(table.organizationId, access.organization.id), eq(table.moduleId, module.id),
-      )).limit(1);
-      if (!(setting?.enabled ?? module.defaultEnabled)) return c.json({ error: "module unavailable" }, 404);
+      if (!await organizationModuleEnabled(ctx.db, access.organization.id, module)) return c.json({ error: "module unavailable" }, 404);
       const off = module.requiresFeature && featureRefusal(access.universe.features, module.requiresFeature);
       if (off) return c.json({ error: off.message }, off.status);
       const grants = modulePermissions(module, access.actions);
@@ -55,7 +51,14 @@ export function moduleRoutes(ctx: AppContext, modules: readonly ApiModule[]) {
         actions: access.actions,
       });
       c.set("client", {
-        call: (method, params, options) => universeClient(ctx.env, access.universe, access.caller).call(method, params, options),
+        call: async (method, params, options) => {
+          const owner = operationOwners.get(method);
+          // The calling module already passed its own installation check above.
+          if (operationOwners.has(method) && owner !== module && !await organizationModuleEnabled(ctx.db, access.organization.id, owner)) {
+            throw new GateRefusal(404, "module unavailable");
+          }
+          return universeClient(ctx.env, access.universe, access.caller).call(method, params, options);
+        },
         openDownload: (method, params, options) => universeClient(ctx.env, access.universe, access.caller).openDownload(method, params, options),
       });
       await next();

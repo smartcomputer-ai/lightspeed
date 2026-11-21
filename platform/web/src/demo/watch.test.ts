@@ -7,7 +7,11 @@ it("streams committed workspace projections and releases the demo timer on cance
   const store = createDemoStore();
   const universe = [...store.universes.values()][0]!;
   const entry = [...universe.workspaces.values()][0]!;
-  const response = await createDemoRouter(store).request(`/api/v1/universes/${universe.universe.lightspeedUniverseId}/events`);
+  const router = createDemoRouter(store);
+  const path = `/api/v1/universes/${universe.universe.lightspeedUniverseId}/events`;
+  expect((await router.request(path + "?kinds=bot")).status).toBe(403);
+  expect((await router.request(path + "?kinds=unknown")).status).toBe(400);
+  const response = await router.request(path);
   expect(response.headers.get("content-type")).toBe("text/event-stream");
   const stream = readEventStream(response.body!);
   try {

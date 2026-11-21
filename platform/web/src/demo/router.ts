@@ -2,7 +2,7 @@ import {
   auditQuerySchema, bindModuleOperations, modulePermissions, validateModuleDefinitions,
   type AuditPage, type ModuleOperation, type ModuleRouteEntries, type PlatformModule,
 } from "@lightspeed-ai/platform-shared";
-import { demoDeploymentAllows, demoUniverseActions } from "./access";
+import { demoDeploymentAllows, demoModuleEnabled, demoUniverseActions } from "./access";
 import { organizationRoutes } from "./routes/organizations";
 import { watchRoutes } from "./routes/watch";
 /// The in-browser stand-in for the platform backend: one Hono app the fetch
@@ -96,8 +96,7 @@ export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[
       if (!state) return c.json({ error: "not found" }, 404);
       const actions = demoUniverseActions(store, state);
       if (!actions.has("read")) return c.json({ error: "not found" }, 404);
-      const enabled = store.organizationModules.get(state.universe.organizationId!)?.get(module.id) ?? module.defaultEnabled;
-      if (!enabled) return c.json({ error: "module unavailable" }, 404);
+      if (!demoModuleEnabled(store, state, module)) return c.json({ error: "module unavailable" }, 404);
       if (module.requiresFeature && !state.universe.features[module.requiresFeature]) {
         return c.json({ error: `${module.name} are turned off in this universe` }, 403);
       }
@@ -125,7 +124,7 @@ export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[
   }
   app.route("/api/ui", api);
   app.route("/api/v1/platform", organizationRoutes(store, modules));
-  app.route("/api/v1/universes", watchRoutes(store));
+  app.route("/api/v1/universes", watchRoutes(store, modules));
 
   // A missing stub surfaces as an ordinary API error in the UI instead of a
   // silent hang, which is how gaps get found.

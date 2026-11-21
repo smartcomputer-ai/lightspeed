@@ -17,6 +17,7 @@ interface StandardModule extends PlatformModule {
 export const standardModules: readonly StandardModule[] = [
   {
     ...bots,
+    exposeRuntimeOperations: true,
     web: "@lightspeed-ai/bots-web",
     api: { browserRoutes: "@lightspeed-ai/bots-server/api" },
     demo: { browserRoutes: "../../modules/bots/demo/index.ts" },

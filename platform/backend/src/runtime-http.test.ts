@@ -6,7 +6,7 @@ import { HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
 import type { AppContext, ApiVariables } from "./context.js";
 import type { AuthContext, CredentialRestrictions } from "./auth-context.js";
 import { runtimeHttpRoutes } from "./runtime-http.js";
-import { ADMIN_OPERATIONS, DENIED_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
+import { ADMIN_OPERATIONS, DENIED_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS, REVIEWED_MODULE_OPERATIONS, runtimeOperationOwners } from "./runtime-admission.js";
 
 const mocks = vi.hoisted(() => ({ access: vi.fn(), create: vi.fn(), remove: vi.fn(), handle: vi.fn() }));
 vi.mock("./routes/universes.js", () => ({ universeForRequest: mocks.access, listUniverseAccesses: vi.fn(async () => []), deleteManagedUniverse: mocks.remove, renameManagedUniverse: vi.fn(), updateUniverseLifecycle: vi.fn() }));
@@ -41,9 +41,27 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe("shared resource API admission", () => {
   it("classifies the complete current catalog explicitly, without overlapping admissions", () => {
+    const categories = [MEMBER_OPERATIONS, ADMIN_OPERATIONS, NATIVE_OPERATIONS, DENIED_OPERATIONS, ...REVIEWED_MODULE_OPERATIONS.values()];
     for (const spec of Object.values(HTTP_OPERATIONS)) {
-      expect([MEMBER_OPERATIONS, ADMIN_OPERATIONS, NATIVE_OPERATIONS, DENIED_OPERATIONS].filter(set => set.has(spec.operationId)), spec.operationId).toHaveLength(1);
+      expect(categories.filter(set => set.has(spec.operationId)), spec.operationId).toHaveLength(1);
     }
+  });
+  it("associates reviewed bot operations with their installed owner for both public and browser-only use", () => {
+    const bots = { id: "bots", name: "Bots", description: "", defaultEnabled: true };
+    const registered = { ...bots, exposeRuntimeOperations: true } as const;
+    const operations = Object.keys(HTTP_OPERATIONS).filter(id => id.startsWith("bots/"));
+    expect(REVIEWED_MODULE_OPERATIONS.get("bots")).toEqual(new Set(operations));
+    const owners = runtimeOperationOwners([registered]);
+    const browserOnly = runtimeOperationOwners([bots]);
+    const omitted = runtimeOperationOwners([]);
+    for (const operation of operations) {
+      expect(owners.get(operation)).toBe(registered);
+      expect(browserOnly.get(operation)).toBe(bots);
+      expect(omitted.has(operation)).toBe(true);
+      expect(omitted.get(operation)).toBeUndefined();
+    }
+    expect(owners.has("session/start")).toBe(false);
+    expect(() => runtimeOperationOwners([{ ...registered, id: "session" }])).toThrow(/No reviewed runtime operations/);
   });
   it("never forwards unknown or service routes", async () => {
     const calls = runtime(); const api = app();

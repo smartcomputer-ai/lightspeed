@@ -1,13 +1,14 @@
 import { listOrganizationsForPrincipal, withOwnerNames } from "./organization-access.js";
-import type { PlatformConnectionDetails } from "@lightspeed-ai/platform-shared";
+import { requestedWatchKinds, type PlatformConnectionDetails } from "@lightspeed-ai/platform-shared";
 import { Hono, type Context } from "hono";
-import { LightspeedApiError, type ConnectionResponse, type UniverseWatchParams } from "@lightspeed-ai/sdk";
+import { LightspeedApiError, type ConnectionResponse } from "@lightspeed-ai/sdk";
 import { HTTP_CONTRACT_REVISION, HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
 import type { AppContext, ApiVariables } from "./context.js";
 import { deploymentAllows, enforceRestrictions, getAuth } from "./auth-context.js";
 import { HTTPException } from "hono/http-exception";
 import { clientOptions, deploymentClient, GateRefusal, universeClient } from "./runtime-client.js";
-import { ADMIN_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
+import { ADMIN_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS, type RuntimeOperationOwners } from "./runtime-admission.js";
+import { organizationModuleEnabled } from "./module-installation.js";
 import { deleteManagedUniverse, listUniverseAccesses, renameManagedUniverse, universeForRequest, updateUniverseLifecycle } from "./routes/universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
@@ -15,7 +16,8 @@ const MAX_POLICY_BODY = 1024 * 1024;
 
 /** Only explicitly reviewed operations become routes. The runtime contract owns
  * every verb, path and field location; Platform owns admission and identity. */
-export function runtimeHttpRoutes(ctx: AppContext) {
+export function runtimeHttpRoutes(ctx: AppContext, operationOwners: RuntimeOperationOwners = new Map()) {
+  const publicOwners = new Map([...operationOwners].filter(([, module]) => module?.exposeRuntimeOperations === true));
   const app = new Hono<{ Variables: ApiVariables }>();
   app.onError((error, c) => {
     if (error instanceof HTTPException) return problem(c, error.status, error.status === 401 ? "unauthenticated" : error.status === 413 ? "invalidRequest" : "forbidden", error.message);
@@ -25,7 +27,9 @@ export function runtimeHttpRoutes(ctx: AppContext) {
     return problem(c, 502, "internal", "runtime unavailable");
   });
   for (const spec of Object.values(HTTP_OPERATIONS)) {
-    if (![MEMBER_OPERATIONS, ADMIN_OPERATIONS, NATIVE_OPERATIONS].some(set => set.has(spec.operationId))) continue;
+    const owner = publicOwners.get(spec.operationId);
+    const memberOperation = MEMBER_OPERATIONS.has(spec.operationId) || owner !== undefined;
+    if (!memberOperation && !ADMIN_OPERATIONS.has(spec.operationId) && !NATIVE_OPERATIONS.has(spec.operationId)) continue;
     const path = spec.path.replace(/^\/api\/v1/, "").replace(/\{([^}]+)\}/g, ":$1");
     app.on(spec.method, path, async c => {
       if (c.req.method !== spec.method) return problem(c, 405, "invalidRequest", "method not allowed");
@@ -33,6 +37,13 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       enforceRestrictions(auth, { operation: spec.operationId });
       const requestedRevision = c.req.header("x-lightspeed-contract-revision");
       if (requestedRevision && requestedRevision !== HTTP_CONTRACT_REVISION) return problem(c, 409, "invalidRequest", "unsupported API contract revision");
+      const reference = c.req.param("universe");
+      const access = memberOperation ? await universeForRequest(ctx, c, reference ?? "") : null;
+      if (memberOperation && !access) throw new GateRefusal(404, "universe not found");
+      if (access) {
+        enforceRestrictions(auth, { operation: spec.operationId, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
+        if (owner && !await organizationModuleEnabled(ctx.db, access.organization.id, owner)) throw new GateRefusal(404, "module unavailable");
+      }
       const connection = await deploymentClient(ctx.env).call("initialize", {}, { signal: c.req.raw.signal });
       if (connection.contractRevision !== HTTP_CONTRACT_REVISION || connection.runtime !== "runtime") return problem(c, 502, "invalidRequest", "runtime API contract does not match Platform");
       if (NATIVE_OPERATIONS.has(spec.operationId)) return nativeOperation(ctx, c, spec.operationId, connection);
@@ -41,11 +52,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       const incoming = new URL(c.req.url);
       let upstreamPath: string = spec.path;
       let params: Record<string, unknown> = {};
-      const reference = c.req.param("universe");
-      if (MEMBER_OPERATIONS.has(spec.operationId)) {
-        const access = await universeForRequest(ctx, c, reference ?? "");
-        if (!access) throw new GateRefusal(404, "universe not found");
-        enforceRestrictions(auth, { operation: spec.operationId, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
+      if (access) {
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
         const client = universeClient(ctx.env, access.universe, access.caller);
         for (const field of spec.pathFields) setField(params, field.field, c.req.param(field.parameter));
@@ -70,9 +77,13 @@ export function runtimeHttpRoutes(ctx: AppContext) {
           }
         }
         if (spec.operationId === "universe/watch") {
-          const kinds = incoming.searchParams.getAll("kinds");
-          if (kinds.some(kind => !["session", "bot", "environment", "workspace"].includes(kind))) return problem(c, 400, "invalidRequest", "invalid watch kind");
-          const watch = client.authorizeWatch({ ...(kinds.length ? { kinds: kinds as UniverseWatchParams["kinds"] } : {}), visibleTo: incoming.searchParams.get("visibleTo") });
+          const kinds = requestedWatchKinds(incoming.searchParams.getAll("kinds"));
+          if (!kinds) return problem(c, 400, "invalidRequest", "invalid watch kind");
+          const botsInstalled = kinds.includes("bot") && await organizationModuleEnabled(ctx.db, access.organization.id, publicOwners.get("bots/list"));
+          const watch = client.authorizeWatch({
+            kinds: kinds.filter(kind => kind !== "bot" || botsInstalled),
+            visibleTo: incoming.searchParams.get("visibleTo"),
+          });
           incoming.searchParams.delete("kinds");
           for (const kind of watch.kinds ?? []) incoming.searchParams.append("kinds", kind);
           incoming.searchParams.delete("visibleTo");

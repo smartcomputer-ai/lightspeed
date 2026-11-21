@@ -28,6 +28,8 @@ export interface PlatformModule {
   defaultEnabled: boolean;
   /** Contracts for the module's public API, independent of any private browser routes. */
   operations?: readonly ModuleOperation[];
+  /** Opt into the gateway's reviewed runtime operations for this module ID. */
+  exposeRuntimeOperations?: boolean;
   /** Optional capability the universe must also have enabled. */
   requiresFeature?: FeatureKey;
   /** Local permission names and the universe authority each requires. */
