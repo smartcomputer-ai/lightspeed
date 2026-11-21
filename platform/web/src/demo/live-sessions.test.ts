@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDemoStore } from "./fixtures";
-import { createDemoRouter } from "./router";
+import { createStandardDemoRouter } from "@distribution/demo";
 import { activeRun } from "./engine";
 import type { SessionRecord } from "./store";
 
@@ -10,13 +10,14 @@ import type { SessionRecord } from "./store";
 
 function boot() {
   const store = createDemoStore();
-  const app = createDemoRouter(store);
+  const app = createStandardDemoRouter(store);
   const universe = store.universeByHandle("software-factory")!;
   const base = `/api/ui/universes/${universe.universe.id}/sessions`;
   const call = (method: string, path = "", body?: unknown) => app.request(`${base}${path}`, {
     method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  return { universe, call };
+  const list = () => app.request(`/api/ui/universes/${universe.universe.id}/modules/sessions?limit=50`);
+  return { universe, call, list };
 }
 
 beforeEach(() => {
@@ -68,16 +69,16 @@ it("waits only on servers that ask for approval", () => {
 });
 
 it("starts the auth session thinking at the first list and answers within half a minute", async () => {
-  const { universe, call } = boot();
+  const { universe, list } = boot();
   const auth = universe.sessions.get("session-auth-middleware")!;
   const before = reasoning(auth);
   expect(auth.view.activity).toBe("idle");
 
-  await call("GET", "?limit=50");
+  await list();
   expect(auth.view.activity).toBe("working");
   const run = activeRun(auth)!;
   // A second look does not start another run.
-  await call("GET", "?limit=50");
+  await list();
   expect(auth.view.runs?.filter((summary) => summary.status === "running")).toHaveLength(1);
 
   await vi.advanceTimersByTimeAsync(30_000);
@@ -86,7 +87,7 @@ it("starts the auth session thinking at the first list and answers within half a
 });
 
 it("starts and hurries the thinking session when it is opened first", async () => {
-  const { universe, call } = boot();
+  const { universe, call, list } = boot();
   const auth = universe.sessions.get("session-auth-middleware")!;
   await call("GET", `/${auth.view.id}`);
   const run = activeRun(auth)!;
@@ -94,13 +95,42 @@ it("starts and hurries the thinking session when it is opened first", async () =
   await vi.advanceTimersByTimeAsync(5_500);
   expect(run.status).toBe("completed");
   // Lists after that start nothing new.
-  await call("GET", "?limit=50");
+  await list();
   expect(activeRun(auth)).toBeNull();
 });
 
 it("leaves the lineage lookup alone", async () => {
   const { universe, call } = boot();
   const auth = universe.sessions.get("session-auth-middleware")!;
-  await call("GET", "?parent=session-flaky-scheduler");
+  expect((await call("GET", "/session-flaky-scheduler/children")).status).toBe(200);
   expect(auth.view.activity).toBe("idle");
+});
+
+it("lists only a viewer's visible conversations and refuses a new session", async () => {
+  const store = createDemoStore();
+  const state = store.universeByHandle("software-factory")!;
+  store.currentUser.role = "user";
+  state.universe.role = "viewer";
+  state.universe.organizationRole = "member";
+  const own = state.sessions.get("session-auth-middleware")!;
+  own.view.access = { visibility: "restricted", createdBy: { kind: "actor", id: store.currentUser.id } };
+  const privateSession = state.sessions.get("session-flaky-scheduler")!;
+  privateSession.view.access = { visibility: "restricted", createdBy: { kind: "actor", id: "another-user" } };
+
+  const app = createStandardDemoRouter(store);
+  const base = `/api/ui/universes/${state.universe.id}`;
+  const listed = await app.request(`${base}/modules/sessions?limit=200`);
+  expect(listed.status).toBe(200);
+  const page = await listed.json() as { sessions: { id: string }[] };
+  expect(page.sessions.some(session => session.id === own.view.id)).toBe(true);
+  expect(page.sessions.some(session => session.id === privateSession.view.id)).toBe(false);
+  expect((await app.request(`${base}/sessions/${privateSession.view.id}/children`)).status).toBe(404);
+
+  const count = state.sessions.size;
+  const refused = await app.request(`${base}/modules/sessions`, {
+    method: "POST",
+    body: JSON.stringify({ profile: { kind: "inline", profile: {} } }),
+  });
+  expect(refused.status).toBe(403);
+  expect(state.sessions.size).toBe(count);
 });

@@ -11,7 +11,7 @@ import { ProfilesPage } from "./ProfilesPage";
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])] }, handle: "universe", isLoading: false }) }));
-vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
+vi.mock("@session-ui/model/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;

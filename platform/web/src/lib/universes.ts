@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMatch } from "react-router-dom";
-import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed-ai/platform-shared";
+import { FEATURES, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { api, type Universe } from "@/api";
 import { SETTINGS, settings } from "@/lib/settings";
 
@@ -37,8 +37,8 @@ export function useActiveUniverse(): {
 }
 
 /// The universe index resolves the first enabled module after loading its organization.
-export function universeHome(universe: { handle: string; features?: FeatureStates }): string {
-  return `/u/${universe.handle}${universe.features?.bots ? "/bots" : ""}`;
+export function universeHome(universe: { handle: string }): string {
+  return `/u/${universe.handle}`;
 }
 
 /// Whether a feature is on in the active universe. The Platform refuses a

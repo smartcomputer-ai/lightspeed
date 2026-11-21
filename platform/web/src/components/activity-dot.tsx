@@ -1,10 +1,10 @@
 import type { SessionActivity } from "@lightspeed-ai/sdk";
 import type { SessionSummary } from "@/api";
-import { StatusDot, type BotTone, type StatusTone } from "@/components/bot/status";
+import { StatusDot, type ActivityTone, type StatusTone } from "@/components/status-dot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** The dot for what a session is doing: working, waiting, idle or closed. */
-export function activityTone(activity: SessionActivity | undefined, closed = false): BotTone {
+export function activityTone(activity: SessionActivity | undefined, closed = false): ActivityTone {
   if (closed) return "closed";
   if (activity === "waiting") return "waiting";
   if (activity === "working") return "live";

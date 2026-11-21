@@ -74,10 +74,14 @@ describe("reading", () => {
 
   it("gives the same object while the stored value is unchanged", () => {
     const store = fresh();
-    localStorage.setItem("lightspeed:sessions:list-preferences:u", JSON.stringify({ showClosed: false }));
-    const first = store.get(SETTINGS.sessionList("u"));
-    expect(store.get(SETTINGS.sessionList("u"))).toBe(first);
-    expect(first.showClosed).toBe(false);
+    const columns = defineSetting<string[]>("test.columns", {
+      key: "test:columns", defaultValue: [], parse: (value) =>
+        Array.isArray(value) && value.every(item => typeof item === "string") ? value : undefined,
+    });
+    localStorage.setItem("test:columns", JSON.stringify(["name"]));
+    const first = store.get(columns);
+    expect(store.get(columns)).toBe(first);
+    expect(first).toEqual(["name"]);
   });
 
   it("is ready at once, and read gives what get does", async () => {

@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionListPage, SessionOrigin, SessionSummary } from "@/api";
 import { MetaToolbar } from "@/components/meta-toolbar";
-import { hasLineage, sessionMetaItems, subAgentsTip, useSessionLineage } from "@/components/session/session-meta";
+import { hasLineage, sessionMetaItems, subAgentsTip, useSessionLineage } from "@session-ui/components/session-meta";
 
 /// The strip under a session header, with only its lineage: the parent and
 /// each sub-agent, drawn while there is any.
@@ -100,6 +100,7 @@ async function respond(index: number, sessions: SessionSummary[], nextCursor?: s
 
 it.each([false, true])("keeps the lineage mounted during delayed run refreshes (parent: %s)", async (withParent) => {
   await show(0, withParent);
+  expect(requests[0]!.url).toBe("/api/ui/universes/universe/sessions/session/children?limit=50");
   await respond(0, [child()]);
   const link = container.querySelector('a[href$="/sessions/child"]')!;
   expect(link).not.toBeNull();

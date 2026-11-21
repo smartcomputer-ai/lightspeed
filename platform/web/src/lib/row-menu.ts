@@ -7,9 +7,7 @@ import { useEffect, useState, useSyncExternalStore, type MouseEvent as ReactMous
 /// menu, its items and the dialogs they open stay the page's, so a row
 /// offers exactly what the header does.
 
-export type RowMenuKind = "session" | "bot";
-
-type RowMenuRequest = { kind: RowMenuKind; id: string; x: number; y: number };
+type RowMenuRequest = { kind: string; id: string; x: number; y: number };
 
 /// A point the menu is anchored to (a virtual element, as the menu's
 /// positioner takes).
@@ -39,7 +37,7 @@ export function pointAnchor({ x, y }: { x: number; y: number }): RowMenuAnchor {
 
 /// Asks for the menu of `kind` `id` at the right-click's pointer (or, from
 /// the keyboard, which has none, under the row's start).
-export function requestRowMenu(kind: RowMenuKind, id: string, event: ReactMouseEvent<HTMLElement>) {
+export function requestRowMenu(kind: string, id: string, event: ReactMouseEvent<HTMLElement>) {
   pending = { kind, id, ...menuPoint(event) };
   notify();
 }
@@ -47,7 +45,7 @@ export function requestRowMenu(kind: RowMenuKind, id: string, event: ReactMouseE
 /// The open state and anchor of the ⋯ menu of `kind` `id` (none: a menu
 /// that rows do not open): opened at the pointer when its row asks, and at
 /// its own button otherwise.
-export function useRowMenu(kind: RowMenuKind | null, id: string) {
+export function useRowMenu(kind: string | null, id: string) {
   const request = useSyncExternalStore(subscribe, () => pending, () => null);
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<RowMenuAnchor>();

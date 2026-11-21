@@ -7,7 +7,9 @@
 /// bot's sessions, and delivered as a run whose end writes the event's
 /// outcome.
 import { Hono } from "hono";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
+import type { UniverseAction } from "@lightspeed-ai/platform-shared";
+import { demoUniverseActions } from "../access";
 import type {
   BotActiveDeliverySnapshot,
   BotControllerSnapshot,
@@ -1000,7 +1002,16 @@ export function botRoutes(store: DemoStore): Hono {
   const app = new Hono();
   app.onError((error, c) => configErrorResponse(c, error));
 
-  app.get("/:id/bots", (c) => {
+  function requireAction(action: UniverseAction): MiddlewareHandler {
+    return async (c, next) => {
+      const universe = universeFor(store, c);
+      if (!universe) return notFound(c);
+      if (!demoUniverseActions(store, universe).has(action)) return c.json({ error: `universe permission required: ${action}` }, 403);
+      await next();
+    };
+  }
+
+  app.get("/", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     const bots: BotListItem[] = [...universe.bots.values()]
@@ -1015,7 +1026,7 @@ export function botRoutes(store: DemoStore): Hono {
     return c.json({ bots });
   });
 
-  app.post("/:id/bots", async (c) => {
+  app.post("/", requireAction("createBot"), async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     const body = await readBody(c);
@@ -1039,7 +1050,7 @@ export function botRoutes(store: DemoStore): Hono {
     );
   });
 
-  app.get("/:id/bots/:botId", (c) => {
+  app.get("/:botId", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     // As the server: the bot and its audience.
@@ -1048,7 +1059,7 @@ export function botRoutes(store: DemoStore): Hono {
 
   /// Whole-document replace with an expected revision; an unknown id
   /// creates the bot, like the core's `bots/put`.
-  app.put("/:id/bots/:botId", async (c) => {
+  app.put("/:botId", requireAction("manageBot"), async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     const botId = c.req.param("botId") ?? "";
@@ -1076,14 +1087,14 @@ export function botRoutes(store: DemoStore): Hono {
     return c.json({ bot: botViewOf(record) });
   });
 
-  app.post("/:id/bots/:botId/close", (c) => {
+  app.post("/:botId/close", requireAction("manageBot"), (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     closeBot(found.universe, found.record);
     return c.json({ bot: botViewOf(found.record) });
   });
 
-  app.delete("/:id/bots/:botId", (c) => {
+  app.delete("/:botId", requireAction("manageBot"), (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const { universe, record } = found;
@@ -1093,13 +1104,13 @@ export function botRoutes(store: DemoStore): Hono {
     return c.json({ bot: botViewOf(record), deletedSessions });
   });
 
-  app.get("/:id/bots/:botId/state", (c) => {
+  app.get("/:botId/state", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     return c.json({ state: { controller: found.record.state, sessions: botSessionsOf(found.universe, found.record) } });
   });
 
-  app.post("/:id/bots/:botId/sessions/:sessionId/rotate", (c) => {
+  app.post("/:botId/sessions/:sessionId/rotate", requireAction("manageBot"), (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const { universe, record } = found;
@@ -1112,7 +1123,7 @@ export function botRoutes(store: DemoStore): Hono {
     return c.json({ accepted: true });
   });
 
-  app.get("/:id/bots/:botId/triggers", (c) => {
+  app.get("/:botId/triggers", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const triggers = [...found.record.triggers.values()]
@@ -1121,7 +1132,7 @@ export function botRoutes(store: DemoStore): Hono {
     return c.json({ triggers });
   });
 
-  app.get("/:id/bots/:botId/triggers/:triggerId", (c) => {
+  app.get("/:botId/triggers/:triggerId", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const trigger = found.record.triggers.get(c.req.param("triggerId") ?? "");
@@ -1131,7 +1142,7 @@ export function botRoutes(store: DemoStore): Hono {
 
   /// The ingest path of one trigger, like the core's
   /// `bots/triggers/secrets/read`; an empty object for a trigger with neither.
-  app.get("/:id/bots/:botId/triggers/:triggerId/secrets", (c) => {
+  app.get("/:botId/triggers/:triggerId/secrets", requireAction("manageBot"), (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const trigger = found.record.triggers.get(c.req.param("triggerId") ?? "");
@@ -1141,7 +1152,7 @@ export function botRoutes(store: DemoStore): Hono {
 
   /// Whole-document replace with an expected revision; an unknown id
   /// creates the trigger, like the core's `bots/triggers/put`.
-  app.put("/:id/bots/:botId/triggers/:triggerId", async (c) => {
+  app.put("/:botId/triggers/:triggerId", requireAction("manageBot"), async (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const { universe, record } = found;
@@ -1171,7 +1182,7 @@ export function botRoutes(store: DemoStore): Hono {
     }
   });
 
-  app.delete("/:id/bots/:botId/triggers/:triggerId", (c) => {
+  app.delete("/:botId/triggers/:triggerId", requireAction("manageBot"), (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const triggerId = c.req.param("triggerId") ?? "";
@@ -1182,7 +1193,7 @@ export function botRoutes(store: DemoStore): Hono {
   });
 
   /// Operator admit: `{ event: BotEventInput }`, answered 202.
-  app.post("/:id/bots/:botId/events", async (c) => {
+  app.post("/:botId/events", requireAction("invokeBot"), async (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const { universe, record } = found;
@@ -1217,7 +1228,7 @@ export function botRoutes(store: DemoStore): Hono {
   });
 
   /// A replay is a fresh event reusing the stored document and routing.
-  app.post("/:id/bots/:botId/events/replay", async (c) => {
+  app.post("/:botId/events/replay", requireAction("manageBot"), async (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const { universe, record } = found;
@@ -1258,7 +1269,7 @@ export function botRoutes(store: DemoStore): Hono {
     }
   });
 
-  app.get("/:id/bots/:botId/events", (c) => {
+  app.get("/:botId/events", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const limit = Math.min(intQuery(c, "limit", 50), MAX_HISTORY_LIMIT);
@@ -1278,7 +1289,7 @@ export function botRoutes(store: DemoStore): Hono {
     });
   });
 
-  app.get("/:id/bots/:botId/events/:seq", (c) => {
+  app.get("/:botId/events/:seq", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const seq = Number(c.req.param("seq"));
@@ -1305,7 +1316,7 @@ export function botRoutes(store: DemoStore): Hono {
 
   /// The demo has no CEL evaluator: every sampled event matches, which is
   /// enough for the page to exercise the request/response shapes.
-  app.post("/:id/bots/:botId/filters/test", async (c) => {
+  app.post("/:botId/filters/test", requireAction("manageBot"), async (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
     const body = await readBody(c);

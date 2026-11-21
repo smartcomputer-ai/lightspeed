@@ -1,7 +1,8 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { BotAvatar } from "@/components/bot/face";
-import { StatusDot, type StatusTone } from "@/components/bot/status";
+import { idColor } from "@/lib/identity-colors";
+import { BotIcon } from "@/icons";
+import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListRow, ListRowLine, type ListExpand, type ListRowTree } from "@/components/list-pane";
 
 /// A switch between a list's expand modes (ListExpand), over a list example,
@@ -125,7 +126,7 @@ function ExpandableRows({ nodes, depth, lines, open, onToggle, active, onOpen }:
             ? { expander: { open: isOpen, onToggle: () => onToggle(node.id), label: `${isOpen ? "Hide" : "Show"} ${kids.length} under ${node.title}` } }
             : {})}
           caretRoom={caretRoom}
-          leading={node.bot ? <BotAvatar botId={node.bot} size={30} /> : undefined}
+          leading={node.bot ? <BotIcon style={{ color: idColor(node.bot) }} size={30} /> : undefined}
           indicator={<StatusDot tone={node.tone} />}
           title={node.title}
           muted={node.closed}

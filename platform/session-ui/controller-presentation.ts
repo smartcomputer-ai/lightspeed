@@ -1,6 +1,6 @@
 import { createContext, type ComponentType, type ReactNode } from "react";
 import type { SessionView } from "@/api";
-import type { SessionMetaInput } from "@/components/session/session-meta";
+import type { SessionMetaInput } from "@session-ui/components/session-meta";
 
 /** Optional enrichment of a managed session, supplied by its controller's UI. */
 export interface SessionControllerPresentation {
@@ -17,6 +17,8 @@ export interface ControllerPresentationProps {
   children: (presentation: SessionControllerPresentation) => ReactNode;
 }
 
-export const SessionControllerPresenter = createContext<ComponentType<ControllerPresentationProps>>(
-  ({ session, children }) => children({ label: session?.integration?.lifecycleController?.workflowKind || "an external workflow" }),
-);
+export function PlainSessionController({ session, children }: ControllerPresentationProps) {
+  return children({ label: session?.integration?.lifecycleController?.workflowKind || "an external workflow" });
+}
+
+export const SessionControllerPresenter = createContext<ComponentType<ControllerPresentationProps>>(PlainSessionController);

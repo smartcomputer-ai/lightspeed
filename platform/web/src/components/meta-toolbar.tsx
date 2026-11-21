@@ -5,7 +5,7 @@ import { useUserPreferences } from "@/lib/user-preferences";
 import { prefersReducedMotion } from "@/lib/reduced-motion";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { StatusDotRings, type BotTone } from "@/components/bot/status";
+import { StatusDotRings, type ActivityTone } from "@/components/status-dot";
 import { cn } from "@/lib/utils";
 
 /// A meta toolbar: the small facts about a session or a bot (sub-agents,
@@ -214,7 +214,7 @@ const ownColor = (tint: MetaTint) =>
     : cn(ROW_EASE, "group-hover/row:text-(--meta-icon-color) group-focus-visible/row:text-(--meta-icon-color) group-data-highlighted/row:text-(--meta-icon-color)");
 /// How a dot moves, as a status dot's data-tone: a pulsing one is live (its
 /// pulse and rings), a warning waits and a danger needs attention (a ring).
-const dotMotion = (tone: MetaTone, pulse: boolean | undefined): BotTone | undefined =>
+const dotMotion = (tone: MetaTone, pulse: boolean | undefined): ActivityTone | undefined =>
   pulse ? "live" : tone === "warning" ? "waiting" : tone === "danger" ? "attention" : undefined;
 
 const GAP: Record<MetaToolbarMode, number> = { compact: 6, full: 4 };

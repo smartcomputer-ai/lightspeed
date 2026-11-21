@@ -58,6 +58,7 @@ stage_runtime platform @lightspeed-ai/platform-backend \
   clients/typescript/dist \
   distributions/standard/api.ts \
   distributions/standard/catalog.ts \
+  modules/*/api \
   modules/*/module.ts \
   platform/backend/src \
   platform/db/src \

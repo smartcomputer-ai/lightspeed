@@ -1,5 +1,5 @@
-/// How a setting is declared. Every setting is declared once, in the
-/// registry (registry.ts), and is read and written only through the
+/// How a setting is declared. Each setting is declared by the shell or the module
+/// that owns it, and is read and written only through the
 /// settings store (store.ts), never through browser storage directly.
 
 /// How long a setting lasts and where it may go.

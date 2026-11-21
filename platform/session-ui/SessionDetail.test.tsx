@@ -3,8 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, type BotView, type SessionView, type SessionEvent } from "@/api";
-import { BotChat } from "@/components/bot/chat";
+import { ApiError, type SessionView, type SessionEvent } from "@/api";
 import { sessionDraftKey } from "@session-ui/model/draft";
 import { applyEvents, emptyTranscript, reconcileRuns } from "@session-ui/model/transcript";
 import { SessionDetail } from "./SessionDetail";
@@ -46,7 +45,7 @@ vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ isPending: false }),
   useMutationState: () => mocks.compactions,
 }));
-vi.mock("@/components/session/session-settings-sheet", () => ({ SessionSettingsDialog: () => null }));
+vi.mock("@session-ui/components/session-settings-sheet", () => ({ SessionSettingsDialog: () => null }));
 vi.mock("@/components/ui/message-scroller", () => {
   const Container = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
   return {
@@ -63,11 +62,7 @@ vi.mock("@/components/ui/message-scroller", () => {
   };
 });
 
-const bot: BotView = {
-  botId: "bot", profileId: "profile", revision: 1, eventSeq: 0,
-  createdAtMs: 0, updatedAtMs: 0,
-};
-type Pathway = "session" | "bot-main" | "bot-other";
+type Pathway = "session" | "embedded";
 let container: HTMLDivElement;
 let root: Root;
 let transcript = emptyTranscript();
@@ -75,7 +70,7 @@ let transcript = emptyTranscript();
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.localStorage.clear();
-  mocks.permissions = new Set(["read", "controlSession", "stopSession", "deleteSession", "invokeBot", "manageBot"]);
+  mocks.permissions = new Set(["read", "controlSession", "stopSession", "deleteSession"]);
   mocks.permissionLoading = false;
   mocks.compactions = [];
   mocks.session = undefined;
@@ -124,7 +119,7 @@ describe("queued message steering", () => {
     return container.querySelector<HTMLButtonElement>('[aria-label="Steer with queued message"]');
   }
 
-  it.each<Pathway>(["session", "bot-main", "bot-other"])("converts a backend-loaded message with its full input in %s", async (pathway) => {
+  it.each<Pathway>(["session", "embedded"])("converts a backend-loaded message with its full input in %s", async (pathway) => {
     await show(pathway);
     prepare();
     await show(pathway);
@@ -390,23 +385,11 @@ async function show(pathway: Pathway, universeId = "universe", sessionId = "sess
   publishTranscript();
   await act(async () => root.render(
     <MemoryRouter>
-      {pathway === "session" ? (
-        <SessionDetail
-          key={sessionDraftKey(universeId, sessionId)} universeId={universeId} handle={universeId} sessionId={sessionId}
-          backTo={`/u/${universeId}/sessions`} sessionHref={id => `/u/${universeId}/sessions/${id}`}
-        />
-      ) : (
-        <BotChat
-          universeId={universeId}
-          handle={universeId}
-          bot={bot}
-          state={{ controller: {
-            mainSessionId: pathway === "bot-main" ? sessionId : "main",
-            setupStatus: "ready", controllerStatus: "idle", enabled: true, closed: false,
-          } }}
-          sessionId={pathway === "bot-main" ? undefined : sessionId}
-        />
-      )}
+      <SessionDetail
+        key={sessionDraftKey(universeId, sessionId)} universeId={universeId} handle={universeId} sessionId={sessionId}
+        embedded={pathway === "embedded"}
+        backTo={`/u/${universeId}/sessions`} sessionHref={id => `/u/${universeId}/sessions/${id}`}
+      />
     </MemoryRouter>,
   ));
 }
@@ -443,7 +426,7 @@ async function navigateAway() {
   await act(async () => root.render(null));
 }
 
-describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer drafts", (pathway) => {
+describe.each<Pathway>(["session", "embedded"])("%s composer drafts", (pathway) => {
   it("persists exact drafts across navigation and isolates sessions and universes", async () => {
     await show(pathway);
     await type("  unfinished\nmessage 🦀  ");
@@ -467,8 +450,7 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer drafts
   });
 });
 
-// A bot view renders the same session detail; only where its draft is kept
-// depends on the view, so the rest runs once.
+// Both surfaces render the same composer.
 describe("composer", () => {
   const pathway: Pathway = "session";
 
@@ -599,14 +581,11 @@ describe("composer", () => {
   });
 });
 
-it("shares the draft between a normal session and bot views of that same session", async () => {
+it("shares the draft between standalone and embedded views of the same session", async () => {
   await show("session");
   await type("shared draft");
   await navigateAway();
-  await show("bot-main");
-  expect(input().value).toBe("shared draft");
-  await navigateAway();
-  await show("bot-other");
+  await show("embedded");
   expect(input().value).toBe("shared draft");
 });
 

@@ -12,8 +12,8 @@ import { settleQueries } from "@/test/settle-queries";
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", actions: [...universeActions(["operator"])] }, handle: "universe", isLoading: false }) }));
-vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
-vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => null }));
+vi.mock("@session-ui/model/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
+vi.mock("@session-ui/components/session-config-editor", () => ({ SessionConfigEditor: () => null }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");

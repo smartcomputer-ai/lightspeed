@@ -4,6 +4,7 @@ import { VIEWPORT } from "./e2e/screens";
 // Screenshot comparisons supply their own build, including historical versions.
 // Functional specs run against the current distribution in demo mode.
 const screenshots = Boolean(process.env.SCREENSHOTS_OUT);
+const demoBuild = "node_modules/.cache/modules-demo";
 const demoUrl = "http://127.0.0.1:4187/demo/";
 export default defineConfig({
   testDir: "e2e",
@@ -17,7 +18,7 @@ export default defineConfig({
   timeout: 60_000,
   reporter: [["list"]],
   webServer: screenshots ? undefined : {
-    command: "npm run dev:demo -- --host 127.0.0.1 --port 4187",
+    command: `vite build --mode demo --outDir ${demoBuild} && vite preview --mode demo --outDir ${demoBuild} --host 127.0.0.1 --port 4187 --strictPort`,
     url: demoUrl,
     timeout: 90_000,
   },

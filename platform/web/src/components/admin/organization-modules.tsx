@@ -17,7 +17,7 @@ export function OrganizationModules({ organizationId }: { organizationId: string
     <Card>
       <CardHeader>
         <CardTitle>Modules</CardTitle>
-        <CardDescription>Choose which module pages are available in this organization’s universes.</CardDescription>
+        <CardDescription>Choose which modules members can open and use in this organization’s universes.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         {catalog.isLoading && <p role="status">Loading modules…</p>}

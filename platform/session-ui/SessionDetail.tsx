@@ -1,8 +1,9 @@
-import { DeleteSessionDialog } from "@/components/session/delete-session-dialog";
+import { sessionCollections } from "@session-ui/model/collection-watch";
+import { DeleteSessionDialog } from "@session-ui/components/delete-session-dialog";
 import { useSessionCompaction } from "@session-ui/model/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
-import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
-import { SessionActionsMenu } from "@/components/session/session-actions-menu";
+import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@session-ui/components/sharing";
+import { SessionActionsMenu } from "@session-ui/components/session-actions-menu";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { type InfiniteData, type UseQueryResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -30,7 +31,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useUserPreferences } from "@/lib/user-preferences";
-import { SessionSettingsDialog } from "@/components/session/session-settings-sheet";
+import { SessionSettingsDialog } from "@session-ui/components/session-settings-sheet";
 import { SessionHistoryLoader } from "@session-ui/components/history-loader";
 import {
   MessageScroller,
@@ -44,10 +45,10 @@ import {
 } from "@/components/ui/message-scroller";
 import { sessionDraftKey } from "@session-ui/model/draft";
 import { SessionComposer, type ComposerMessage, type ComposerMode } from "@session-ui/components/composer";
-import { sessionResourceItems, useSessionResources } from "@/components/session/session-resources";
-import { hasLineage, SESSION_META, sessionMetaItems, useSessionLineage } from "@/components/session/session-meta";
+import { sessionResourceItems, useSessionResources } from "@session-ui/components/session-resources";
+import { hasLineage, SESSION_META, sessionMetaItems, useSessionLineage } from "@session-ui/components/session-meta";
 import { MetaToolbar } from "@/components/meta-toolbar";
-import { hasResources } from "@/lib/sessions/session-resources";
+import { hasResources } from "@session-ui/model/session-resources";
 import { findFileReference, filesByHandle } from "@/lib/file-references";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { Switch } from "@/components/ui/switch";
@@ -695,7 +696,7 @@ function SessionConversation({
         ["session", universeId, sessionId],
         closedSession,
       );
-      await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+      await queryClient.invalidateQueries(sessionCollections(universeId));
     },
     onError: (error) => setCloseError(error.message),
   });
@@ -710,14 +711,14 @@ function SessionConversation({
       ),
     onSuccess: async (restarted) => {
       queryClient.setQueryData(["session", universeId, sessionId], restarted);
-      await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+      await queryClient.invalidateQueries(sessionCollections(universeId));
     },
   });
 
   const onSessionDeleted = async () => {
     setDeleteOpen(false);
     queryClient.setQueriesData<InfiniteData<SessionListPage>>(
-      { queryKey: ["sessions", universeId] },
+      sessionCollections(universeId),
       (current) => current
         ? {
             ...current,
@@ -729,7 +730,7 @@ function SessionConversation({
         : current,
     );
     navigate(backTo);
-    await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+    await queryClient.invalidateQueries(sessionCollections(universeId));
   };
 
   return (
@@ -1050,6 +1051,7 @@ function SessionConversation({
       />
       {!embedded && permissions.can("read") && (
         <SessionSettingsDialog
+          controllerLabel={controller.label}
           universeId={universeId}
           sessionId={sessionId}
           session={session.data}

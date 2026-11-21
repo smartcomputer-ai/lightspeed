@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { standardWebModules } from "@distribution/web";
-import { isMobileDetailRoute } from "./shell-navigation";
+import { isMasterDetailRoute, isMobileDetailRoute } from "./shell-navigation";
 
 it.each([
   "/u/team/sessions/session_1",
@@ -21,4 +21,11 @@ it.each([
   "/u/team/environments", "/admin/organizations/org/universes/team/settings", "/admin/platform/users", "/account",
 ])("keeps navigation for list or top-level page %s", (path) => {
   expect(isMobileDetailRoute(path, standardWebModules)).toBe(false);
+});
+
+it("uses the ordinary shell layout for detail URLs from omitted modules", () => {
+  for (const path of ["/u/team/bots/bot/chat/session", "/u/team/sessions/session"]) {
+    expect(isMobileDetailRoute(path, [])).toBe(false);
+    expect(isMasterDetailRoute(path, [])).toBe(false);
+  }
 });

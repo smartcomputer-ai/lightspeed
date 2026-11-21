@@ -190,7 +190,7 @@ it("lists the organization's universes with role and status, and a shortcut into
   expect(statusOf("Zeta")).toBe("Active");
   for (const node of rows()) expect(node.querySelectorAll("button")).toHaveLength(1);
   const open = row("Zeta").querySelector<HTMLAnchorElement>('a[aria-label="Open Zeta"]')!;
-  expect(open.getAttribute("href")).toBe("/u/zeta/bots");
+  expect(open.getAttribute("href")).toBe("/u/zeta");
   await act(async () => open.click());
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
@@ -202,7 +202,7 @@ it("opens a universe's details with the way into it and its settings, and the en
   await openRow("Zeta");
   expect(dialog().querySelector("h2 [data-universe-icon]")).not.toBeNull();
   expect(dialog().textContent).toContain(`Universe ID${universes.find((candidate) => candidate.name === "Zeta")!.lightspeedUniverseId}`);
-  expect(dialog().querySelector('a[href="/u/zeta/bots"]')?.textContent).toBe("Open universe");
+  expect(dialog().querySelector('a[href="/u/zeta"]')?.textContent).toBe("Open universe");
   expect(dialog().querySelector('a[href="/u/zeta/settings/general"]')?.textContent).toBe("Settings");
   expect(buttonIn(dialog(), "Recreate on engine")).toBeUndefined();
   await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));

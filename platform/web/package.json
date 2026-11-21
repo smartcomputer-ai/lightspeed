@@ -4,7 +4,17 @@
   "type": "module",
   "exports": {
     "./modules": "./src/module-api/index.ts",
+    "./modules/conversations": "./src/module-api/conversations.ts",
+    "./modules/client": "./src/module-api/client.ts",
+    "./modules/environments": "./src/module-api/environments.ts",
+    "./modules/models": "./src/module-api/models.ts",
+    "./modules/settings": "./src/module-api/settings.ts",
     "./modules/ui": "./src/module-api/ui.ts",
+    "./modules/ui/*": "./src/components/ui/*.tsx",
+    "./modules/ui/icons": "./src/icons/index.ts",
+    "./modules/ui/lists": "./src/module-api/lists.ts",
+    "./modules/ui/meta": "./src/module-api/meta.ts",
+    "./modules/ui/status": "./src/module-api/status.ts",
     "./modules/workspaces": "./src/module-api/workspaces.ts"
   },
   "scripts": {

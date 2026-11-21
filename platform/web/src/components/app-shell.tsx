@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
-import { universeNavigation, navItemVisible, universeSectionTrail, type UniverseNavGroup } from "@/components/universe-nav";
+import { universeNavigation, universeSectionTrail, type UniverseNavGroup } from "@/components/universe-nav";
 import { DocumentTitleProvider } from "@/lib/document-title";
 import { demoMode } from "@/lib/demo-mode";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
@@ -234,7 +234,7 @@ export function AppShell({ user }: { user: SessionUser }) {
         </SidebarHeader>
         <SidebarContent className="relative">
           {mode === "universe" && active && navGroups.map((group, index) => {
-            const items = group.items.filter((item) => navItemVisible(item, permissions.can, active.features));
+            const items = group.items.filter((item) => permissions.can(item.action));
             if (items.length === 0) return null;
             return (
               <SidebarGroup key={group.label ?? index}>

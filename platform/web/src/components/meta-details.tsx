@@ -1,9 +1,9 @@
 import { cloneElement, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { IconComponent } from "@/icons";
-import { StatusDot, type StatusTone } from "@/components/bot/status";
+import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { PopoverClose } from "@/components/ui/popover";
-import type { ResourceTone } from "@/lib/sessions/session-resources";
+import type { ResourceTone } from "@session-ui/model/session-resources";
 import { cn } from "@/lib/utils";
 
 /// The content of a meta item's popover (`MetaItem.details`): what the item

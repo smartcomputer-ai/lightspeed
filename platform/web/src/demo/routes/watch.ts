@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { demoUniverseActions } from "../access";
+import { demoCanReadSession, demoUniverseActions } from "../access";
 import type { AgentNotification } from "@lightspeed-ai/sdk";
 import { sessionSummary, type DemoStore, type UniverseState } from "../store";
 import { listItemOf } from "./bots";
@@ -66,11 +66,11 @@ export function watchRoutes(store: DemoStore): Hono {
 function snapshot(store: DemoStore, universe: UniverseState) {
   const rows = new Map<string, { event: AgentNotification; serialized: string }>();
   const add = (key: string, event: AgentNotification) => rows.set(key, { event, serialized: JSON.stringify(event) });
-  const admin = demoUniverseActions(store, universe).has("accessPrivateSessions");
+  const actions = demoUniverseActions(store, universe);
   for (const record of universe.sessions.values()) {
     const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
     const access = root.view.access;
-    if (!admin && access.visibility !== "universe" && !(access.createdBy?.kind === "actor" && access.createdBy.id === store.currentUser.id)) continue;
+    if (!demoCanReadSession(store, universe, record, actions)) continue;
     add(`session:${record.view.id}`, { method: "session/changed", params: { session: {
       ...sessionSummary(record), access, retention: root.view.retention, lifecycleControlled: root.view.lifecycleControlled,
     } } });

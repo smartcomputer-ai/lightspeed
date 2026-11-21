@@ -1,3 +1,6 @@
+import {
+  MetadataMapEditor, ProfileRetentionEditor, resourceFeatureDisableReasons, sessionCollections, SessionConfigEditor, SetupEditorSection, setupResourceFeatureError, useSessionConfigEditorOptions,
+} from "@lightspeed-ai/platform-web/modules/conversations";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -8,12 +11,8 @@ import {
   type ProfileSource,
   type ProfileSummary,
   type SessionView,
-} from "@/api";
-import { Button } from "@/components/ui/button";
-import { MetadataMapEditor } from "@/components/session/metadata-editor";
-import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
-import { SessionConfigEditor } from "@/components/session/session-config-editor";
-import { SetupEditorSection } from "@/components/session/setup-editor-section";
+} from "@lightspeed-ai/platform-web/modules/client";
+import { Button } from "@lightspeed-ai/platform-web/modules/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -22,16 +21,19 @@ import {
   DialogHeader,
   DialogTitle,
   dialogWarpMs,
-} from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
-import { resourceFeatureDisableReasons, setupResourceFeatureError } from "@/lib/sessions/resource-features";
-import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
-import { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults } from "@/lib/model-defaults";
-import { useActionPermissions } from "@/lib/permissions";
+} from "@lightspeed-ai/platform-web/modules/ui/dialog";
+import { Field, FieldLabel } from "@lightspeed-ai/platform-web/modules/ui/field";
+import { Input } from "@lightspeed-ai/platform-web/modules/ui/input";
+import { Textarea } from "@lightspeed-ai/platform-web/modules/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@lightspeed-ai/platform-web/modules/ui/select";
+import {
+  ProviderReadinessBanner,
+  modelFromConfig,
+  modelLabel,
+  resolveCreationModel,
+  useModelDefaults,
+} from "@lightspeed-ai/platform-web/modules/models";
+import { useActionPermissions } from "@lightspeed-ai/platform-web/modules";
 
 export function NewSessionDialog({
   universeId,
@@ -105,12 +107,12 @@ export function NewSessionDialog({
 
   const create = useMutation({
     mutationFn: () =>
-      api<SessionView>("POST", `/api/ui/universes/${universeId}/sessions`, {
+      api<SessionView>("POST", `/api/ui/universes/${universeId}/modules/sessions`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         profile: creationProfile,
       }),
     onSuccess: async (session) => {
-      await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+      await queryClient.invalidateQueries(sessionCollections(universeId));
       const target = session.id;
       setDisplayName("");
       setProfileId("");

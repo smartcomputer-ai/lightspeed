@@ -1,14 +1,10 @@
 import { useLocation, useParams } from "react-router-dom";
-import { SessionIcon } from "@/icons";
-import { sessionDraftKey } from "@session-ui/model/draft";
-import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
-import { useCreateParam } from "@/lib/create-param";
-import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
-import { useActionPermissions } from "@/lib/permissions";
-import { useActiveUniverse } from "@/lib/universes";
-import { cn } from "@/lib/utils";
-import { ListPane } from "@/components/list-pane";
-import { SessionDetail } from "@session-ui/SessionDetail";
+import { SessionIcon } from "@lightspeed-ai/platform-web/modules/ui/icons";
+import { SessionDetail, sessionDraftKey } from "@lightspeed-ai/platform-web/modules/conversations";
+import { DetailPrompt, LoadingNote, UniverseNotFound, cn } from "@lightspeed-ai/platform-web/modules/ui";
+import { useCreateParam, useActionPermissions, useActiveUniverse } from "@lightspeed-ai/platform-web/modules";
+import { ProviderReadinessBanner } from "@lightspeed-ai/platform-web/modules/models";
+import { ListPane } from "@lightspeed-ai/platform-web/modules/ui/lists";
 import { SessionList } from "./session-list";
 
 export function SessionsPage() {

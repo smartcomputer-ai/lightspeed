@@ -1,5 +1,5 @@
 import { auditQuerySchema, type AuditPage, type PlatformModule } from "@lightspeed-ai/platform-shared";
-import { demoDeploymentAllows } from "./access";
+import { demoDeploymentAllows, demoUniverseActions } from "./access";
 import { organizationRoutes } from "./routes/organizations";
 import { watchRoutes } from "./routes/watch";
 /// The in-browser stand-in for the platform backend: one Hono app the fetch
@@ -8,17 +8,21 @@ import { Hono } from "hono";
 import type { DemoStore } from "./store";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
-import { botRoutes, hookRoutes } from "./routes/bots";
+import { hookRoutes } from "./routes/bots";
 import { environmentRoutes } from "./routes/environments";
 import { mcpRoutes } from "./routes/mcp";
 import { platformRoutes } from "./routes/platform";
 import { profileRoutes } from "./routes/profiles";
 import { secretRoutes } from "./routes/secrets";
 import { transcriptionRoutes } from "./routes/transcriptions";
-import { sessionRoutes } from "./routes/sessions";
+import { conversationRoutes } from "./routes/sessions";
 import { workspaceRoutes } from "./routes/workspaces";
 
-export function createDemoRouter(store: DemoStore, modules: readonly PlatformModule[] = []): Hono {
+export interface DemoModule extends PlatformModule {
+  routes?: (store: DemoStore) => Hono;
+}
+
+export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[] = []): Hono {
   const app = new Hono();
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
   app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
@@ -73,16 +77,31 @@ export function createDemoRouter(store: DemoStore, modules: readonly PlatformMod
   api.route("/", platformRoutes(store));
   api.route("/", adminRoutes(store));
   for (const routes of [
-    sessionRoutes,
+    conversationRoutes,
     transcriptionRoutes,
     profileRoutes,
     workspaceRoutes,
     environmentRoutes,
     mcpRoutes,
     secretRoutes,
-    botRoutes,
   ]) {
     api.route("/universes", routes(store));
+  }
+  for (const module of modules) {
+    if (!module.routes) continue;
+    const scoped = new Hono();
+    scoped.use("*", async (c, next) => {
+      const state = store.universe(c.req.param("id"));
+      if (!state || !demoUniverseActions(store, state).has("read")) return c.json({ error: "not found" }, 404);
+      const enabled = store.organizationModules.get(state.universe.organizationId!)?.get(module.id) ?? module.defaultEnabled;
+      if (!enabled) return c.json({ error: "module unavailable" }, 404);
+      if (module.requiresFeature && !state.universe.features[module.requiresFeature]) {
+        return c.json({ error: `${module.name} are turned off in this universe` }, 403);
+      }
+      await next();
+    });
+    scoped.route("/", module.routes(store));
+    api.route(`/universes/:id/modules/${module.id}`, scoped);
   }
   app.route("/api/ui", api);
   app.route("/api/v1/platform", organizationRoutes(store, modules));

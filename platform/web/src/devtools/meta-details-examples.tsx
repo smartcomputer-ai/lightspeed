@@ -15,7 +15,7 @@ import {
   WebIcon,
   WorkspaceIcon,
 } from "@/icons";
-import type { StatusTone } from "@/components/bot/status";
+import type { StatusTone } from "@/components/status-dot";
 import {
   MetaDetails,
   MetaDetailsAction,
@@ -28,9 +28,8 @@ import {
   RESOURCE_STATUS_TONE,
 } from "@/components/meta-details";
 import { MetaToolbar, type MetaItem } from "@/components/meta-toolbar";
-import { ConversationDetails, type BotConversation } from "@/components/bot/conversations";
 import { Popover } from "@/components/ui/popover";
-import type { ResourceTone } from "@/lib/sessions/session-resources";
+import type { ResourceTone } from "@session-ui/model/session-resources";
 
 /// Examples of the meta details parts for the UI overview: the content of
 /// every meta item popover the app has, drawn open on the popover surface,
@@ -282,18 +281,18 @@ function FileContentDetails({ unsaved = false }: { unsaved?: boolean }) {
   );
 }
 
-// A bot's conversations, as its page's conversation switcher lists them:
-// Main and its threads (components/bot/conversations).
-
-const CONVERSATIONS: BotConversation[] = [
-  { id: "main", kind: "main", title: "Main", line: "#8 handled · Planned LIN-1422 into three tasks", tone: "idle", closed: false, atMs: Date.now() - 40 * 60_000 },
-  { id: "lin-1421-c", kind: "thread", title: "lin-1421-c", line: "Working on #9", tone: "live", closed: false, atMs: Date.now() - 60_000 },
-  { id: "lin-1421-b", kind: "thread", title: "lin-1421-b", line: "#7 run failed · Provider returned 529", tone: "attention", failed: true, closed: false, atMs: Date.now() - 2 * 3_600_000 },
-  { id: "digest", kind: "thread", title: "Weekly digest", line: "#5 handled · Sent the digest to #eng", tone: "idle", closed: false, atMs: Date.now() - 26 * 3_600_000 },
-];
-
 function ConversationsDetails() {
-  return <ConversationDetails conversations={CONVERSATIONS} currentId="lin-1421-c" href={(id) => link(`conversation ${id}`)} bot="Implementer" />;
+  return (
+    <MetaDetails>
+      <MetaDetailsHeading title="Conversations" description="The main conversation and its threads." />
+      <MetaDetailsList label="Conversations">
+        <MetaDetailsRow primary="Main" secondary={["Planned LIN-1422 into three tasks", "40m"]} tone="idle" href={link("main conversation")} />
+        <MetaDetailsRow primary="lin-1421-c" secondary={["Working on #9", "1m"]} tone="live" current href={link("conversation lin-1421-c")} />
+        <MetaDetailsRow primary="lin-1421-b" secondary={["Provider error", "2h"]} tone="attention" href={link("conversation lin-1421-b")} />
+        <MetaDetailsRow primary="Weekly digest" secondary={["Sent the digest", "1d"]} tone="idle" href={link("conversation digest")} />
+      </MetaDetailsList>
+    </MetaDetails>
+  );
 }
 
 /// Every usage, drawn open.

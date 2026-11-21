@@ -4,7 +4,7 @@ import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.j
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
-import { gatewayRoutes } from "./gateway.js";
+import { conversationRoutes } from "./conversations.js";
 import { sessionAdminRoutes } from "./session-admin.js";
 
 const auth = vi.hoisted(() => ({ role: "owner", platformAdmin: false }));
@@ -15,7 +15,7 @@ vi.mock("./universes.js", () => ({ universeForRequest: vi.fn(async () => ({
 beforeEach(() => { auth.role = "owner"; auth.platformAdmin = false; });
 afterEach(() => vi.unstubAllGlobals());
 
-function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMutation?: boolean; purgedIds?: string[] } = {}) {
+function fixture({ failMutation = false, purgedIds = ["s1", "child"], privateParent = false }: { failMutation?: boolean; purgedIds?: string[]; privateParent?: boolean } = {}) {
   const audits = vi.fn(async () => undefined);
   const operationCalls: string[] = [];
   const operationParams: Record<string, unknown>[] = [];
@@ -28,7 +28,8 @@ function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMu
     }
     const result = request.method === "deployment/sessions/purge" ? { deletedSessionIds: purgedIds }
       : request.method === "deployment/sessions/deleted/list" ? { sessions: [], nextAfter: null }
-      : { session: { id: "s1", access: { visibility: "universe" } }, deletedSessionCount: 2 };
+      : request.method === "session/list" ? { sessions: [{ id: "child" }], nextCursor: "next" }
+      : { session: { id: "s1", access: { visibility: privateParent ? "restricted" : "universe" } }, deletedSessionCount: 2 };
     return Response.json(result);
   }));
   const db = { insert: () => ({ values: audits }), select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "universe", lightspeedUniverseId: "runtime-universe" }] }) }) }) };
@@ -39,7 +40,7 @@ function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMu
     c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
-  app.route("/universes", gatewayRoutes(ctx));
+  app.route("/universes", conversationRoutes(ctx));
   app.route("/admin", sessionAdminRoutes(ctx));
   const call = (path: string, method = "POST", body: unknown = {}) => app.request(path, { method,
     headers: { "content-type": "application/json" }, ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
@@ -106,4 +107,21 @@ it("audits permanent deletion after the universe soft-delete step exactly once",
     details: { deletedSessionIds: '["s1","child"]' }, outcome: "success",
   }));
   expect((await f.call("/admin/universes/universe/deleted-sessions", "GET")).status).toBe(200);
+});
+
+it("serves embedded conversation lineage without the standalone Sessions routes", async () => {
+  auth.role = "contributor";
+  const f = fixture();
+  expect((await f.call("/universes/universe/sessions", "GET")).status).toBe(404);
+  const response = await f.call("/universes/universe/sessions/s1/children?limit=3&cursor=abc&parent=other", "GET");
+  expect(await response.json()).toEqual({ sessions: [{ id: "child" }], nextCursor: "next" });
+  expect(f.operationCalls).toEqual(["session/read", "session/list"]);
+  expect(f.operationParams[1]).toMatchObject({ parent: "s1", limit: 3, cursor: "abc", visibleTo: "member" });
+});
+
+it("requires the parent to be visible before listing a conversation's children", async () => {
+  auth.role = "contributor";
+  const f = fixture({ privateParent: true });
+  expect((await f.call("/universes/universe/sessions/s1/children", "GET")).status).toBe(404);
+  expect(f.operationCalls).toEqual(["session/read"]);
 });

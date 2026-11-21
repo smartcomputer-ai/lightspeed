@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.localStorage.clear();
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path.includes("/sessions?")) return { sessions };
+    if (path.includes("/modules/sessions?")) return { sessions };
     if (path.includes("/environments")) return { environments: [], nextAfter: null };
     throw new Error(`Unexpected request: ${path}`);
   });

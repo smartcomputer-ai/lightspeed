@@ -95,7 +95,7 @@ import { InfoBox } from "@/components/ui/info-box";
 import { Todo } from "@/components/todo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EmptyState, PageHeader, SectionHeader } from "@/components/page";
-import { StatusDot, type BotTone, type StatusTone } from "@/components/bot/status";
+import { StatusDot, type ActivityTone, type StatusTone } from "@/components/status-dot";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import * as Icons from "@/icons";
@@ -103,7 +103,6 @@ import type { IconComponent } from "@/icons";
 import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@session-ui/components/tool-trace";
-import { BotAvatar } from "@/components/bot/face";
 import { idColor, idHue } from "@/lib/identity-colors";
 import { useBundledModules } from "@/lib/web-modules";
 import { universeNavigation } from "@/components/universe-nav";
@@ -663,7 +662,7 @@ function IdColorsSpecimen() {
       >
         {SAMPLE_IDS.map((sample) => (
           <div key={sample} className="flex min-w-0 items-center gap-2.5">
-            <BotAvatar botId={sample} size={28} />
+            <BotIcon style={{ color: idColor(sample) }} size={28} />
             <div className="grid min-w-0">
               <span className="truncate text-sm">{sample}</span>
               <span className="font-mono text-[11px] text-muted-foreground">hue {idHue(sample)}</span>
@@ -678,7 +677,7 @@ function IdColorsSpecimen() {
         </Field>
         <div className="flex min-w-0 flex-wrap items-center gap-4">
           <span data-id-color-swatch="" className="size-10 shrink-0 rounded-full" style={{ background: color }} aria-hidden />
-          <BotAvatar botId={id} size={36} />
+          <BotIcon style={{ color: idColor(id) }} size={36} />
           <span className="text-sm font-medium" style={{ color }}>Text in the colour</span>
           <span className="rounded-md px-2 py-1 text-xs font-medium" style={{ color, background: `color-mix(in oklab, ${color} 14%, transparent)` }}>Tinted</span>
           <Caption>hue {idHue(id)}</Caption>
@@ -989,7 +988,7 @@ function BadgesSection() {
           <InfoBox tone="error">An error without a title is announced like one with.</InfoBox>
         </div>
       </Specimen>
-      <Specimen title="Status dots" note="components/bot/status">
+      <Specimen title="Status dots" note="components/status-dot">
         {TONES.map((tone) => (
           <span key={tone} className="flex items-center gap-2 text-sm">
             <StatusDot tone={tone} />
@@ -1476,7 +1475,7 @@ function BotListExample() {
   // A tree two levels deep: each row says whether it is the last of its
   // siblings, which ancestor lines run past it, and whether it has children.
   // `parent` lets a closed row hide what hangs below it.
-  const all: Array<{ id: string; parent?: string; title: string; tone: BotTone; meta: ReactNode; line: string; tree: ListRowTree }> = [
+  const all: Array<{ id: string; parent?: string; title: string; tone: ActivityTone; meta: ReactNode; line: string; tree: ListRowTree }> = [
     { id: "planner", title: "Release planner", tone: "live", meta: "2m", line: "Working on #12 · message", tree: { depth: 0, children: true } },
     { id: "deploy", parent: "planner", title: "Deploy checks", tone: "idle", meta: "1h", line: "#9 handled · All green", tree: { depth: 1, last: false, lines: [], children: true } },
     { id: "smoke", parent: "deploy", title: "Smoke test", tone: "idle", meta: "1h", line: "Passed in 42s", tree: { depth: 2, last: false, lines: [true] } },
@@ -1847,9 +1846,9 @@ function CardsSection() {
 }
 
 const ROWS = [
-  { name: "acme-web", id: "ws-01HZX4K2Q9", status: "Ready", tone: "idle" as BotTone },
-  { name: "release-notes", id: "ws-01HZX4M7T1", status: "Syncing", tone: "live" as BotTone },
-  { name: "legacy-api", id: "ws-01HZX4P3B8", status: "Needs attention", tone: "attention" as BotTone },
+  { name: "acme-web", id: "ws-01HZX4K2Q9", status: "Ready", tone: "idle" as ActivityTone },
+  { name: "release-notes", id: "ws-01HZX4M7T1", status: "Syncing", tone: "live" as ActivityTone },
+  { name: "legacy-api", id: "ws-01HZX4P3B8", status: "Needs attention", tone: "attention" as ActivityTone },
 ];
 
 function TablesSection() {
@@ -2200,8 +2199,8 @@ const RESOURCE_ENTITIES: PlainEntity[] = [
   { entity: "Tools", icon: Icons.ToolsIcon, source: "session/session-resources.tsx" },
   { entity: "Sub-agent profiles", icon: Icons.ProfileIcon, source: "session/session-resources.tsx" },
   { entity: "Parent agent", icon: Icons.ParentAgentIcon, source: "session/session-meta.tsx" },
-  { entity: "Main thread", icon: Icons.SessionMainThreadIcon, source: "pages/BotsPage.tsx" },
-  { entity: "Thread", icon: Icons.SessionSubThreadIcon, source: "pages/BotsPage.tsx" },
+  { entity: "Main thread", icon: Icons.SessionMainThreadIcon, source: "modules/bots/web/BotsPage.tsx" },
+  { entity: "Thread", icon: Icons.SessionSubThreadIcon, source: "modules/bots/web/BotsPage.tsx" },
   { entity: "Code mode", icon: Icons.CodeModeIcon, source: "session/session-resources.tsx" },
   { entity: "Web", icon: Icons.WebIcon, source: "session/session-resources.tsx" },
   { entity: "Timers", icon: Icons.TimerIcon, source: "session/session-resources.tsx" },

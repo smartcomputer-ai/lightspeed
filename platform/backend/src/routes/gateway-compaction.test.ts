@@ -4,7 +4,7 @@ import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
-import { gatewayRoutes } from "./gateway.js";
+import { conversationRoutes } from "./conversations.js";
 
 const access = vi.hoisted(() => ({ role: "contributor", owner: "user" }));
 vi.mock("./universes.js", () => ({
@@ -34,7 +34,7 @@ async function compact() {
     c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
+  app.route("/", conversationRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   return app.request("/universe/sessions/session/context/compact", { method: "POST" });
 }
 it("forwards a contributor's manual compaction to the core API", async () => {

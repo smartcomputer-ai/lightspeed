@@ -25,30 +25,14 @@ const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
   owner: ["read", "createSession", "useResource", "configureResource", "administer"],
 };
 const DESTINATIONS: [string, string][] = [
-  ["viewer", "/u/test/bots"],
-  ["contributor", "/u/test/bots"],
-  ["operator", "/u/test/bots"],
+  ["viewer", "/u/test"],
+  ["contributor", "/u/test"],
+  ["operator", "/u/test"],
   ["owner", "/u/test/settings/general"],
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
-  expect(settingsIndexPath({ handle: "test", features: ALL_ON }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
-});
-
-it("treats a universe that names no feature states as having every feature off", () => {
-  const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test");
-  const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
-  expect(settingsIndexPath({ handle: "test" }, viewer)).toBe("/u/test");
-});
-
-it("uses the universe index when no settings page is available and bots are off", () => {
-  const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ handle: "test", features: { bots: true } }, operator))
-    .toBe("/u/test/bots");
-  const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
-  expect(settingsIndexPath({ handle: "test", features: { bots: false } }, viewer))
-    .toBe("/u/test");
+  expect(settingsIndexPath({ handle: "test" }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
 });
 
 let root: Root;

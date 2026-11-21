@@ -14,13 +14,12 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { authClient, isPlatformAdmin, useLoginConfig } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
 import { SettingsIndexRedirect } from "@/components/universe-nav";
-import { universeHome, useActiveUniverse } from "@/lib/universes";
+import { useActiveUniverse } from "@/lib/universes";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
 import { UnclaimedUniversesPage } from "@/pages/UnclaimedUniversesPage";
 import { AdminAuditPage } from "@/pages/AdminAuditPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
 import { AdminEnvironmentProvidersPage } from "@/pages/AdminEnvironmentProvidersPage";
-import { BotsPage } from "@/pages/BotsPage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
 import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
@@ -41,7 +40,6 @@ import { useAvailableWebModules, useBundledModules } from "@/lib/web-modules";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
-import { FeatureGate } from "@/components/feature-gate";
 import { finishAutomaticSignIn } from "@/lib/automatic-sign-in";
 import { debugModeEnabled } from "@/devtools/debug-mode";
 
@@ -55,7 +53,6 @@ function UniverseIndexRedirect() {
   if (isLoading) return <LoadingNote />;
   if (!universe) return <UniverseNotFound handle={handle} />;
   if (!universe.actions?.includes("read")) return <CenteredNote>You do not have access to this universe.</CenteredNote>;
-  if (universe.features.bots) return <Navigate to={universeHome(universe)} replace />;
   if (available.isLoading) return <LoadingNote />;
   if (available.error) return <ReadError error={available.error} prefix="Module availability" />;
   return <Navigate to={`/u/${universe.handle}/${available.modules[0]?.id ?? "workspaces"}`} replace />;
@@ -144,16 +141,6 @@ export function App() {
         <Route
           path="u/:handle/workspaces/:workspaceId/files/*"
           element={<WorkspacesPage />}
-        />
-        <Route path="u/:handle/bots" element={<FeatureGate feature="bots"><BotsPage /></FeatureGate>} />
-        <Route path="u/:handle/bots/:botId" element={<FeatureGate feature="bots"><BotsPage view="chat" /></FeatureGate>} />
-        <Route
-          path="u/:handle/bots/:botId/chat/:sessionId"
-          element={<FeatureGate feature="bots"><BotsPage view="chat" /></FeatureGate>}
-        />
-        <Route
-          path="u/:handle/bots/:botId/activity"
-          element={<FeatureGate feature="bots"><BotsPage view="activity" /></FeatureGate>}
         />
         <Route path="u/:handle/blobs/:digest" element={<BlobPage />} />
         <Route path="u/:handle/profiles" element={<ProfilesPage />} />

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   UNIVERSE_HANDLE_MAX_LENGTH,
-  effectiveFeatures,
   universeHandleFromName,
   universeHandleSchema,
 } from "@lightspeed-ai/platform-shared";
@@ -92,7 +91,7 @@ export function NewUniverseDialog({
         setHandle("");
         setHandleEdited(false);
         setOwnerChoice(null);
-        navigate(universeHome({ handle: created.handle, features: effectiveFeatures(created.features) }));
+        navigate(universeHome(created));
       });
     },
     // Called off: the dialog comes back with the error.

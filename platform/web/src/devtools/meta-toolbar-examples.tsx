@@ -19,7 +19,7 @@ import {
   WorkspaceIcon,
 } from "@/icons";
 import { ActivityDot } from "@/components/activity-dot";
-import { StatusDot, type StatusTone } from "@/components/bot/status";
+import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { MetaDetails, MetaDetailsHeading, MetaDetailsList, MetaDetailsRow } from "@/components/meta-details";
 import { DetailHeader } from "@/components/detail-header";
 import { ListPaneBody, ListPaneHeader, ListRow, ListRowLine } from "@/components/list-pane";

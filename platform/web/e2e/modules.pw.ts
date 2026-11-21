@@ -79,6 +79,39 @@ test("Bots keeps its shared session view when the Sessions module is disabled", 
   await expect(composer).toBeVisible();
 });
 
+test("disabling Bots removes its routes and controller UI while managed sessions remain readable", async ({ page }) => {
+  await page.goto("u/software-factory/sessions/bot:v1:planner");
+  const actions = page.getByRole("button", { name: "Session actions" });
+  await actions.click();
+  const openInBot = page.getByRole("menuitem", { name: "Open in bot" });
+  await openInBot.click();
+  await expect(page).toHaveURL(/\/bots\/planner\/chat\//);
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
+
+  await openOrganizationSettings(page);
+  const enabled = page.getByRole("switch", { name: "Bots", exact: true });
+  await expect(enabled).toBeChecked();
+  await enabled.click();
+  await expect(enabled).not.toBeChecked();
+  await page.goBack();
+  await page.goBack();
+  await expect(page.getByText("The Bots module is unavailable in this universe.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Bots", exact: true })).toHaveCount(0);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/sessions\/bot:v1:planner$/);
+  await expect(page.getByRole("switch", { name: "Direct input" })).toBeVisible();
+  await expect(page.getByText(/Managed by bot_controller_v1 — flip to message/)).toBeVisible();
+  await actions.click();
+  await expect(page.getByRole("menuitem", { name: "Session settings" })).toBeVisible();
+  await expect(openInBot).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: /Software Factory/ }).click();
+  await page.getByRole("menuitem", { name: "Software Factory", exact: true }).click();
+  await expect(page).toHaveURL(/\/u\/software-factory\/sessions$/);
+});
+
 async function openOrganizationSettings(page: Page) {
   await page.getByRole("button", { name: /Ada Demo/ }).click();
   await page.getByRole("menuitem", { name: "Admin", exact: true }).click();

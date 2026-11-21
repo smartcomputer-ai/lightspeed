@@ -4,7 +4,7 @@ import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
-import { gatewayRoutes } from "./gateway.js";
+import { conversationRoutes } from "./conversations.js";
 
 vi.mock("./universes.js", () => ({
   universeForRequest: vi.fn(async () => ({
@@ -41,7 +41,7 @@ describe("composer input origin", () => {
     c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
       await next();
     });
-    app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_platform_fixture" } } as AppContext));
+    app.route("/", conversationRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_platform_fixture" } } as AppContext));
     const response = await app.request(path, {
       method: "POST",
       headers: { "content-type": "application/json" },

@@ -7,7 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { retryRead } from "@/lib/read-errors";
 import { App } from "./App.js";
-import { BotSessionControllerPresentation } from "@/components/bot/session-controller-presentation";
+import { ModuleSessionController } from "@/components/module-session-controller";
 import { SessionControllerPresenter } from "@session-ui/controller-presentation";
 import { standardWebModules } from "@distribution/web";
 import { WebModuleProvider } from "@/lib/web-modules";
@@ -31,7 +31,7 @@ createRoot(document.getElementById("root")!).render(
         <TooltipProvider>
           <BrowserRouter basename={appBasename}>
             <WebModuleProvider value={standardWebModules}>
-              <SessionControllerPresenter.Provider value={BotSessionControllerPresentation}>
+              <SessionControllerPresenter.Provider value={ModuleSessionController}>
                 <App />
               </SessionControllerPresenter.Provider>
             </WebModuleProvider>

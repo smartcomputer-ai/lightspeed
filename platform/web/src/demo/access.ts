@@ -11,7 +11,7 @@ import {
   type UniverseAction,
   type UniverseRole,
 } from "@lightspeed-ai/platform-shared";
-import type { DemoStore, UniverseState } from "./store";
+import type { DemoStore, SessionRecord, UniverseState } from "./store";
 
 /// The demo resolves authority the way the Platform does: the demo user's
 /// roles are bundles of actions from the shared definitions, unioned, with
@@ -35,6 +35,18 @@ export function demoUniverseActions(store: DemoStore, state: UniverseState): Rea
   if (granted) roles.push(granted);
   if (demoOrganizationActions(store, state.universe.organizationRole).has("administerUniverses")) roles.push("owner");
   return universeActions(roles);
+}
+
+/** All descendants inherit the visibility of their session tree's root. */
+export function demoCanReadSession(
+  store: DemoStore, state: UniverseState, record: SessionRecord,
+  actions = demoUniverseActions(store, state),
+): boolean {
+  if (!actions.has("read")) return false;
+  if (actions.has("accessPrivateSessions")) return true;
+  const root = state.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
+  const access = root.view.access;
+  return access.visibility === "universe" || (access.createdBy?.kind === "actor" && access.createdBy.id === store.currentUser.id);
 }
 
 /** A universe as the Platform presents it to the demo user, with the actions it holds. */

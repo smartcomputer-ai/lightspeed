@@ -22,9 +22,9 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   MetadataMapEditor,
-} from "@/components/session/metadata-editor";
-import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
-import { SessionConfigEditor } from "@/components/session/session-config-editor";
+} from "@session-ui/components/metadata-editor";
+import { ProfileRetentionEditor } from "@session-ui/components/profile-retention-editor";
+import { SessionConfigEditor } from "@session-ui/components/session-config-editor";
 import {
   Dialog,
   DialogContent,
@@ -46,11 +46,11 @@ import {
 } from "@/components/ui/select";
 import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
-import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
+import { useSessionConfigEditorOptions } from "@session-ui/model/editor-options";
 import {
   resourceFeatureDisableReasons,
   setupResourceFeatureError,
-} from "@/lib/sessions/resource-features";
+} from "@session-ui/model/resource-features";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";

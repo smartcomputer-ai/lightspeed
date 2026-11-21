@@ -10,10 +10,12 @@ import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withApiErrors } from "./http.js";
 import { Hono } from "hono";
 import { desc, eq, sql } from "drizzle-orm";
-import { auditQuerySchema, type AuditPage, type PlatformModule } from "@lightspeed-ai/platform-shared";
+import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
-import { botRoutes } from "./routes/bots.js";
+import { moduleRoutes } from "./module-routes.js";
+import type { ApiModule } from "./module-api.js";
+import { conversationRoutes } from "./routes/conversations.js";
 import { environmentDeploymentRoutes } from "./routes/environment-deployment.js";
 import { gatewayRoutes } from "./routes/gateway.js";
 import { universeRoutes } from "./routes/universes.js";
@@ -22,7 +24,7 @@ import { sessionAllows } from "./context.js";
 import { publicAuthConfig } from "./auth.js";
 
 
-export function buildApp(ctx: AppContext, modules: readonly PlatformModule[] = []) {
+export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
   const app = new Hono();
   app.onError((error, c) => {
     if (error instanceof CredentialRateLimit) return error.response();
@@ -98,7 +100,8 @@ export function buildApp(ctx: AppContext, modules: readonly PlatformModule[] = [
 
   api.route("/universes", universeRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));
-  api.route("/universes", botRoutes(ctx));
+  api.route("/universes", conversationRoutes(ctx));
+  api.route("/universes", moduleRoutes(ctx, modules));
   api.route("/admin", sessionAdminRoutes(ctx));
   api.route("/admin", environmentDeploymentRoutes(ctx));
 

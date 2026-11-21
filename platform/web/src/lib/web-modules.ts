@@ -1,5 +1,6 @@
 import { createContext, useContext, type ComponentType } from "react";
-import type { UniverseAction } from "@lightspeed-ai/platform-shared";
+import type { PlatformModule, UniverseAction } from "@lightspeed-ai/platform-shared";
+import type { ControllerPresentationProps } from "@session-ui/controller-presentation";
 import type { Universe } from "@/api";
 import { useActiveUniverse } from "./universes";
 import { useOrganizationModules } from "@/lib/organization-modules";
@@ -12,14 +13,18 @@ export interface UniverseModuleRoute {
 }
 
 /** Contributions supplied by a native module in this web build. */
-export interface UniverseWebModule {
-  id: string;
+export interface UniverseWebModule extends Pick<PlatformModule, "id" | "requiresFeature"> {
   label: string;
   icon: ComponentType;
   action: UniverseAction;
   routes: readonly UniverseModuleRoute[];
   masterDetail?: boolean;
   sessionHref?: (handle: string, sessionId: string) => string;
+  /** The first matching available module in catalog order presents the session controller. */
+  sessionController?: {
+    matches: (session: NonNullable<ControllerPresentationProps["session"]>) => boolean;
+    Presenter: ComponentType<ControllerPresentationProps>;
+  };
   workspaceAction?: { label: string; href: (handle: string, workspaceId: string) => string };
 }
 
@@ -30,7 +35,7 @@ export function useBundledModules() {
 }
 
 /** The first path segment belongs to one host page or one module. */
-const HOST_NAMESPACES = new Set(["bots", "workspaces", "blobs", "profiles", "models", "environments", "mcp-servers", "credentials", "settings"]);
+const HOST_NAMESPACES = new Set(["workspaces", "blobs", "profiles", "models", "environments", "mcp-servers", "credentials", "settings"]);
 
 /** Validate once, before the router and navigation consume the distribution. */
 export function composeWebModules(entries: ReadonlyArray<{ id: string; module: UniverseWebModule }>): readonly UniverseWebModule[] {
@@ -53,12 +58,15 @@ export function composeWebModules(entries: ReadonlyArray<{ id: string; module: U
 }
 
 /** Only mount contributions when this organization enabled them and the caller can use them. */
-export function useAvailableWebModules(universe: Pick<Universe, "organizationId" | "actions"> | undefined) {
+export function useAvailableWebModules(universe: Pick<Universe, "organizationId" | "actions" | "features"> | undefined) {
   const bundled = useBundledModules();
   const installations = useOrganizationModules(bundled.length ? universe?.organizationId : undefined);
   const enabled = new Set(installations.data?.modules.filter(item => item.enabled).map(item => item.id));
+  const enabledModules = installations.error ? [] : bundled.filter(module =>
+    enabled.has(module.id) && universe?.actions?.includes(module.action));
   return {
-    modules: installations.error ? [] : bundled.filter(module => enabled.has(module.id) && universe?.actions?.includes(module.action)),
+    enabledModules,
+    modules: enabledModules.filter(module => !module.requiresFeature || universe?.features?.[module.requiresFeature]),
     isLoading: installations.isLoading,
     error: installations.error,
   };

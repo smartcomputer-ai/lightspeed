@@ -61,7 +61,7 @@ import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
 import { isKeyIdConflict, KeyIdField } from "@/components/key-id-field";
 import { EnvironmentPowerControls } from "@/components/environment/power-controls";
 import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
-import { MetadataMapEditor } from "@/components/session/metadata-editor";
+import { MetadataMapEditor } from "@session-ui/components/metadata-editor";
 import {
   brokeredCredentialNote,
   environmentCredentialAvailable,

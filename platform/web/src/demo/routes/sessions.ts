@@ -1,10 +1,6 @@
-import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAttached } from "@/lib/sessions/resource-features";
-import { demoUniverseActions } from "../access";
+import { isEnvironmentAttached } from "@session-ui/model/resource-features";
+import { demoCanReadSession, demoUniverseActions } from "../access";
 import { modelFromConfig } from "@/lib/model-defaults";
-/// Session routes over the engine simulation: the sessions browser, the
-/// transcript's long-poll tail, run control, and the settings sheet. Shapes
-/// and status codes follow the platform backend's gateway so the UI cannot
-/// tell the difference.
 import { Hono, type Context } from "hono";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -15,8 +11,8 @@ import {
   sessionSteerSchema,
   type MessageAttachment,
 } from "@lightspeed-ai/platform-shared";
-import type { Environment, ModelConfig, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
-import type { ProfileInstructions } from "@lightspeed-ai/sdk";
+import type { SessionView } from "@/api";
+import { isRecord, sessionConfig, usableEnvironment } from "../session-config";
 import {
   refreshDemoCompactionView,
   PROFILE_INSTRUCTIONS_KEY,
@@ -25,7 +21,6 @@ import {
   decideApprovals,
   findRun,
   modelOf,
-  newSession,
   pushEvent,
   setInstructions,
   startRun,
@@ -35,119 +30,28 @@ import {
 import { sessionSummary, type DemoStore, type SessionRecord, type UniverseState } from "../store";
 import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "./common";
 
-/// What a session start consumes from a profile, whichever source it came
-/// from. `profileId` is null for inline profiles.
-interface ResolvedProfile {
-  profileId: string | null;
-  metadata: Record<string, string>;
-  retention: ProfileSessionRetention | null;
-  config: Record<string, unknown>;
-  instructions: ProfileInstructions | null;
-}
-
-/// `?metadata=key` or `?metadata=key=value`, repeatable. Empty values request
-/// key presence; non-empty values request exact matches.
-function metadataQueryFilter(values: string[] | undefined): Record<string, string> {
-  const filter: Record<string, string> = {};
-  for (const raw of values ?? []) {
-    const at = raw.indexOf("=");
-    const key = (at < 0 ? raw : raw.slice(0, at)).trim();
-    if (!key) continue;
-    filter[key] = at < 0 ? "" : raw.slice(at + 1).trim();
-  }
-  return filter;
-}
-
-/// A yes/no list filter: `true` or `false`; anything else does not filter.
-function booleanQuery(value: string | undefined): boolean | undefined {
-  return value === "true" ? true : value === "false" ? false : undefined;
-}
-
-export function sessionRoutes(store: DemoStore): Hono {
+export function conversationRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
   const lookup = (c: Context): { universe: UniverseState; session: SessionRecord } | null => {
     const universe = universeFor(store, c);
     const session = universe?.sessions.get(c.req.param("sessionId") ?? "");
-    return universe && session ? { universe, session } : null;
+    return universe && session && demoCanReadSession(store, universe, session) ? { universe, session } : null;
   };
 
-  /// Newest activity first; the cursor is a plain offset because the demo
-  /// list is small and never changes underneath a page.
-  app.get("/:id/sessions", (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
+  app.get("/:id/sessions/:sessionId/children", (c) => {
+    const found = lookup(c);
+    if (!found) return notFound(c);
     const limit = Math.min(intQuery(c, "limit", 50), 200);
     const offset = intQuery(c, "cursor", 0);
-    const closed = booleanQuery(c.req.query("closed"));
-    const lifecycleControlled = booleanQuery(c.req.query("lifecycleControlled"));
-    const subagent = booleanQuery(c.req.query("subagent"));
-    const parent = c.req.query("parent") || null;
-    // The Sessions page's list (not a lineage lookup) counts as a look.
-    if (!parent && universe.onSessionsViewed) {
-      const viewed = universe.onSessionsViewed;
-      universe.onSessionsViewed = undefined;
-      viewed();
-    }
-    const metadata = metadataQueryFilter(c.req.queries("metadata"));
-    const all = [...universe.sessions.values()]
-      .filter((record) => !parent || record.view.origin?.parentSessionId === parent)
-      .filter((record) => closed === undefined || (record.view.lifecycleStatus === "closed") === closed)
-      .filter((record) => subagent === undefined || Boolean(record.view.origin) === subagent)
-      // Lifecycle-controlled work follows its root, as the core list does.
-      .filter((record) => {
-        if (lifecycleControlled === undefined) return true;
-        const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
-        return root.view.lifecycleControlled === lifecycleControlled;
-      })
-      .filter((record) =>
-        Object.entries(metadata).every(([key, value]) => value
-          ? record.view.metadata?.[key] === value
-          : Object.hasOwn(record.view.metadata ?? {}, key)),
-      )
+    const actions = demoUniverseActions(store, found.universe);
+    const children = [...found.universe.sessions.values()]
+      .filter(child => child.view.origin?.parentSessionId === found.session.view.id && demoCanReadSession(store, found.universe, child, actions))
       .sort((a, b) => b.view.updatedAtMs - a.view.updatedAtMs);
-    const page = all.slice(offset, offset + limit);
     return c.json({
-      sessions: page.map(sessionSummary),
-      nextCursor: offset + limit < all.length ? String(offset + limit) : null,
+      sessions: children.slice(offset, offset + limit).map(sessionSummary),
+      nextCursor: offset + limit < children.length ? String(offset + limit) : null,
     });
-  });
-
-  /// Resolve the default attachment before creating the session so a refused
-  /// profile leaves no session behind.
-  app.post("/:id/sessions", async (c) => {
-    const universe = universeFor(store, c);
-    if (!universe) return notFound(c);
-    const body = await readBody<{
-      displayName?: string;
-      metadata?: Record<string, string>;
-      deleteAfterCloseMs?: number | null;
-      profile?: ProfileSource;
-    }>(c);
-    if (Object.hasOwn(body, "environment")) return badRequest(c, "environment is not a session creation field; configure environment attachments instead");
-    if (!body.profile) return badRequest(c, "profile is required");
-    const actions = demoUniverseActions(store, universe);
-    if (!actions.has("setSessionRetention") && body.deleteAfterCloseMs != null) return c.json({ error: "universe permission required for deletion retention: setSessionRetention" }, 403);
-    const profile = resolveProfile(universe, body.profile);
-    if (!profile) return notFound(c, "not found in engine");
-    const config = sessionConfig(profile.config, universe.modelDefaults.agentRun);
-    if (!config) return c.json({ error: "No default agent model is selected. Choose a model in Models.", kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }, 400);
-    const sessionId = store.nextId("session");
-    const resolved = resolveEnvironment(universe, profile);
-    if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
-    const session = newSession(store, universe, {
-      id: sessionId,
-      displayName: body.displayName?.trim() || null,
-      metadata: { ...profile.metadata, ...(body.metadata ?? {}) },
-      deleteAfterCloseMs: !actions.has("setSessionRetention") ? null : Object.hasOwn(body, "deleteAfterCloseMs")
-        ? body.deleteAfterCloseMs
-        : profile.retention?.deleteAfterCloseMs,
-      config,
-      activeEnvironmentId: resolved.environmentId,
-      instructions: instructionText(store, profile.instructions),
-      access: { visibility: "restricted", createdBy: { kind: "actor", id: store.currentUser.id } },
-    });
-    return c.json(session.view);
   });
 
   /// Shares an unshared root session and its sub-agents with the universe,
@@ -390,7 +294,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     }
     const environment = universe.environments.get(c.req.param("environmentId"));
     if (!environment) return notFound(c, "not found in engine");
-    if (!usable(environment)) {
+    if (!usableEnvironment(environment)) {
       return conflict(
         c,
         `engine conflict: environment is ${environment.status}: ${environment.environmentId}`,
@@ -537,76 +441,7 @@ function retentionDescendants(universe: UniverseState, parentId: string): Sessio
   return descendants;
 }
 
-function resolveProfile(universe: UniverseState, source: ProfileSource): ResolvedProfile | null {
-  if (source.kind === "inline") {
-    const profile = source.profile ?? {};
-    return {
-      profileId: null,
-      metadata: isStringMap(profile.metadata) ? profile.metadata : {},
-      retention: profile.retention ?? null,
-      config: isRecord(profile.config) ? profile.config : {},
-      instructions: profile.instructions ?? null,
-    };
-  }
-  const document = universe.profiles.get(source.profileId);
-  if (!document) return null;
-  const instructions = document.instructions;
-  return {
-    profileId: document.profileId,
-    metadata: isStringMap(document.metadata) ? document.metadata : {},
-    retention: document.retention ?? null,
-    config: isRecord(document.config) ? document.config : {},
-    instructions: isRecord(instructions) ? (instructions as unknown as ProfileInstructions) : null,
-  };
-}
-
-/// The session's own copy of a profile config, with the model the demo
-/// answers as when the profile leaves it open.
-function sessionConfig(config: Record<string, unknown>, fallback?: ModelConfig | null): Record<string, unknown> | null {
-  const copy = structuredClone(config);
-  const model = modelOf(copy) ?? fallback;
-  return model ? { ...copy, model: { ...model } } : null;
-}
-
-function instructionText(store: DemoStore, instructions: ProfileInstructions | null): string | null {
-  if (!instructions) return null;
-  return instructions.type === "text" ? instructions.text : store.readText(instructions.blobRef);
-}
-
-/// Profiles select resources whose lifecycle is managed independently.
-function resolveEnvironment(
-  universe: UniverseState,
-  profile: ResolvedProfile,
-): { environmentId: string | null } | { error: string } {
-  if (environmentAttachments(profile.config).some((attachment) => attachment.inherit)) return { error: "inherited environments require a parent session" };
-  const environmentId = defaultEnvironmentAttachment(profile.config)?.environmentId;
-  if (!environmentId) return { environmentId: null };
-  if (!isEnvironmentAttached(profile.config, environmentId)) return { error: `environment is not attached: ${environmentId}` };
-  const environment = universe.environments.get(environmentId);
-  if (!environment) return { error: `environment not found: ${environmentId}` };
-  if (!usable(environment)) return { error: `environment is ${environment.status}: ${environmentId}` };
-  return { environmentId };
-}
-
-/// Provisioning, powered-down and disconnected environments are valid
-/// activation targets; a terminal or terminating one is not.
-function usable(environment: Environment): boolean {
-  return (
-    environment.state !== "closed" &&
-    environment.state !== "closing" &&
-    environment.state !== "failed"
-  );
-}
-
 function grantsEnvironments(config: NonNullable<SessionView["config"]>): boolean {
   const features = config.features;
   return isRecord(features) && Boolean(features.environments);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isStringMap(value: unknown): value is Record<string, string> {
-  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }

@@ -1,11 +1,11 @@
+import type { BotListItem } from "@lightspeed-ai/sdk";
 import type { AuditPage } from "@lightspeed-ai/platform-shared";
-import { defaultEnvironmentAttachment, environmentAttachments } from "@/lib/sessions/resource-features";
+import { defaultEnvironmentAttachment, environmentAttachments } from "@session-ui/model/resource-features";
 import { describe, expect, it, vi } from "vitest";
 import { createDemoStore } from "./fixtures";
-import { createDemoRouter } from "./router";
+import { createStandardDemoRouter } from "@distribution/demo";
 import type {
   Universe,
-  BotListItem,
   McpServer,
   McpToolDiscovery,
   Environment,
@@ -26,7 +26,7 @@ import { appendScriptedRun, startRun } from "./engine";
 /// here before it fails in a browser.
 async function boot() {
   const store = createDemoStore();
-  const app = createDemoRouter(store);
+  const app = createStandardDemoRouter(store);
   const call = async (method: string, path: string, body?: unknown) => {
     const response = await app.fetch(
       new Request(`http://demo.local${path}`, {
@@ -42,7 +42,7 @@ async function boot() {
 }
 
 const universeReads = [
-  "sessions",
+  "modules/sessions",
   "profiles",
   "workspaces",
   "environments",
@@ -54,7 +54,7 @@ const universeReads = [
   "credential-grants",
   "models",
   "models/defaults",
-  "bots",
+  "modules/bots",
   "integrations/github",
   "integrations/subscriptions",
 ];
@@ -172,19 +172,19 @@ describe("demo router", () => {
     expect(updated.json).toEqual({ ...original, agentRun: model, revision });
     expect((await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: original.revision })).status).toBe(409);
     expect((await call("PUT", `${base}/models/defaults`, { slot: "agentRun", expectedRevision: revision })).status).toBe(400);
-    const created = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } });
+    const created = await call("POST", `${base}/modules/sessions`, { profile: { kind: "inline", profile: {} } });
     expect(created.status).toBe(200);
     const session = created.json as SessionView;
     expect(session.config).toMatchObject({ model });
     const cleared = await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: revision });
     expect(cleared.json).toMatchObject({ revision: revision + 1, agentRun: null });
-    const missing = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } });
+    const missing = await call("POST", `${base}/modules/sessions`, { profile: { kind: "inline", profile: {} } });
     expect(missing.status).toBe(400);
     expect(missing.json).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" });
     const existing = await call("PUT", `${base}/sessions/${session.id}/config`, { config: {}, expectedConfigRevision: session.configRevision });
     expect(existing.status).toBe(200);
     expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.sessions.get(session.id)!.view.config).toMatchObject({ model });
-    const explicit = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: { config: { model } } } });
+    const explicit = await call("POST", `${base}/modules/sessions`, { profile: { kind: "inline", profile: { config: { model } } } });
     expect(explicit.status).toBe(200);
     expect(other.modelDefaults).toEqual(otherDefaults);
   });
@@ -194,18 +194,18 @@ describe("demo router", () => {
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     await call("PUT", `${base}/profiles/inherit`, { profileId: "inherit", config: {} });
-    const created = await call("POST", `${base}/bots`, { bot: { botId: "inherit-model", profileId: "inherit" } });
+    const created = await call("POST", `${base}/modules/bots`, { bot: { botId: "inherit-model", profileId: "inherit" } });
     expect(created.status).toBe(201);
     const record = universe.bots.get("inherit-model")!;
     const sessionId = record.state.mainSessionId!;
     const model = universe.modelDefaults.agentRun;
     expect(universe.sessions.get(sessionId)!.view.config).toMatchObject({ model });
     await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision });
-    const refused = await call("POST", `${base}/bots/inherit-model/sessions/${sessionId}/rotate`);
+    const refused = await call("POST", `${base}/modules/bots/inherit-model/sessions/${sessionId}/rotate`);
     expect(refused.status).toBe(400);
     expect(refused.json).toMatchObject({ kind: "modelDefaultUnset" });
     expect(universe.sessions.get(sessionId)!.view.lifecycleStatus).not.toBe("closed");
-    expect((await call("POST", `${base}/bots`, { bot: { botId: "no-model", profileId: "inherit" } })).status).toBe(400);
+    expect((await call("POST", `${base}/modules/bots`, { bot: { botId: "no-model", profileId: "inherit" } })).status).toBe(400);
     expect(universe.bots.has("no-model")).toBe(false);
   });
 
@@ -282,7 +282,7 @@ describe("demo router", () => {
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/session-flaky-scheduler`;
     expect((await call("GET", path)).json).toMatchObject({ access: { visibility: "restricted" } });
-    const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as { sessions: { id: string; access: { visibility: string } }[] };
+    const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/modules/sessions?limit=200`)).json as { sessions: { id: string; access: { visibility: string } }[] };
     expect(listed.sessions.find((session) => session.id === "session-flaky-scheduler")?.access.visibility).toBe("restricted");
     const shared = await call("POST", `${path}/share`);
     expect(shared.status).toBe(200);
@@ -296,7 +296,7 @@ describe("demo router", () => {
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const session = universe.sessions.get("session-flaky-scheduler")!;
     const list = async () => {
-      const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+      const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/modules/sessions?limit=200`)).json as {
         sessions: { id: string; lastMessagePreview?: string }[];
       };
       return new Map(listed.sessions.map((entry) => [entry.id, entry.lastMessagePreview]));
@@ -324,7 +324,7 @@ describe("demo router", () => {
   it("uploads an attachment and runs it through the transcript as input media", async () => {
     const { store, call } = await boot();
     const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
-    const created = (await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } })).json as SessionView;
+    const created = (await call("POST", `${base}/modules/sessions`, { profile: { kind: "inline", profile: {} } })).json as SessionView;
     const uploaded = await call("POST", `${base}/attachments`, { bytesBase64: btoa("%PDF-1.7") });
     expect(uploaded.status).toBe(200);
     const blobRef = (uploaded.json as { blobs: { blobRef: string }[] }).blobs[0]!.blobRef;
@@ -385,15 +385,15 @@ describe("demo router", () => {
         const result = await call("GET", `/api/ui/universes/${universe.id}/${path}`);
         expect(result.status, `${universe.handle}: ${path}`).toBe(200);
       }
-      const bots = ((await call("GET", `/api/ui/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
+      const bots = ((await call("GET", `/api/ui/universes/${universe.id}/modules/bots`)).json as { bots: BotListItem[] }).bots;
       expect(bots.length, `${universe.handle}: bots`).toBeGreaterThan(0);
       for (const bot of bots) {
         for (const path of ["", "/triggers", "/events", "/state"]) {
-          const result = await call("GET", `/api/ui/universes/${universe.id}/bots/${bot.botId}${path}`);
+          const result = await call("GET", `/api/ui/universes/${universe.id}/modules/bots/${bot.botId}${path}`);
           expect(result.status, `${universe.handle}: bots/${bot.botId}${path}`).toBe(200);
         }
       }
-      const sessions = (await call("GET", `/api/ui/universes/${universe.id}/sessions`)).json as SessionListPage;
+      const sessions = (await call("GET", `/api/ui/universes/${universe.id}/modules/sessions`)).json as SessionListPage;
       expect(sessions.sessions.length, `${universe.handle}: sessions`).toBeGreaterThan(0);
       for (const session of sessions.sessions) {
         for (const path of ["", "/events?limit=200", "/events?direction=backward&limit=200", "/instructions"]) {
@@ -456,7 +456,7 @@ describe("demo router", () => {
     const campaign = "terminal-bench-lightspeed-rerun-hosted-20260904-113000-software-factory";
     const result = await call(
       "GET",
-      `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?metadata=${encodeURIComponent(`campaign=${campaign}`)}`,
+      `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/modules/sessions?metadata=${encodeURIComponent(`campaign=${campaign}`)}`,
     );
     expect(result.status).toBe(200);
     const sessions = (result.json as SessionListPage).sessions;
@@ -566,7 +566,7 @@ describe("demo router", () => {
     onTestFinished(() => { vi.clearAllTimers(); vi.useRealTimers(); });
     const { call } = await boot();
     const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
-    const created = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
+    const created = await call("POST", `/api/ui/universes/${universe!.id}/modules/sessions`, {
       displayName: "smoke",
       profile: { kind: "inline", profile: {} },
     });
@@ -640,7 +640,7 @@ describe("demo router", () => {
     const defaultId = defaultEnvironmentAttachment(profile.config)?.environmentId;
     expect(defaultId).toBeDefined();
 
-    const created = await call("POST", `${base}/sessions`, {
+    const created = await call("POST", `${base}/modules/sessions`, {
       profile: { kind: "named", profileId: "implementer" },
       metadata: { campaign: "explicit-campaign" },
     });
@@ -657,7 +657,7 @@ describe("demo router", () => {
     const config = structuredClone(profile.config);
     const attachments = environmentAttachments(config);
     for (const attachment of attachments) delete attachment.default;
-    const withoutDefault = await call("POST", `${base}/sessions`, {
+    const withoutDefault = await call("POST", `${base}/modules/sessions`, {
       profile: { kind: "inline", profile: { config } },
     });
     expect(withoutDefault.status).toBe(200);
@@ -668,7 +668,7 @@ describe("demo router", () => {
     "rejects a removed creation-time environment field: %j", async (environment) => {
       const { call } = await boot();
       const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
-      const response = await call("POST", `${base}/sessions`, {
+      const response = await call("POST", `${base}/modules/sessions`, {
         profile: { kind: "named", profileId: "implementer" }, environment,
       });
       expect(response.status).toBe(400);
@@ -682,7 +682,7 @@ describe("demo router", () => {
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: unknown };
     const existing = before.find((environment) => environment.environmentId === defaultEnvironmentAttachment(profile.config)?.environmentId)!;
     expect(existing).toBeDefined();
-    const created = await call("POST", `${base}/sessions`, {
+    const created = await call("POST", `${base}/modules/sessions`, {
       profile: { kind: "named", profileId: "implementer" },
     });
     expect(created.status).toBe(200);
@@ -788,7 +788,7 @@ describe("demo router", () => {
     const environments = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     const other = environments.find((environment) => environment.environmentId !== defaultId && environment.status === "ready")!;
     expect(other).toBeDefined();
-    const created = (await call("POST", `${base}/sessions`, { profile: { kind: "named", profileId: "implementer" } })).json as SessionView;
+    const created = (await call("POST", `${base}/modules/sessions`, { profile: { kind: "named", profileId: "implementer" } })).json as SessionView;
     expect(created.activeEnvironmentId).toBe(defaultId);
     expect((await call("POST", `${base}/sessions/${created.id}/environments/${other.environmentId}/activate`, {})).status).toBe(409);
     const config = { ...profile.config, features: { environments: { environments: [{ environmentId: other.environmentId, access: "read", default: true }] } } };
@@ -802,7 +802,7 @@ describe("demo router", () => {
   it("sets and clears session-tree retention through the web routes", async () => {
     const { call } = await boot();
     const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
-    const created = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
+    const created = await call("POST", `/api/ui/universes/${universe!.id}/modules/sessions`, {
       displayName: "retained",
       deleteAfterCloseMs: 86_400_000,
       profile: { kind: "inline", profile: {} },
@@ -822,7 +822,7 @@ describe("demo router", () => {
     expect(cleared.status).toBe(200);
     expect((cleared.json as { retention: { deleteAfterCloseMs: null } }).retention.deleteAfterCloseMs).toBeNull();
 
-    const inherited = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
+    const inherited = await call("POST", `/api/ui/universes/${universe!.id}/modules/sessions`, {
       profile: {
         kind: "inline",
         profile: { retention: { deleteAfterCloseMs: 172_800_000 } },
@@ -830,7 +830,7 @@ describe("demo router", () => {
     });
     expect((inherited.json as SessionView).retention.deleteAfterCloseMs).toBe(172_800_000);
 
-    const overriddenToKeep = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
+    const overriddenToKeep = await call("POST", `/api/ui/universes/${universe!.id}/modules/sessions`, {
       deleteAfterCloseMs: null,
       profile: {
         kind: "inline",
@@ -848,17 +848,17 @@ describe("demo router", () => {
     });
     const { call } = await boot();
     const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
-    const [bot] = ((await call("GET", `/api/ui/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots;
-    const before = (await call("GET", `/api/ui/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
+    const [bot] = ((await call("GET", `/api/ui/universes/${universe!.id}/modules/bots`)).json as { bots: BotListItem[] }).bots;
+    const before = (await call("GET", `/api/ui/universes/${universe!.id}/modules/bots/${bot!.botId}/events`)).json as {
       events: Array<{ seq: number }>;
     };
-    const admitted = await call("POST", `/api/ui/universes/${universe!.id}/bots/${bot!.botId}/events`, {
+    const admitted = await call("POST", `/api/ui/universes/${universe!.id}/modules/bots/${bot!.botId}/events`, {
       event: { kind: "smoke.test", summary: "smoke test event", data: { hello: "world" } },
     });
     expect(admitted.status).toBe(202);
     expect((admitted.json as { duplicate: boolean }).duplicate).toBe(false);
     await vi.runAllTimersAsync();
-    const after = (await call("GET", `/api/ui/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
+    const after = (await call("GET", `/api/ui/universes/${universe!.id}/modules/bots/${bot!.botId}/events`)).json as {
       events: Array<{ seq: number; outcome: string | null }>;
     };
     expect(after.events.length).toBe(before.events.length + 1);
@@ -872,9 +872,9 @@ describe("demo router", () => {
     type Secrets = { ingestPath?: string };
     let webhooks = 0;
     for (const universe of (await call("GET", "/api/ui/universes")).json as Universe[]) {
-      const bots = ((await call("GET", `/api/ui/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
+      const bots = ((await call("GET", `/api/ui/universes/${universe.id}/modules/bots`)).json as { bots: BotListItem[] }).bots;
       for (const bot of bots) {
-        const base = `/api/ui/universes/${universe.id}/bots/${bot.botId}/triggers`;
+        const base = `/api/ui/universes/${universe.id}/modules/bots/${bot.botId}/triggers`;
         const listed = await call("GET", base);
         const text = JSON.stringify(listed.json);
         expect(text, `${bot.botId}: list`).not.toMatch(/ingestPath|\/ingress\/webhooks\//);
@@ -898,7 +898,7 @@ describe("demo router", () => {
       }
     }
     expect(webhooks).toBeGreaterThan(0);
-    expect((await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/bots/no-such-bot/triggers/x/secrets`)).status).toBe(404);
+    expect((await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/modules/bots/no-such-bot/triggers/x/secrets`)).status).toBe(404);
   });
 
   it("answers a trigger write with its secrets and keeps the URL token across edits", async ({ onTestFinished }) => {
@@ -910,9 +910,9 @@ describe("demo router", () => {
     const { call } = await boot();
     type Written = { trigger: Record<string, unknown> & { revision: number }; secrets?: { ingestPath?: string } };
     const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
-    const bot = ((await call("GET", `/api/ui/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots
+    const bot = ((await call("GET", `/api/ui/universes/${universe!.id}/modules/bots`)).json as { bots: BotListItem[] }).bots
       .find((entry) => entry.enabled !== false && entry.closedAtMs == null)!;
-    const base = `/api/ui/universes/${universe!.id}/bots/${bot.botId}/triggers`;
+    const base = `/api/ui/universes/${universe!.id}/modules/bots/${bot.botId}/triggers`;
     const created = await call("PUT", `${base}/secrets-hook`, { trigger: { kind: "webhook" } });
     expect(created.status).toBe(200);
     const first = created.json as Written;

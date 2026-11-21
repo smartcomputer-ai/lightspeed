@@ -78,3 +78,24 @@ it("uses an ordinary host page when a server-enabled module is absent from the b
   await waitForUi(() => expect(container.textContent).toContain("Host workspace page"));
   expect(Page).not.toHaveBeenCalled();
 });
+
+it("omits a module's deep links even when the server enables its universe capability and installation", async () => {
+  client.setQueryData(["universes"], [
+    { id: "alpha", handle: "alpha", organizationId: "first", status: "active", actions: ["read"], features: { bots: true } },
+  ]);
+  client.setQueryData(organizationModulesKey("first"), { modules: [
+    { id: "bots", enabled: true }, { id: sample.id, enabled: true },
+  ] });
+  await mount("/u/alpha/bots/absent/controller");
+  await waitForUi(() => expect(container.textContent).toContain("Sample module page"));
+});
+
+it("skips a module on the landing page and explains its deep link when the universe feature is off", async () => {
+  const gated: UniverseWebModule = { ...sample, id: "gated", requiresFeature: "bots" };
+  client.setQueryData(organizationModulesKey("first"), { modules: [{ id: "gated", enabled: true }] });
+  await mount("/u/alpha", [gated]);
+  await waitForUi(() => expect(container.textContent).toContain("Host workspace page"));
+  await act(async () => { await navigate("/u/alpha/gated"); });
+  expect(container.textContent).toContain("Bots are turned off in this universe");
+  expect(Page).not.toHaveBeenCalled();
+});

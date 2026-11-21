@@ -1,17 +1,11 @@
 import { sessionSteerSchema, type MessageAttachment } from "@lightspeed-ai/platform-shared";
 import type { AttachmentKind } from "@lightspeed-ai/platform-shared";
 import type { RunChoice } from "@/lib/composer-model";
-import {
-  DEFAULT_SESSION_LIST_PREFERENCES,
-  parseSessionListPreferences,
-  parseSessionMetadataFilter,
-  type SessionListPreferences,
-} from "@/lib/sessions/list-preferences";
 import type { DesignOverrides } from "@/devtools/design-tokens";
 import type { ExpiringEntries } from "./browser-storage";
 import { defineSetting, defineSettingFamily, deviceOverride } from "./setting";
 
-/// Every setting the web UI keeps, declared once. Code reads and writes them
+/// Shell and shared UI settings. Native modules declare their own and use them
 /// through the settings store (`settings`, `useSetting`), never through
 /// browser storage. The keys are the ones each setting had before the store,
 /// so nothing stored is lost, and index.html still reads the theme before
@@ -83,7 +77,6 @@ export interface StoredQueuedRecovery {
 
 const EMPTY_RUN_CHOICE: RunChoice = Object.freeze({});
 const EMPTY_LIST: readonly never[] = Object.freeze([]);
-const EMPTY_FILTER: Record<string, string> = Object.freeze({}) as Record<string, string>;
 const EMPTY_DESIGN: DesignOverrides = Object.freeze({ shared: {}, light: {}, dark: {} });
 
 /// Drafts and the choices kept beside them, for sessions since deleted too:
@@ -145,18 +138,6 @@ export const SETTINGS = {
   /// Meta toolbars that expand on hover (page headers) stay expanded, as
   /// tags, until unlocked.
   keepMetaExpanded: display("keepMetaExpanded", false),
-  /// What the session list includes and which metadata columns it shows, per universe.
-  sessionList: defineSettingFamily("sessionList", (universeId: string) => ({
-    key: `lightspeed:sessions:list-preferences:${universeId}`,
-    defaultValue: DEFAULT_SESSION_LIST_PREFERENCES,
-    parse: parseSessionListPreferences,
-  })),
-  /// The session list's metadata filter, per universe; the URL can also set it.
-  sessionMetadataFilter: defineSettingFamily("sessionMetadataFilter", (universeId: string) => ({
-    key: `lightspeed:sessions:metadata-filter:${universeId}`,
-    defaultValue: EMPTY_FILTER,
-    parse: parseSessionMetadataFilter,
-  })),
   /// The handle of the universe opened last, for the landing redirect.
   lastUniverse: defineSetting<string | null>("lastUniverse", {
     key: "lightspeed:last-universe",

@@ -59,7 +59,7 @@ it("returns to the last-visited universe while it is still a membership", async 
   mocks.api.mockResolvedValue([universe("alpha"), universe("beta")]);
   localStorage.setItem("lightspeed:last-universe", "beta");
   await show(false);
-  await waitForUi(() => expect(landed()).toBe("/u/beta/bots"));
+  await waitForUi(() => expect(landed()).toBe("/u/beta"));
 });
 
 it("falls back to the first active membership when the last universe is gone or not joined", async () => {

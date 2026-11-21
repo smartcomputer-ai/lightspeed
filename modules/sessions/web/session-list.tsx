@@ -1,40 +1,15 @@
-import { useWatchConnected } from "@/lib/universe-watch";
-import { SessionDot } from "@/components/activity-dot";
-import { requestRowMenu } from "@/lib/row-menu";
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { AddIcon, DeleteIcon, FilterIcon, LoadingIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon } from "@/icons";
-import { api, type SessionListPage, type Environment, type SessionSummary, type SessionView } from "@/api";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
+import { activeEnvironmentItems, sessionCollections, sessionMetaItems, sessionName } from "@lightspeed-ai/platform-web/modules/conversations";
+import { rosterQuery } from "./roster-query";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { activeEnvironmentItems } from "@/components/session/session-resources";
-import { openEnvironmentsQuery } from "@/lib/environments";
-import { sessionMetaItems, sessionName } from "@/components/session/session-meta";
-import { useCreateParam } from "@/lib/create-param";
-import { useActionPermissions, useSessionClosePermission, useSessionDeletePermission } from "@/lib/permissions";
-import { cn } from "@/lib/utils";
+  useWatchConnected,
+  useCreateParam,
+  useActionPermissions,
+  useSessionClosePermission,
+  useSessionDeletePermission,
+} from "@lightspeed-ai/platform-web/modules";
+import { SessionDot } from "@lightspeed-ai/platform-web/modules/ui/status";
 import {
-  metadataFilterFromSearchParams,
-  parseMetadataPair,
-  hiddenSessionsNote,
-  searchParamsWithMetadataFilter,
-} from "@/lib/sessions/list-preferences";
-import { SETTINGS, settings, useSetting } from "@/lib/settings";
-import {
+  requestRowMenu,
   LIST_CHECKBOX_INSET_CLASS,
   ListPaneBody,
   ListPaneFooter,
@@ -47,7 +22,38 @@ import {
   type ListRowExpander,
   type ListRowTree,
   type ListSelectionAction,
-} from "@/components/list-pane";
+} from "@lightspeed-ai/platform-web/modules/ui/lists";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { AddIcon, DeleteIcon, FilterIcon, LoadingIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon } from "@lightspeed-ai/platform-web/modules/ui/icons";
+import { api, type SessionListPage, type Environment, type SessionSummary, type SessionView } from "@lightspeed-ai/platform-web/modules/client";
+import { Button } from "@lightspeed-ai/platform-web/modules/ui/button";
+import { Badge } from "@lightspeed-ai/platform-web/modules/ui/badge";
+import { Checkbox } from "@lightspeed-ai/platform-web/modules/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@lightspeed-ai/platform-web/modules/ui/alert-dialog";
+import { Input } from "@lightspeed-ai/platform-web/modules/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@lightspeed-ai/platform-web/modules/ui/popover";
+import { openEnvironmentsQuery } from "@lightspeed-ai/platform-web/modules/environments";
+import { cn } from "@lightspeed-ai/platform-web/modules/ui";
+import {
+  sessionListPreferences,
+  sessionMetadataFilter,
+  metadataFilterFromSearchParams,
+  parseMetadataPair,
+  hiddenSessionsNote,
+  searchParamsWithMetadataFilter,
+} from "./list-preferences";
+import { settings, useSetting } from "@lightspeed-ai/platform-web/modules/settings";
 import { NewSessionDialog } from "./new-session-dialog";
 
 const SESSION_LIST_REFRESH_MS = 5_000;
@@ -67,7 +73,7 @@ export function SessionList({
   const [filterDraft, setFilterDraft] = useState("");
   const [metadataKeyDraft, setMetadataKeyDraft] = useState("");
   const filterEntries = Object.entries(metadataFilter);
-  const [preferences, setPreferences] = useSetting(SETTINGS.sessionList(universeId));
+  const [preferences, setPreferences] = useSetting(sessionListPreferences(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
   const watchConnected = useWatchConnected(universeId);
   // One read for the whole list: each row's environment by name and status.
@@ -80,11 +86,11 @@ export function SessionList({
     listQuery.append("metadata", value ? `${key}=${value}` : key);
   }
   const pages = useInfiniteQuery({
-    queryKey: ["sessions", universeId, metadataFilter, { showClosed, showControlledSessions, showSubagents }],
+    ...rosterQuery(universeId, metadataFilter, { showClosed, showControlledSessions, showSubagents }),
     queryFn: ({ pageParam }) =>
       api<SessionListPage>(
         "GET",
-        `/api/ui/universes/${universeId}/sessions?${listQuery.toString()}${
+        `/api/ui/universes/${universeId}/modules/sessions?${listQuery.toString()}${
           pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""
         }`,
     ),
@@ -134,7 +140,7 @@ export function SessionList({
         rememberMetadataFilter(universeId, metadataFilter);
         return;
       }
-      const stored = settings.get(SETTINGS.sessionMetadataFilter(universeId));
+      const stored = settings.get(sessionMetadataFilter(universeId));
       if (Object.keys(stored).length > 0) {
         setSearchParams(searchParamsWithMetadataFilter(searchParams, stored), { replace: true });
       }
@@ -238,7 +244,7 @@ export function SessionList({
     },
     onError: (error) => setBulkNotice(error.message),
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+      await queryClient.invalidateQueries(sessionCollections(universeId));
     },
   });
   // What can be done with the selection: the bar's buttons and a selected row's right-click menu.
@@ -574,7 +580,7 @@ async function runBatched<T, R>(
 /// Keeps the list's metadata filter for the universe's next visit. The URL
 /// holds the filter while the list is open.
 function rememberMetadataFilter(universeId: string, filter: Record<string, string>) {
-  settings.set(SETTINGS.sessionMetadataFilter(universeId), filter).catch(() => {
+  settings.set(sessionMetadataFilter(universeId), filter).catch(() => {
     // URL-backed filtering still works when browser storage does not.
   });
 }

@@ -42,11 +42,11 @@ beforeEach(() => {
   mocks.role = "contributor";
   defaults = { revision: 1, agentRun: { providerId: "openai", apiKind: "openai:responses", model: "gpt-6-sol" }, speechToText: null };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (path.includes("/sessions?")) return { sessions };
+    if (path.includes("/modules/sessions?")) return { sessions };
     if (path.endsWith("/models/defaults")) return defaults;
     if (path.endsWith("/profiles")) return [{ profileId: "custom", displayName: "Custom model" }];
     if (path.endsWith("/profiles/custom")) return { profileId: "custom", config: { model: { providerId: "anthropic", apiKind: "anthropic:messages", model: "profile-model" } } };
-    if (method === "POST" && path.endsWith("/sessions")) return { id: "created" };
+    if (method === "POST" && path.endsWith("/modules/sessions")) return { id: "created" };
     throw new Error(`Unexpected request: ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -76,7 +76,7 @@ it("keeps the session list readable without showing create or bulk controls to a
 });
 it("leaves managed work to its manager unless asked", async () => {
   await show();
-  const listed = mocks.api.mock.calls.map(([, path]) => String(path)).find((path) => path.includes("/sessions?"));
+  const listed = mocks.api.mock.calls.map(([, path]) => String(path)).find((path) => path.includes("/modules/sessions?"));
   expect(listed).toContain("lifecycleControlled=false");
 });
 it("marks shared work in the list and leaves private work unmarked", async () => {
@@ -152,7 +152,7 @@ it("offers operators bulk close for their own and shared sessions", async () => 
 it("offers operators bulk deletion only for closed shared sessions, including managed history", async () => {
   mocks.role = "operator";
   mocks.api.mockImplementation(async (_method: string, path: string) => {
-    if (path.includes("/sessions?")) return { sessions: sessions.map((session) => ({ ...session, lifecycleStatus: "closed", lifecycleControlled: true })) };
+    if (path.includes("/modules/sessions?")) return { sessions: sessions.map((session) => ({ ...session, lifecycleStatus: "closed", lifecycleControlled: true })) };
     return [];
   });
   await show();
