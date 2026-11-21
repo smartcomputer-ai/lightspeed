@@ -359,7 +359,7 @@
     --content-transition-duration: 200ms;
     /* Scales every icon (phosphor and the app's own marks) from the
        size its classes give it. */
-    --icon-scale: 0.9;
+    --icon-scale: 1.0;
 }
 
 .dark {

@@ -89,6 +89,11 @@ export function shellTitleTrail(pathname: string, universeName: string | undefin
   return universeName ? [...section, universeName] : section;
 }
 
+/// The collapsed menu shows its link icons larger, growing with the fold;
+/// the button's padding shrinks to match so they stay centred in it.
+const NAV_ICON_CLASS =
+  "[&_svg]:transition-[width,height] [&_svg]:duration-(--layout-transition-duration) [&_svg]:ease-linear group-data-[collapsible=icon]:p-1.5! group-data-[collapsible=icon]:[&_svg]:size-5";
+
 /// Active on the page itself and on detail views nested under it.
 function NavItem({
   to,
@@ -109,7 +114,7 @@ function NavItem({
         tooltip={label}
         // Dimmer at rest like list titles; hover, press and the active link
         // brighten through the button's own accent styles.
-        className="text-(--item-foreground-rest) focus-visible:text-sidebar-accent-foreground"
+        className={cn(NAV_ICON_CLASS, "text-(--item-foreground-rest) focus-visible:text-sidebar-accent-foreground")}
       >
         <Icon />
         <span>{label}</span>
@@ -271,6 +276,7 @@ export function AppShell({ user }: { user: SessionUser }) {
                         onClick={() => scrollToSection(section.id)}
                         isActive={location.hash === `#${section.id}`}
                         tooltip={section.label}
+                        className={NAV_ICON_CLASS}
                       >
                         <section.icon />
                         <span>{section.label}</span>
