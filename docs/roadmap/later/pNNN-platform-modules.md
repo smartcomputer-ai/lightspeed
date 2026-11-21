@@ -33,9 +33,9 @@ flowchart TB
 
 ## What stays in core
 
-The **runtime** owns sessions, runs, durable state, and tool execution. Modules use its published session API and managed-workflow and workflow-tool protocols. Runtime capabilities such as VFS and web search can have deployment limits that a universe or session may narrow. The runtime enforces those limits. [Session and workflow contracts](../../documentation/integrating-and-extending/workflow-tools.md)
+The **Core runtime** owns sessions, runs, durable state, and tool execution. It should build and run with the entire `modules/` directory omitted. Modules are clients of its published API, event stream, and workflow protocols. Core can bind a session to a controller and notify it when a run finishes without knowing which product feature implements that controller. Core also enforces deployment limits on capabilities such as VFS and web search. A universe or session can narrow those limits further. [Session and workflow contracts](../../documentation/integrating-and-extending/workflow-tools.md)
 
-**Platform** owns identity, organizations, universes, permissions, module availability, and the public API entry point. Its web shell provides navigation and a place to mount pages. The shell and gateway serve every organization in the deployment.
+**Platform** owns identity, organizations, universes, permissions, module availability, and the shared shell and gateway. Browsers, CLI clients, and module services normally send HTTP requests through the gateway. Module services use credentials scoped to the installation and universe. A trusted worker participating in an admitted workflow can exchange protocol signals directly over Temporal. The operator decides separately which UI packages to bundle and which workers may access Temporal. [Workflow transport and trust](../../documentation/integrating-and-extending/workflow-tools.md#preserve-integration-and-delivery-semantics)
 
 ## How Sessions, Workspaces, and Bots use the same module system
 
@@ -43,7 +43,7 @@ The **runtime** owns sessions, runs, durable state, and tool execution. Modules 
 | --- | --- | --- |
 | **Sessions** | Session list, transcript, and run controls. | The pages use the existing session API through Platform. Other clients can still start sessions when the distribution omits these pages. |
 | **Workspaces** | The file browser and editor for VFS. It can also contribute a handler to the Platform backend if an editor action needs server-side logic. | Platform authorizes the request. The handler can compose Core workspace operations, and Core owns the snapshots and blobs. |
-| **Bots** | Bot pages, public operations, records and migrations, and a Temporal worker for controllers and triggers. | Platform authorizes a bot operation and forwards it to the Bots API. The bot worker drives sessions through Core's managed-session protocol. |
+| **Bots** | Bot pages, public operations, records and migrations, and a Temporal worker for controllers and triggers. | Platform forwards authorized bot operations to the Bots API. The worker calls Core through the gateway and receives workflow notifications over Temporal. |
 
 ```mermaid
 flowchart TB
@@ -64,7 +64,8 @@ flowchart TB
         bots -->|signals via Temporal| worker["Bot worker"]
         worker --> tables
     end
-    worker -->|session operations as controller| runtime
+    worker -->|scoped HTTP session and run requests| gate
+    runtime -.->|completion signal via Temporal| worker
 ```
 
 An organization can disable the Workspaces module while its agents still use VFS. To disable VFS execution for a deployment, the operator sets a Core capability limit. Enabling Bots for a second organization lets its authorized members use the Bots service and worker already running in the deployment.
@@ -73,11 +74,14 @@ An organization can disable the Workspaces module while its agents still use VFS
 
 Suppose Acme enables Bots for its support universe. A Contributor opens **Bots → Support triage → Activity** and sends the bot an event. The page, the public bot operations, and the process that does the work all belong to the Bots team. They ship in different places.
 
-The **Bots UI package** contributes the `/u/:handle/bots` routes and their navigation entry. The **Bots API service** implements operations such as `bots/events/admit`, available to the browser and CLI through the same gateway. A UI-only endpoint can compose data for a screen under the same authorization rules. The **Bots worker** runs the controller and trigger workflows. A change to the Activity page ships with the shell. A compatible fix to how the worker handles a trigger can ship with the worker alone.
+The **Bots UI package** contributes the `/u/:handle/bots` routes and their navigation entry. Sending an event is a domain operation, so the Activity page, CLI, and SDK use the same supported `bots/events/admit` API. A UI-specific endpoint may assemble the activity history and session summaries for that page using the caller's permissions on each resource. The **Bots worker** runs the controller and trigger workflows. An Activity page change ships with the shell. A compatible trigger fix can ship with the worker alone.
 
 Bots owns its records, triggers, events, and database migrations. It could use a separate database or a schema in the shared PostgreSQL instance, where the module's database role determines which tables it can access. A deployment that omits the entire module should still be able to run sessions and collect unused blobs. Today, core session access queries and blob collection both reference bot tables. Their replacements must preserve session visibility and retain blobs that bot events still use. [Session access](../../../crates/store-pg/src/access.rs) · [Blob collection](../../../crates/store-pg/src/cas_sweep.rs)
 
-A deployment operator trusts the native code they install. Platform still checks that Acme's installation covers the support universe, that the Contributor holds `invokeBot` there, and that any API key permits the call. The worker subsequently acts as the support bot. It calls the session runtime directly under that controller's authority. Today's worker supplies that identity in-process. Across a process boundary the call would carry the same authority over an authenticated connection. [Bot permissions](../../../platform/backend/src/routes/method-actions.ts) · [Bot worker](../../../crates/temporal-runtime/src/worker/bots.rs) · [Controller authority](../../../crates/temporal-runtime/src/gateway/service/controller.rs)
+When the Contributor sends an event, the gateway checks that Bots is enabled in the support universe, that the caller has `invokeBot`, and that their API key permits the operation. The worker then acts under two scopes of authority. [Bot permissions](../../../platform/backend/src/routes/method-actions.ts)
+
+- **Installation.** The worker authenticates as Acme's Bots service. The gateway checks the target universe and the installation's grants on each HTTP request.
+- **Controller.** Support triage starts a managed session. Core binds the session to its authenticated controller and checks that binding on later control requests. Release Assistant, another bot in the same installation and universe, may be allowed to read the conversation but cannot control it. Today's worker supplies controller identity in-process. The new boundary must preserve that authority across an authenticated call. [Bot worker](../../../crates/temporal-runtime/src/worker/bots.rs) · [Controller authority](../../../crates/temporal-runtime/src/gateway/service/controller.rs)
 
 ```mermaid
 sequenceDiagram
@@ -90,16 +94,24 @@ sequenceDiagram
     P->>B: Admit event for this caller and universe
     B->>B: Record the event in the Bots database
     B->>W: Signal the support bot's controller via Temporal
-    W->>R: Start or reuse the managed session
-    W->>R: Submit a run and request notification
+    W->>P: Start or reuse session as Support triage
+    P->>R: Forward authorized request with controller identity
+    R->>R: Establish or verify the session's controller binding
+    W->>P: Submit run and request notification
+    P->>R: Forward for controller check and run admission
     R-->>W: Run completed (Temporal signal)
+    W->>W: Persist outcome for the original event in Bot tables
 ```
 
-## Open question about shared design and product language
+### What the Bots example must demonstrate
 
-When a module introduces a concept that users encounter elsewhere in Lightspeed, who owns its design and wording? For example, someone following an event from Bots into a session should be able to recognize which bot started it. The Bots activity page and the session header might both show “Started by Support triage” with a link to the bot. Who owns that interaction, its visual treatment, and the label and its translations?
+Before committing to a TypeScript rewrite, exercise one event end to end using only published contracts. Restart the worker after Core accepts the run but before Bots records that acceptance. On retry, the worker must recover the same session and run, and record the outcome once even if the completion notification arrives twice. Then have Release Assistant try to control that session using its own controller identity. Core must refuse the request even though the installation grant covers both bots.
 
-Should the Bots team implement it in the module and contribute it wherever the shell supports it? Should the shared design system and shell own a general way to show who started a session, with Bots supplying the name and destination? If a pattern starts in a module, when should the team bring it upstream for other features to use? The design needs to work both for someone moving between Bots and Sessions and for a deployment that ships Sessions on its own.
+## Shared design and product language
+
+Use a shared session view for the transcript, composer, and session attribution. Bots already embeds `SessionDetail` from the Sessions page. Extracting that view lets both modules use it independently. For “Started by Support triage,” the view owns the wording, translations, placement, and fallback. Bots supplies the display name and, when the caller may open the bot, a link. If Bots is disabled later, the session still shows its recorded attribution as plain text. [Bot chat](../../../platform/web/src/components/bot/chat.tsx)
+
+The broader question remains open. When a module introduces a new visual pattern or term, what would justify moving it into the shared design system? For general-purpose UI slots or transcript renderers, identify a concrete feature that needs an extension point before defining its interface.
 
 ## How configuration could read
 
@@ -138,11 +150,15 @@ modules:
   bots: { enabled: true, universes: [support] }
 ```
 
-Today, a universe Owner switches Bots on, and switching it off governs member access while scheduled work can continue. Adopting organization installations should preserve those existing universe choices. Suspending automation and deleting a universe's bot data also need explicit lifecycle behavior. [Current Bots switch and lifecycle](../../documentation/using-lightspeed/bots-and-triggers.md)
+The organization installation governs who can use Bots and in which universes. It also gives the operator a scope for lifecycle decisions.
+
+- **Access.** Removing a universe from the installation closes access to the module there. Today, turning off Bots in a universe gates member requests while scheduled work can continue. Existing universe choices should carry over.
+- **Suspension.** Define what happens to the next trigger, queued events, and a run already in progress. Today's per-bot **Pause** stops schedule and poll production and pauses delivery while an active run continues. Installation-wide suspension needs an explicit policy for each of those cases.
+- **Deletion.** Define when Bots removes its triggers, events, and records, and how Core's session retention policy applies to conversations that outlive the bot. [Current Bots lifecycle](../../documentation/using-lightspeed/bots-and-triggers.md#pause-update-reset-or-close)
 
 ## Proposed project structure
 
-Lightspeed stays in one repository. `core/` builds the Rust `lightspeed-runtime` executable and `platform/` contains the shared web shell and API gateway. Product features live alongside them under `modules/`. Each team keeps its feature's code together and can build and release its services and workers independently.
+Lightspeed stays in one repository. `core/` builds the Rust `lightspeed-runtime` executable, `platform/` contains the reusable hosts, and `modules/` keeps each feature's code together. `distributions/standard/` assembles the shared deployment used by many organizations. A compatible module service or worker can ship independently.
 
 ```text
 core/
@@ -153,10 +169,9 @@ core/
     …                        Session engine, workflows, storage, runtime adapters
 
 platform/
-  web/                       Shared shell and standard frontend assembly
-    src/plugins.ts           Registers the distribution's bundled pages and navigation
-  backend/                   Authentication, permissions, and API gateway
-    src/plugin-routes.ts     Registers module handlers and service routes with the gateway
+  web/                       Shared shell, router, and navigation registration
+  session-ui/                Shared session view used by Sessions and Bots
+  backend/                   Authentication, permissions, gateway, and route registration
   db/                        Platform-owned records and migrations
   shared/                    Platform API contract and module registration types
 
@@ -173,6 +188,12 @@ modules/
     worker/                  Temporal workflows and activities
     db/                      Bot tables and migrations
 
+distributions/
+  standard/
+    modules.yaml             Native modules included in the shared distribution
+    web.ts                   Supplies selected page and navigation exports to the shell
+    api.ts                   Wires selected operations to handlers or service routes
+
 clients/
   cli/                       Lightspeed command-line client
   python/                    Public Python SDK
@@ -185,10 +206,10 @@ environments/                Environment daemon and standalone providers
 
 ### Where modules are registered
 
-Only the distribution's web and API entry points import concrete module contributions. Modules depend on the registration types in `platform/shared/`. The reusable shell and gateway work against those same types.
+Only the distribution's assembly code depends on both the hosts and the concrete modules. Module authors depend on the registration interfaces in `platform/shared/`. The shell and gateway accept contributions through those interfaces.
 
-- **Frontend.** `platform/web/src/plugins.ts` imports the selected UI contributions, such as the pages exported by `modules/bots/web/`. The shell builds its router and navigation from these exports. At sign-in or when switching organizations, it shows entries according to the organization's installations and the caller's permissions.
-- **API.** At startup, `platform/backend/src/plugin-routes.ts` registers the operations contributed by selected modules under `/api/v1`. An operation can map to a handler hosted in Platform (Workspaces) or to a configured service endpoint (Bots). On each request, the gateway checks the module installation, target scope, and caller's permissions before dispatch. The Sessions pages call existing permissioned Core routes through the gateway and need no API registration of their own.
+- **Frontend.** `distributions/standard/web.ts` supplies the selected UI contributions, such as the pages exported by `modules/bots/web/`. The shell builds its router and navigation from these exports. At sign-in or when switching organizations, it shows entries according to the organization's installations and the caller's permissions.
+- **API.** `distributions/standard/api.ts` supplies the selected operation descriptors and their handlers or service routes. At startup, the gateway mounts the public operations under `/api/v1`. An editor operation can run in a Platform-hosted handler, while a bot operation goes to the configured Bots service. The gateway checks installation, scope, and permissions before dispatching module operations. The Sessions pages use existing Core routes through the gateway and need no API registration of their own.
 
 The web and API entries for a feature share its module ID. The deployment starts the Bots worker separately. Temporal workflows, task queues, and database migrations belong to Bots and run under its deployment lifecycle.
 
@@ -203,6 +224,6 @@ flowchart LR
     sdk --> platform
 ```
 
-Application developers install `@lightspeed-ai/sdk` and point it at Platform. The Platform backend uses the smaller Core client with its private runtime endpoint and credential. A module worker can use the Core API through bindings for its own language.
+Application developers install `@lightspeed-ai/sdk` and point it at Platform. Module workers can use bindings for their own language with the same gateway and their scoped credentials. The Platform backend uses the smaller Core client to forward authorized calls to its private runtime endpoint.
 
 Core has its own build and CI job. A change to a Bots page runs checks for the module and shell and ships with the shared frontend. A worker-only fix can ship with the worker. A Core API change also triggers checks for the clients and modules that consume the affected contract.
