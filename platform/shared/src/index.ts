@@ -193,6 +193,7 @@ export {
 
 export * from "./platform-api.js";
 export * from "./modules.js";
+export * from "./module-operations.js";
 export * from "./credential-api.js";
 export * from "./session-api.js";
 export * from "./audit-log.js";

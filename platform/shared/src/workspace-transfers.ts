@@ -232,7 +232,7 @@ export function moveWorkspaceEntry<T extends TransferManifest>(
       400,
     );
   const manifest = structuredClone(source);
-  const entry = findEntry(manifest, path);
+  const entry = findWorkspaceEntry(manifest, path);
   if (path === destination) return manifest;
   if (destination.startsWith(`${path}/`))
     throw new WorkspaceTransferError(
@@ -241,7 +241,7 @@ export function moveWorkspaceEntry<T extends TransferManifest>(
     );
   const destinationParts = destination.split("/");
   const name = destinationParts.pop()!;
-  const destinationParent = findEntry(manifest, destinationParts.join("/"));
+  const destinationParent = findWorkspaceEntry(manifest, destinationParts.join("/"));
   if (destinationParent.kind !== "directory")
     throw new WorkspaceTransferError("The destination must be a folder.", 409);
   if (own(destinationParent.entries, name))
@@ -264,7 +264,7 @@ export function removeWorkspaceEntry<T extends TransferManifest>(
   path: string,
 ): T {
   const manifest = structuredClone(source);
-  const entry = findEntry(manifest, path);
+  const entry = findWorkspaceEntry(manifest, path);
   if (!path)
     throw new WorkspaceTransferError("Select a file or folder to delete", 400);
   const subtract = (entry: TransferEntry) => {
@@ -358,7 +358,7 @@ export function prepareWorkspaceUpload<T extends TransferManifest>(
   return { manifest, files };
 }
 
-function findEntry(manifest: TransferManifest, path: string): TransferEntry {
+export function findWorkspaceEntry(manifest: TransferManifest, path: string): TransferEntry {
   if (!path) return { kind: "directory", entries: manifest.root.entries };
   if (!validWorkspaceTransferPath(path))
     throw new WorkspaceTransferError("Invalid relative path", 400);
@@ -382,7 +382,7 @@ export function workspaceDownload(
   workspaceName: string,
   readBlob: (ref: string) => Promise<Uint8Array<ArrayBuffer>>,
 ): Promise<Response> {
-  const entry = findEntry(manifest, path);
+  const entry = findWorkspaceEntry(manifest, path);
   const name = path ? path.split("/").at(-1)! : workspaceName;
   const filename = entry.kind === "file" ? name : `${name}.zip`;
   const headers = {

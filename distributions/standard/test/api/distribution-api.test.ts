@@ -14,5 +14,5 @@ vi.mock("../../../../modules/bots/api/index.ts", () => {
 it("assembles the other API contributions without loading Bots", () => {
   expect(standardApiModules.find(module => module.id === "bots")).toBeUndefined();
   expect(standardApiModules.find(module => module.id === "sessions")?.routes).toBeTypeOf("function");
-  expect(standardApiModules.find(module => module.id === "artifacts")?.routes).toBeUndefined();
+  expect(standardApiModules.find(module => module.id === "artifacts")?.routes).toBeTypeOf("function");
 });

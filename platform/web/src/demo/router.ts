@@ -1,10 +1,10 @@
-import { auditQuerySchema, type AuditPage, type PlatformModule } from "@lightspeed-ai/platform-shared";
+import { auditQuerySchema, bindModuleOperations, modulePermissions, type AuditPage, type ModuleOperation, type PlatformModule } from "@lightspeed-ai/platform-shared";
 import { demoDeploymentAllows, demoUniverseActions } from "./access";
 import { organizationRoutes } from "./routes/organizations";
 import { watchRoutes } from "./routes/watch";
 /// The in-browser stand-in for the platform backend: one Hono app the fetch
 /// shim hands every same-origin `/api/*` request to.
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import type { DemoStore } from "./store";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -90,18 +90,32 @@ export function createDemoRouter(store: DemoStore, modules: readonly DemoModule[
   for (const module of modules) {
     if (!module.routes) continue;
     const scoped = new Hono();
-    scoped.use("*", async (c, next) => {
+    const admit = (operation?: ModuleOperation): MiddlewareHandler => async (c, next) => {
       const state = store.universe(c.req.param("id"));
-      if (!state || !demoUniverseActions(store, state).has("read")) return c.json({ error: "not found" }, 404);
+      if (!state) return c.json({ error: "not found" }, 404);
+      const actions = demoUniverseActions(store, state);
+      if (!actions.has("read")) return c.json({ error: "not found" }, 404);
       const enabled = store.organizationModules.get(state.universe.organizationId!)?.get(module.id) ?? module.defaultEnabled;
       if (!enabled) return c.json({ error: "module unavailable" }, 404);
       if (module.requiresFeature && !state.universe.features[module.requiresFeature]) {
         return c.json({ error: `${module.name} are turned off in this universe` }, 403);
       }
+      if (operation && !modulePermissions(module, actions).has(operation.permission)) {
+        return c.json({ error: `Permission required: ${module.id}/${operation.permission}` }, 403);
+      }
       await next();
-    });
-    scoped.route("/", module.routes(store));
-    api.route(`/universes/:id/modules/${module.id}`, scoped);
+    };
+    const router = new Hono().route("/", module.routes(store));
+    if (module.operations) {
+      for (const { operation, routes } of bindModuleOperations(module.id, module.operations, router.routes)) {
+        scoped.on(operation.method, operation.path, admit(operation), ...routes.map(route => route.handler));
+      }
+      app.route(`/api/v1/universes/:id/modules/${module.id}`, scoped);
+    } else {
+      scoped.use("*", admit());
+      scoped.route("/", router);
+      api.route(`/universes/:id/modules/${module.id}`, scoped);
+    }
   }
   app.route("/api/ui", api);
   app.route("/api/v1/platform", organizationRoutes(store, modules));

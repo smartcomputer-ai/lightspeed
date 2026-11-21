@@ -25,6 +25,7 @@
     "platform/db/drizzle.config.ts",
     "platform/shared/src/**/*.ts",
     "modules/*/api/**/*.ts",
+    "modules/*/db/**/*.ts",
     "distributions/standard/server.ts",
     "distributions/standard/test/api/**/*.ts",
     "platform/backend/src/**/*.ts",

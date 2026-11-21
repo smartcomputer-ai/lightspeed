@@ -41,26 +41,33 @@ export function getAuth(c: Context<{ Variables: ApiVariables }>): AuthContext {
   return auth;
 }
 
-/** Credential ceilings always intersect current principal authority, including administrators. */
-export function enforceRestrictions(auth: AuthContext, target: {
+interface CredentialTarget {
   operation: string; organizationId?: string; universeId?: string; write?: boolean; createUniverse?: boolean;
-}): void {
+}
+
+/** The same policy drives both server enforcement and caller-visible capabilities. */
+export function credentialRefusal(auth: AuthContext, target: CredentialTarget): string | undefined {
   const limits = auth.credential.restrictions;
   if (limits.operations && !limits.operations.includes(target.operation)) {
-    throw new AuthorizationRefusal(403, "Credential does not permit this operation");
+    return "Credential does not permit this operation";
   }
-  if (target.write && limits.universeIds && !target.universeId) throw new AuthorizationRefusal(403, "Universe-limited credentials cannot perform organization-wide operations");
-  if (target.write && limits.readOnly) throw new AuthorizationRefusal(403, "Credential is read-only");
+  if (target.write && limits.universeIds && !target.universeId) return "Universe-limited credentials cannot perform organization-wide operations";
+  if (target.write && limits.readOnly) return "Credential is read-only";
   if (target.organizationId && ((limits.organizationIds && !limits.organizationIds.includes(target.organizationId)) ||
       (auth.principal.kind === "serviceUser" && auth.principal.organizationId !== target.organizationId))) {
-    throw new AuthorizationRefusal(403, "Credential does not permit this organization");
+    return "Credential does not permit this organization";
   }
   if (target.universeId && limits.universeIds && !limits.universeIds.includes(target.universeId)) {
-    throw new AuthorizationRefusal(403, "Credential does not permit this universe");
+    return "Credential does not permit this universe";
   }
   if (target.createUniverse && (limits.allowUniverseCreation === false || limits.universeIds !== undefined)) {
-    throw new AuthorizationRefusal(403, "Credential does not permit universe creation");
+    return "Credential does not permit universe creation";
   }
+}
+
+export function enforceRestrictions(auth: AuthContext, target: CredentialTarget): void {
+  const reason = credentialRefusal(auth, target);
+  if (reason) throw new AuthorizationRefusal(403, reason);
 }
 
 /** Restriction-bearing credentials cannot create, retarget, or widen credentials. */

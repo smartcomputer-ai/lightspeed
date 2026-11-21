@@ -1,4 +1,5 @@
 import type { ApiModule } from "@lightspeed-ai/platform-backend/modules";
+import { fileURLToPath } from "node:url";
 import { withModuleRoutes } from "@lightspeed-ai/platform-shared";
 import { buildApp, type AppContext } from "@lightspeed-ai/platform-backend/server";
 import { standardModules } from "./catalog.js";
@@ -12,7 +13,11 @@ for (const { id, api } of standardModules) {
   factories[id] = createRoutes;
 }
 
-export const standardApiModules = withModuleRoutes(standardModules, factories);
+const modules = standardModules.map(({ migrations, ...module }) => ({
+  ...module,
+  migrationsFolder: migrations && fileURLToPath(new URL(migrations, import.meta.url)),
+}));
+export const standardApiModules = withModuleRoutes(modules, factories);
 
 export function buildStandardApi(context: AppContext) {
   return buildApp(context, standardApiModules);

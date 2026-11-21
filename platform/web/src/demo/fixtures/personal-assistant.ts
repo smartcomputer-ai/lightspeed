@@ -631,7 +631,6 @@ MRR €398k, net revenue churn 1.4%, pipeline coverage 2.9× for Q4.
 `;
 
 const BRIEF_FILES: Record<string, string> = {
-  "artifacts/weekly-review.md": BRIEF_WEEK_REVIEW,
   [`${TODAY}-morning.md`]: BRIEF_MORNING,
   [`${YESTERDAY}-evening.md`]: BRIEF_EVENING,
   [REVIEW_FILE]: BRIEF_WEEK_REVIEW,

@@ -7,8 +7,10 @@ import { startDeclaredUniverseSync } from "./declared-universes.js";
 import { seedDevelopment } from "./development-seed.js";
 import { loadEnv } from "./env.js";
 import type { ApiModule } from "./module-api.js";
+import { migrateModuleDatabases } from "./module-migrations.js";
 
 export { buildApp };
+export { migrateModuleDatabases };
 export type { AppContext } from "./context.js";
 
 /** Start the Platform with the private routes chosen by the distribution. */
@@ -18,6 +20,7 @@ export async function startPlatformServer(modules: readonly ApiModule[]): Promis
 
   console.log("[main] applying migrations…");
   await migrateDb({ db, pool });
+  await migrateModuleDatabases(db, modules);
   await bootstrapAdmin(db, env);
   await seedDevelopment(db, env);
 

@@ -13,6 +13,10 @@ const artifactsModule: UniverseWebModule = {
       path: "",
       Page: lazy(() => import("./ArtifactsPage").then(({ ArtifactsPage }) => ({ default: ArtifactsPage }))),
     },
+    {
+      path: ":artifactId",
+      Page: lazy(() => import("./ArtifactPage").then(({ ArtifactPage }) => ({ default: ArtifactPage }))),
+    },
   ],
   workspaceAction: {
     label: "View artifacts",

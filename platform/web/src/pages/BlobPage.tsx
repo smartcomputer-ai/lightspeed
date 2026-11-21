@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CopiedIcon, CopyLinkIcon, DownloadIcon, UnknownFileIcon } from "@/icons";
+import { CopiedIcon, CopyLinkIcon } from "@/icons";
 import { validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
 import { api, type SessionView, type WorkspaceTree, type VfsTreeEntry } from "@/api";
 import { LoadingNote, UniverseNotFound } from "@/components/page";
 import { ReadError } from "@/components/read-error";
 import { Button } from "@/components/ui/button";
 import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
-import { MarkdownContent } from "@/components/markdown-content";
+import { BlobPreview, BlobDownloadLink } from "@/components/blob-preview";
 import { formatBytes } from "@/lib/format-bytes";
 import { blobView, type BlobView } from "@/lib/blob-view";
 import { useActionPermissions } from "@/lib/permissions";
@@ -71,12 +71,12 @@ function BlobDetail({ universeId, handle, digest }: { universeId: string; handle
         </div>
         <CopyLink />
         {view?.kind === "text" && <MarkdownViewToggle preview={preview} onPreviewChange={setPreview} />}
-        {bytes && view && <DownloadLink bytes={bytes} name={name ?? `${digest.slice(0, 12)}${extension(view)}`} />}
+        {bytes && view && <BlobDownloadLink bytes={bytes} name={name ?? `${digest.slice(0, 12)}${extension(view)}`} />}
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         {blob.isLoading && <LoadingNote />}
         {blob.error && <ReadError error={blob.error} className="p-6" />}
-        {bytes && view && <BlobBody bytes={bytes} view={view} name={title} preview={preview} />}
+        {bytes && view && <BlobPreview bytes={bytes} view={view} name={title} preview={preview} />}
       </div>
     </div>
   );
@@ -137,48 +137,6 @@ function LinkedFromWorkspace({ universeId, handle, workspaceId, path }: {
   );
 }
 
-function BlobBody({ bytes, view, name, preview }: { bytes: Uint8Array; view: BlobView; name: string; preview: boolean }) {
-  const url = useObjectUrl(bytes, view.kind === "image" || view.kind === "pdf" ? view.mime : null);
-  switch (view.kind) {
-    case "image":
-      return (
-        <div className="flex justify-center p-6">
-          {url && <img src={url} alt={name} className="max-w-full rounded-lg border bg-[repeating-conic-gradient(var(--muted)_0_25%,transparent_0_50%)] bg-size-[16px_16px] object-contain" />}
-        </div>
-      );
-    case "pdf":
-      return url ? <iframe src={url} title={name} className="block h-full min-h-[70vh] w-full border-0" /> : null;
-    case "text":
-      return <div className="mx-auto max-w-5xl px-6 py-6">
-        {preview ? <MarkdownContent>{view.text}</MarkdownContent> : <TextBlock text={view.text} />}
-      </div>;
-    case "binary":
-      return (
-        <div className="flex flex-col items-center gap-2 p-12 text-sm text-muted-foreground">
-          <UnknownFileIcon className="size-6" />
-          <p>This blob has no preview. Download it to open it.</p>
-        </div>
-      );
-  }
-}
-
-function TextBlock({ text }: { text: string }) {
-  return <pre className="font-mono text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</pre>;
-}
-
-/// An object URL for bytes the browser renders itself (images and PDFs),
-/// revoked when the view changes or unmounts.
-function useObjectUrl(bytes: Uint8Array, mime: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!mime || typeof URL.createObjectURL !== "function") return;
-    const next = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }));
-    setUrl(next);
-    return () => { URL.revokeObjectURL(next); setUrl(null); };
-  }, [bytes, mime]);
-  return url;
-}
-
 function CopyLink() {
   const [copied, setCopied] = useState(false);
   return (
@@ -190,19 +148,6 @@ function CopyLink() {
     }}>
       {copied ? <CopiedIcon data-icon="inline-start" /> : <CopyLinkIcon data-icon="inline-start" />}
       {copied ? "Copied" : "Copy link"}
-    </Button>
-  );
-}
-
-/// Downloads always carry a generic type, so the browser saves the bytes
-/// instead of rendering them as a page.
-function DownloadLink({ bytes, name }: { bytes: Uint8Array; name: string }) {
-  const url = useObjectUrl(bytes, "application/octet-stream");
-  if (!url) return null;
-  return (
-    <Button variant="outline" size="sm" nativeButton={false} render={<a href={url} download={name} />}>
-      <DownloadIcon data-icon="inline-start" />
-      Download
     </Button>
   );
 }

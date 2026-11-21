@@ -7,7 +7,7 @@ function moduleApp() {
   const call = vi.fn();
   const app = new Hono<UniverseModuleEnv>();
   app.use("*", async (c, next) => {
-    c.set("client", { call });
+    c.set("client", { call, openDownload: vi.fn() });
     await next();
   });
   app.route("/modules/sessions", sessionCollectionRoutes());

@@ -8,7 +8,7 @@ Lightspeed teams can ship a feature inside the shared Platform as a **module**. 
 
 Run `./dev.sh demo`. In **Software Factory**, open **Bots → Planner** and its conversation. In **Organization settings → Modules**, turn off **Sessions** and return to Planner. Its transcript and composer still work. Switch Sessions back on, open a bot-managed session in Sessions, then turn off **Bots**. The standalone conversation still works, with the recorded workflow kind and no bot-management actions. A direct visit to the disabled module’s page shows its unavailable state.
 
-For a module that needs no browser API of its own, open **Workspaces**, select a workspace, and choose **View artifacts**. Publish a file and open its preview. Artifacts uses existing VFS operations and permissions. Disabling it removes the page and workspace action. The file stays in the workspace.
+For the self-contained module example, open **Personal Assistant → Workspaces → Briefs** in the demo. Choose **Workspace actions → View artifacts → Publish artifact**, select a file, and publish it. Open its title to read the saved snapshot. Editing or removing the source file leaves the publication readable. **Retract** removes the publication and leaves the source file in place.
 
 ## What this branch implements
 
@@ -17,6 +17,7 @@ For a module that needs no browser API of its own, open **Workspaces**, select a
 | Sessions module | Standalone routes, filtered and paginated session browser, list preferences, new-session form, and private browser endpoints for listing and creating sessions. [Web](../../../modules/sessions/web/index.ts) · [API](../../../modules/sessions/api/index.ts) |
 | Bots module | Bot list and editor, chat and activity routes, triggers and events, controller links and actions in a shared conversation, and the private browser endpoints for these features. [Web](../../../modules/bots/web/index.ts) · [API](../../../modules/bots/api/index.ts) |
 | Sessions component library | Sessions owns the embeddable transcript, composer, conversation settings, and their read models. Both the Sessions page and Bots chat import this library. [Components](../../../modules/sessions/components/index.ts) · [Bot chat](../../../modules/bots/web/components/chat.tsx) |
+| Artifacts module | Workspace action, publication browser and preview, public HTTP operations, permission definitions, PostgreSQL tables and migrations. [Module](../../../modules/artifacts/module.ts) · [API](../../../modules/artifacts/api/index.ts) · [Storage](../../../modules/artifacts/db/schema.ts) |
 | Platform gateway | Browsers can open a permitted session by ID, send messages, handle approvals, and follow child sessions. Deployment-admin purge uses a separate permission. [Conversation handlers](../../../platform/backend/src/routes/conversations.ts) |
 | Rust runtime | The public session and bot contracts, durable records, and Temporal execution. Platform exposes these contracts to SDK and CLI callers through its authenticated gateway. [Gateway](../../../platform/backend/src/runtime-http.ts) |
 
@@ -39,11 +40,39 @@ Each web contribution is an npm workspace. Bots and the standalone Sessions page
 
 To test Platform with the modules and distribution source directories omitted, run `npm run test:platform-host`. Tests that exercise the assembled application live with the distribution. [Distribution tests](../../../distributions/standard/test)
 
-The standard distribution lists each module and its contributions in one catalog. A module can supply a web package, a private API entry, or both. It can also supply demo handlers. The web build bundles the selected pages. The API host loads the selected route factories at startup. [Distribution catalog](../../../distributions/standard/catalog.ts) · [Web build](../../../distributions/standard/vite.config.ts) · [API assembly](../../../distributions/standard/api.ts)
+The standard distribution lists each module and its contributions in one catalog. A module can supply a web package, API handlers, migrations, and demo handlers. The web build bundles the selected pages. The API host loads the selected route factories and applies their migrations before serving requests. [Distribution catalog](../../../distributions/standard/catalog.ts) · [Web build](../../../distributions/standard/vite.config.ts) · [API assembly](../../../distributions/standard/api.ts)
 
 For example, opening the Sessions list calls `GET /api/ui/universes/:id/modules/sessions`. The host authenticates the browser, resolves the universe and its organization, and checks that Sessions is enabled. The module calls `session/list` on the client the host supplies. That client applies the caller’s permissions and visibility restrictions. A request to a disabled module returns 404. Bots also requires the universe’s existing Bots feature switch. [Host admission](../../../platform/backend/src/module-routes.ts)
 
-Organization choices persist in PostgreSQL in the running Platform. The demo stores them in the browser until reload. Today an organization switch controls access to a module’s browser surfaces and private endpoints. Public SDK operations retain their own permission checks and runtime feature policies. The design below describes how installation could govern separately deployed services and workers in the future.
+Organization choices persist in PostgreSQL in the running Platform. The demo stores them in the browser until reload. The organization switch governs a module’s pages and all endpoints it registers, including its public HTTP operations. Core SDK operations retain their own permission checks and runtime feature policies.
+
+## Artifacts from publication to retraction
+
+Artifacts has three jobs. A Contributor can publish a file; a Viewer can browse, preview, or download it; an Operator can retract it. The module maps its three permissions to existing universe actions. When a client uses a scoped credential, Platform also checks its allowed operations, organization and universe, and read-only setting. A key limited to `artifacts/list` can list metadata. Reading the saved bytes requires `artifacts/content`. The browser uses the same public API. [Declared operations and permissions](../../../modules/artifacts/module.ts) · [Host admission](../../../platform/backend/src/module-routes.ts)
+
+```mermaid
+flowchart LR
+    ui["Artifacts page or API client"] --> gate["Platform gateway<br/>identity, installation, role, credential scope"]
+    gate --> api["Artifacts API"]
+    api -->|Publish · read selected revision| vfs["Core VFS"]
+    api -->|Store snapshot · read · retract| db[("artifacts.publications<br/>module-owned PostgreSQL schema")]
+    startup["Distribution startup"] -->|Apply selected module migrations| db
+```
+
+All routes below are relative to `/api/v1/universes/{universe}/modules/artifacts`.
+
+| Request | Result |
+| --- | --- |
+| `GET /` | List publication metadata and the current caller’s publish and retract permissions. Optionally filter by `workspaceId`. |
+| `POST /` | Publish a file using `workspaceId`, `path`, `expectedRevision`, and `title`. A changed workspace revision returns 409 so the publisher can review the file again. |
+| `GET /{artifactId}` and `GET /{artifactId}/content` | Read publication metadata or the saved bytes independently of VFS. |
+| `DELETE /{artifactId}` | Retract the publication and remove its saved bytes. |
+
+On publish, the handler uses the caller’s VFS access to resolve the file, verifies its length and digest, and stores a copy of up to 1 MiB with its source reference and publisher. Readers in the same universe can open that copy after the original changes. Disabling Artifacts immediately closes its routes and preserves its records for re-enablement. Deleting the owning universe or organization also deletes its publications. [Publication handler](../../../modules/artifacts/api/index.ts) · [SQL migration](../../../modules/artifacts/db/migrations/0000_publish_artifacts.sql)
+
+This deployment runs the trusted module’s handlers inside the Platform API process and gives them the shared PostgreSQL connection. Its SQL schema and migration history belong to Artifacts. Its migration runs once per database when the distribution includes the module, independently of how many organizations enable it. The demo uses a module-owned in-memory repository for the same API. [Migration runner](../../../platform/backend/src/module-migrations.ts) · [Demo adapter](../../../modules/artifacts/demo/index.ts)
+
+To change a table, edit the module’s schema and run `npm run generate:db --workspace @lightspeed-ai/artifacts-server`. Review and commit the generated SQL alongside the module. Its server package declares the dependencies and migration files to ship. Removing Artifacts from the distribution also removes that package from the release. [Schema](../../../modules/artifacts/db/schema.ts) · [Server package](../../../modules/artifacts/package.json) · [Catalog](../../../distributions/standard/catalog.ts)
 
 ## How teams contribute and ship
 
@@ -214,6 +243,13 @@ platform/
   shared/                    Platform API contract and module registration types
 
 modules/
+  artifacts/
+    module.ts                Publication operations and permission mapping
+    contract.ts              Module-owned request and response shapes
+    web/                     Publication shelf, publisher and preview
+    api/                     HTTP handlers using the admitted caller
+    db/                      Repository, schema and numbered migrations
+    demo/                    In-memory implementation of the same operations
   sessions/
     components/              Transcript, composer, controls, and conversation read models
     web/                     Standalone session browser and launcher
@@ -255,7 +291,7 @@ environments/                Environment daemon and standalone providers
 Only the distribution's assembly code depends on both the hosts and the concrete modules. Module metadata uses `@lightspeed-ai/platform-shared`. Browser code uses `@lightspeed-ai/platform-web/modules` and its feature interfaces. A hosted browser handler uses `@lightspeed-ai/platform-backend/modules` to receive the admitted caller and runtime client.
 
 - **Frontend.** `distributions/standard/web.ts` supplies the selected UI contributions, such as the pages exported by `modules/bots/web/`. The shell builds its router and navigation from these exports. At sign-in or when switching organizations, it shows entries according to the organization's installations and the caller's permissions.
-- **API.** `distributions/standard/api.ts` supplies the selected operation descriptors and their handlers or service routes. Today the host mounts private browser handlers under `/api/ui/universes/:id/modules/:moduleId`. Sessions registers list and create handlers there. In the proposed service design, the gateway could also mount module-owned public operations under `/api/v1` and forward authorized calls to a separately deployed service.
+- **API.** `distributions/standard/api.ts` supplies the selected handlers. Sessions registers its browser collection under `/api/ui/universes/:id/modules/sessions`. Artifacts declares its public operations under `/api/v1/universes/:id/modules/artifacts`. A future separately deployed service could use the same admission boundary.
 
 The web and API entries for a feature share its module ID. The deployment starts the Bots worker separately. Temporal workflows, task queues, and database migrations belong to Bots and run under its deployment lifecycle.
 

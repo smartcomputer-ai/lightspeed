@@ -1,0 +1,16 @@
+{
+  "name": "@lightspeed-ai/bots-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./api": "./api/index.ts" },
+  "files": ["module.ts", "api", "!api/**/*.test.ts"],
+  "dependencies": {
+    "@lightspeed-ai/platform-shared": "*",
+    "@lightspeed-ai/sdk": "*",
+    "hono": "^4.13.12"
+  },
+  "peerDependencies": {
+    "@lightspeed-ai/platform-backend": "*"
+  }
+}

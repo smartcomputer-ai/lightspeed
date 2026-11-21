@@ -5,6 +5,7 @@
   "workspaces": [
     "clients/typescript",
     "docs/site",
+    "modules/*",
     "modules/*/components",
     "modules/*/web",
     "platform/configurator-mcp",

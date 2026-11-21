@@ -67,6 +67,7 @@ export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
   shared.route("/platform", sessionRoutes(ctx));
   shared.route("/platform", credentialRoutes(ctx));
   shared.route("/platform", platformRoutes(ctx, modules));
+  shared.route("/universes", moduleRoutes(ctx, modules, "public"));
   shared.route("/", runtimeHttpRoutes(ctx));
   app.route("/api/v1", shared);
 
@@ -101,7 +102,7 @@ export function buildApp(ctx: AppContext, modules: readonly ApiModule[] = []) {
   api.route("/universes", universeRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));
   api.route("/universes", conversationRoutes(ctx));
-  api.route("/universes", moduleRoutes(ctx, modules));
+  api.route("/universes", moduleRoutes(ctx, modules, "browser"));
   api.route("/admin", sessionAdminRoutes(ctx));
   api.route("/admin", environmentDeploymentRoutes(ctx));
 

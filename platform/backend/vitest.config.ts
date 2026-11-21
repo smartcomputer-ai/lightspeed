@@ -5,7 +5,7 @@ export default defineConfig(({ mode }) => ({
     include: [
       "src/**/*.test.ts",
       "test/**/*.test.ts",
-      ...(mode === "host" ? [] : ["../../modules/*/api/**/*.test.ts", "../../distributions/standard/test/api/**/*.test.ts"]),
+      ...(mode === "host" ? [] : ["../../modules/*/{api,db}/**/*.test.ts", "../../distributions/standard/test/api/**/*.test.ts"]),
     ],
   },
 }));

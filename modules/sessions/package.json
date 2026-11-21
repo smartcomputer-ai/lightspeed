@@ -1,0 +1,16 @@
+{
+  "name": "@lightspeed-ai/sessions-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./api": "./api/index.ts" },
+  "files": ["module.ts", "api", "!api/**/*.test.ts"],
+  "dependencies": {
+    "@lightspeed-ai/platform-shared": "*",
+    "hono": "^4.13.12",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "@lightspeed-ai/platform-backend": "*"
+  }
+}

@@ -18,10 +18,12 @@ copy_workspace_manifests() {
   cp package.json package-lock.json tsconfig.json "$root/"
   node --input-type=module - "$root" <<'JS'
 import { copyFileSync, globSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import pkg from './package.json' with { type: 'json' };
 
 for (const manifest of globSync(pkg.workspaces.map(pattern => `${pattern}/package.json`))) {
+  // Module packages are staged from the selected distribution catalog below.
+  if (manifest.split(sep)[0] === 'modules') continue;
   const destination = join(process.argv[2], manifest);
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(manifest, destination);
@@ -42,7 +44,7 @@ stage_runtime() {
     mkdir -p "$root/$(dirname "$source")"
     cp -R "$source" "$root/$source"
   done
-  node scripts/release/install-runtime-dependencies.mjs "$root" "$workspace"
+  node --import tsx scripts/release/stage-platform-modules.mjs "$root" "$workspace"
   rm -f "$root/package-lock.json"
   # The documentation workspace participates in dependency resolution only.
   rm -rf "$root/docs"
@@ -51,15 +53,11 @@ stage_runtime() {
     -C "$root" -czf "$dist_dir/runtime/$name.tar.gz" .
 }
 
-# A distribution can ship just the host, with no module descriptors to copy.
-shopt -s nullglob
 stage_runtime platform @lightspeed-ai/platform-backend \
   clients/typescript/dist \
   distributions/standard/api.ts \
   distributions/standard/catalog.ts \
   distributions/standard/server.ts \
-  modules/*/api \
-  modules/*/module.ts \
   platform/backend/src \
   platform/db/src \
   platform/db/migrations \

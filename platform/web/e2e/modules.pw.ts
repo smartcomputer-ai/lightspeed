@@ -15,18 +15,19 @@ test("a workspace publishes an artifact and its organization controls both contr
   await page.getByRole("menuitem", { name: "View artifacts" }).click();
 
   await expect(page).toHaveURL(/\/artifacts\?workspace=briefs$/);
-  await expect(page.getByRole("link", { name: "weekly-review.md" })).toBeVisible();
-  await page.getByLabel("Files to publish").setInputFiles({
-    name: "release-summary.md",
-    mimeType: "text/markdown",
-    buffer: Buffer.from("# Ready for review"),
-  });
+  await expect(page.getByText("No published artifacts")).toBeVisible();
+  await page.getByRole("button", { name: "Publish artifact", exact: true }).click();
+  await page.getByRole("combobox", { name: "Workspace file" }).click();
+  await page.getByRole("option", { name: /^week-\d+-review\.md$/ }).click();
+  await page.getByLabel("Title (optional)").fill("Friday review");
   await page.getByRole("button", { name: "Publish", exact: true }).click();
-  await page.getByRole("link", { name: "release-summary.md" }).click();
-  await expect(page).toHaveURL(/\/blobs\/[\da-f]{64}\?/);
-  await expect(page.getByRole("heading", { name: "release-summary.md" })).toBeVisible();
+  const published = page.getByRole("link", { name: "Friday review", exact: true });
+  await published.click();
+  await expect(page).toHaveURL(/\/artifacts\/[\da-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: "Friday review" })).toBeVisible();
+  await expect(page.locator("pre")).toContainText("review");
   await page.goBack();
-  await expect(page.getByRole("link", { name: "release-summary.md" })).toBeVisible();
+  await expect(published).toBeVisible();
 
   await openOrganizationSettings(page);
   const enabled = page.getByRole("switch", { name: "Artifacts" });
@@ -38,7 +39,7 @@ test("a workspace publishes an artifact and its organization controls both contr
   await expect(page).toHaveURL(/\/artifacts\?workspace=briefs$/);
   await expect(page.getByText("The Artifacts module is unavailable in this universe.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Artifacts", exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Files to publish")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Publish artifact" })).toHaveCount(0);
 
   await page.goBack();
   await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
@@ -52,7 +53,11 @@ test("a workspace publishes an artifact and its organization controls both contr
   await page.goBack();
   await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
   await page.getByRole("menuitem", { name: "View artifacts" }).click();
-  await expect(page.getByRole("link", { name: "release-summary.md" })).toBeVisible();
+  await expect(published).toBeVisible();
+  await page.getByRole("button", { name: "Retract Friday review" }).click();
+  await page.getByRole("button", { name: "Retract artifact", exact: true }).click();
+  await expect(published).toHaveCount(0);
+  await expect(page.getByText("No published artifacts")).toBeVisible();
 });
 
 test("Bots keeps its shared session view when the Sessions module is disabled", async ({ page }) => {

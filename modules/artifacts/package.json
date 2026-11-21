@@ -1,0 +1,29 @@
+{
+  "name": "@lightspeed-ai/artifacts-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": "./api/index.ts",
+    "./contract": "./contract.ts"
+  },
+  "files": ["module.ts", "contract.ts", "api", "!api/**/*.test.ts", "db/index.ts", "db/schema.ts", "db/migrations"],
+  "scripts": {
+    "generate:db": "drizzle-kit generate --config db/drizzle.config.ts"
+  },
+  "dependencies": {
+    "@lightspeed-ai/platform-db": "*",
+    "@lightspeed-ai/platform-shared": "*",
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.12",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "@lightspeed-ai/platform-backend": "*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "drizzle-kit": "^0.31.11",
+    "vitest": "^5.0.3"
+  }
+}
