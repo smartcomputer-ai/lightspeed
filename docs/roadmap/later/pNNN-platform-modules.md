@@ -2,7 +2,7 @@
 
 **Status** — Proposed for review.
 
-A **module** adds a feature to Lightspeed. For example, the Bots module provides the pages for managing bots and the worker that handles bot events. Platform core defines the interfaces for this plugin system. Each Lightspeed distribution chooses which modules to include, so the same core can run with or without Bots.
+Lightspeed teams contribute product features as **modules**. The Sessions module adds pages for sessions the Rust runtime already manages. The Bots module owns the whole feature, from its pages and API to its worker and database tables. They use the same plugin system. Platform defines how modules register pages and operations, and each distribution selects the modules it includes.
 
 An organization can enable the modules it needs on a shared deployment. Its universes remain the boundaries for sessions, credentials, and other resources.
 
@@ -21,7 +21,7 @@ The deployment operator decides which modules to offer each organization. An Org
 
 ```mermaid
 flowchart TB
-    definition["Module definition<br/>UI, API and permissions"]
+    definition["Module definition<br/>ID and optional contributions"]
     definition -->|Distribution includes| native["Native module<br/>UI built into shared shell"]
     definition -->|Operator registers| external["External integration<br/>Own UI or headless"]
     native --> catalog["Deployment catalog"]
@@ -35,26 +35,43 @@ flowchart TB
 
 The **runtime** owns sessions, runs, durable state, and tool execution. Modules use its published session API and managed-workflow and workflow-tool protocols. Runtime capabilities such as VFS and web search can have deployment limits that a universe or session may narrow. The runtime enforces those limits. [Session and workflow contracts](../../documentation/integrating-and-extending/workflow-tools.md)
 
-**Platform core** owns identity, organizations, universes, permissions, module availability, and the public API entry point. Its web shell provides navigation and a place to mount pages. The standard Sessions UI should use the same page interface available to module authors. The session API also works in a distribution that omits the Sessions page.
+**Platform** owns identity, organizations, universes, permissions, module availability, and the public API entry point. Its web shell provides navigation and a place to mount pages. The shell and gateway serve every organization in the deployment.
 
-## A concrete example with Bots
+## How Sessions, Workspaces, and Bots use the same module system
 
-Suppose Acme enables Bots for its support universe. A Contributor opens **Bots → Support triage → Activity** and sends the bot an event. The page, the public bot operations, and the process that does the work all belong to the Bots team. They ship in different places.
+| Module | What the module owns | How a request runs |
+| --- | --- | --- |
+| **Sessions** | Session list, transcript, and run controls. | The pages use the existing session API through Platform. Other clients can still start sessions when the distribution omits these pages. |
+| **Workspaces** | The file browser and editor for VFS. It can also contribute a handler to the Platform backend if an editor action needs server-side logic. | Platform authorizes the request. The handler can compose Core workspace operations, and Core owns the snapshots and blobs. |
+| **Bots** | Bot pages, public operations, records and migrations, and a Temporal worker for controllers and triggers. | Platform authorizes a bot operation and forwards it to the Bots API. The bot worker drives sessions through Core's managed-session protocol. |
 
 ```mermaid
 flowchart TB
-    subgraph browser["Shared frontend build"]
-        shell["Web shell"] -->|mounts| botsUI["Bots pages"]
+    subgraph shell["Shared Platform web shell"]
+        sessions["Sessions pages"]
+        workspaces["Workspace editor"]
+        botsUI["Bots pages"]
     end
-    botsUI -->|bot operations| gate["Platform API gateway"]
-    gate -->|authorized requests| bots["Bots API service"]
+    sessions --> gate["Platform API gateway"]
+    workspaces --> gate
+    botsUI --> gate
+    gate -->|session and workspace operations| runtime["Core runtime<br/>Sessions, runs and VFS"]
+    gate -->|editor operation| editor["Workspace handler in Platform"]
+    editor -->|workspace operations| runtime
+    gate -->|bot operations| bots["Bots API service"]
     subgraph module["Optional Bots backend"]
         bots --> tables[("Bot tables")]
         bots -->|signals via Temporal| worker["Bot worker"]
         worker --> tables
     end
-    worker -->|session operations as controller| runtime["Session runtime"]
+    worker -->|session operations as controller| runtime
 ```
+
+An organization can disable the Workspaces module while its agents still use VFS. To disable VFS execution for a deployment, the operator sets a Core capability limit. Enabling Bots for a second organization lets its authorized members use the Bots service and worker already running in the deployment.
+
+## A concrete example with Bots
+
+Suppose Acme enables Bots for its support universe. A Contributor opens **Bots → Support triage → Activity** and sends the bot an event. The page, the public bot operations, and the process that does the work all belong to the Bots team. They ship in different places.
 
 The **Bots UI package** contributes the `/u/:handle/bots` routes and their navigation entry. The **Bots API service** implements operations such as `bots/events/admit`, available to the browser and CLI through the same gateway. A UI-only endpoint can compose data for a screen under the same authorization rules. The **Bots worker** runs the controller and trigger workflows. A change to the Activity page ships with the shell. A compatible fix to how the worker handles a trigger can ship with the worker alone.
 
@@ -78,6 +95,12 @@ sequenceDiagram
     R-->>W: Run completed (Temporal signal)
 ```
 
+## Open question about shared design and product language
+
+When a module introduces a concept that users encounter elsewhere in Lightspeed, who owns its design and wording? For example, someone following an event from Bots into a session should be able to recognize which bot started it. The Bots activity page and the session header might both show “Started by Support triage” with a link to the bot. Who owns that interaction, its visual treatment, and the label and its translations?
+
+Should the Bots team implement it in the module and contribute it wherever the shell supports it? Should the shared design system and shell own a general way to show who started a session, with Bots supplying the name and destination? If a pattern starts in a module, when should the team bring it upstream for other features to use? The design needs to work both for someone moving between Bots and Sessions and for a deployment that ships Sessions on its own.
+
 ## How configuration could read
 
 These YAML excerpts illustrate three decisions. The field names are proposals for discussion.
@@ -91,11 +114,11 @@ operations:
   bots/triggers/put: { action: manageBot }
 ```
 
-**2. The distribution selects native pages. The deployment operator makes services available.** The first section is input to the frontend build. The second registers endpoints for the running deployment. Acme's approvals link opens the client's own UI.
+**2. The distribution selects native modules. The deployment operator makes services available.** The distribution's list selects the web and API contributions for the shared application. Sessions contributes pages alone. Bots also contributes operations, so the operator supplies its service endpoint. Acme's approvals link opens the client's own UI.
 
 ```yaml
 distribution:
-  nativePages: [sessions, bots]
+  nativeModules: [sessions, workspaces, bots]
 deployment:
   modules:
     bots:
@@ -119,7 +142,7 @@ Today, a universe Owner switches Bots on, and switching it off governs member ac
 
 ## Proposed project structure
 
-Lightspeed stays in one repository. **Core** is the Rust subproject that builds the `lightspeed-runtime` executable. **Platform** hosts the application and its plugins. The standard distribution selects which plugins ship with the shell.
+Lightspeed stays in one repository. `core/` builds the Rust `lightspeed-runtime` executable and `platform/` contains the shared web shell and API gateway. Product features live alongside them under `modules/`. Each team keeps its feature's code together and can build and release its services and workers independently.
 
 ```text
 core/
@@ -133,15 +156,22 @@ platform/
   web/                       Shared shell and standard frontend assembly
     src/plugins.ts           Registers the distribution's bundled pages and navigation
   backend/                   Authentication, permissions, and API gateway
-    src/plugin-routes.ts     Registers plugin API routes with the gateway
+    src/plugin-routes.ts     Registers module handlers and service routes with the gateway
   db/                        Platform-owned records and migrations
-  shared/                    Platform API contract and plugin registration types
-  plugins/
-    sessions/                Built-in Sessions UI
-    bots/
-      module.yaml            Plugin ID and public operations with their required actions
-      web/                   Bot pages, settings, and navigation
-      server/                Bot API, worker, tables, and migrations
+  shared/                    Platform API contract and module registration types
+
+modules/
+  sessions/
+    web/                     Session list, transcript, and run controls
+  workspaces/
+    web/                     VFS browser and editor
+    api/                     Editor-specific handlers hosted in Platform, if needed
+  bots/
+    module.yaml              Module ID, operations, and required actions
+    web/                     Bot pages, settings, and navigation
+    api/                     Independently deployable Bots API service
+    worker/                  Temporal workflows and activities
+    db/                      Bot tables and migrations
 
 clients/
   cli/                       Lightspeed command-line client
@@ -153,12 +183,14 @@ clients/
 environments/                Environment daemon and standalone providers
 ```
 
-**Where plugins are registered.** The proposed layout gives each host an entry point.
+### Where modules are registered
 
-- **Frontend.** `platform/web/src/plugins.ts` imports the UI contributions selected for the distribution, such as the pages exported by `platform/plugins/bots/web/`. The shell uses that list to build its router and navigation. The frontend build determines which components it can render. At sign-in or when switching organizations, the shell uses availability and permission data from Platform to show the relevant entries.
-- **API.** At startup, `platform/backend/src/plugin-routes.ts` pairs each registered plugin's operation descriptors with its configured service endpoint and mounts the routes under `/api/v1`. On each request the gateway checks the installation, target scope, and caller's permissions before forwarding to the service. For example, the Bots descriptor declares `bots/events/admit` and its `invokeBot` action. The gateway routes the authorized request to the Bots service, which owns the handler.
+Only the distribution's web and API entry points import concrete module contributions. Modules depend on the registration types in `platform/shared/`. The reusable shell and gateway work against those same types.
 
-Both entry points use the same plugin ID. Enabling Bots for an organization changes which registered features its members can use. The frontend bundle and the running Bots service can serve multiple organizations.
+- **Frontend.** `platform/web/src/plugins.ts` imports the selected UI contributions, such as the pages exported by `modules/bots/web/`. The shell builds its router and navigation from these exports. At sign-in or when switching organizations, it shows entries according to the organization's installations and the caller's permissions.
+- **API.** At startup, `platform/backend/src/plugin-routes.ts` registers the operations contributed by selected modules under `/api/v1`. An operation can map to a handler hosted in Platform (Workspaces) or to a configured service endpoint (Bots). On each request, the gateway checks the module installation, target scope, and caller's permissions before dispatch. The Sessions pages call existing permissioned Core routes through the gateway and need no API registration of their own.
+
+The web and API entries for a feature share its module ID. The deployment starts the Bots worker separately. Temporal workflows, task queues, and database migrations belong to Bots and run under its deployment lifecycle.
 
 The TypeScript Core client lives under `clients/` because both Platform and the public SDK use it. Core owns the session and run contract. Platform owns the contract for operations such as managing organizations. The arrows show build dependencies, including contracts used to generate bindings.
 
@@ -171,6 +203,6 @@ flowchart LR
     sdk --> platform
 ```
 
-Application developers install `@lightspeed-ai/sdk` and point it at Platform. The Platform backend uses the smaller Core client with its private runtime endpoint and credential. Plugins use Platform's registration interface to contribute pages and routes. A worker can use the Core API through bindings for its own language.
+Application developers install `@lightspeed-ai/sdk` and point it at Platform. The Platform backend uses the smaller Core client with its private runtime endpoint and credential. A module worker can use the Core API through bindings for its own language.
 
-Core has its own build and CI job. A change to the Bots page can test the plugin and shell together and release the shared frontend. A Core API change also triggers checks for the clients and plugins that consume the affected contract.
+Core has its own build and CI job. A change to a Bots page runs checks for the module and shell and ships with the shared frontend. A worker-only fix can ship with the worker. A Core API change also triggers checks for the clients and modules that consume the affected contract.
