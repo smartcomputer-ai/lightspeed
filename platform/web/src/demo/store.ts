@@ -1,6 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
+import { applyEvents, emptyTranscript } from "@session-ui/model/transcript";
 import { effectiveFeatures, mergeFeatureOverrides, type AuditEvent, type PlatformSettingKey, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor, type OrganizationRole, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
@@ -222,6 +222,7 @@ export class DemoStore {
   readonly users = new Map<string, DemoUser>();
   readonly organizations = new Map<string, PlatformOperationResult<"platform/organizations/read">["organization"]>();
   readonly organizationMemberships = new Map<string, Map<string, OrganizationRole>>();
+  readonly organizationModules = new Map<string, Map<string, boolean>>();
   readonly serviceUsers = new Map<string, PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number]>();
   readonly serviceUserGrants = new Map<string, PlatformOperationResult<"platform/universes/grants/list">["grants"]>();
   /// Platform settings changed in the demo; the rest use their defaults.

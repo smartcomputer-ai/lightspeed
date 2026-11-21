@@ -8,11 +8,12 @@ import { LoadingNote, UniverseNotFound } from "@/components/page";
 import { ReadError } from "@/components/read-error";
 import { Button } from "@/components/ui/button";
 import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
-import { MarkdownContent } from "@/components/session/markdown-content";
+import { MarkdownContent } from "@session-ui/components/markdown-content";
 import { formatBytes } from "@/lib/composer-attachments";
 import { blobView, type BlobView } from "@/lib/blob-view";
 import { useActionPermissions } from "@/lib/permissions";
 import { useActiveUniverse } from "@/lib/universes";
+import { useSessionPageHref } from "@/lib/web-modules";
 import { useDocumentTitle } from "@/lib/document-title";
 
 /// One stored blob, addressed by its digest within the universe: stored
@@ -85,6 +86,7 @@ function BlobDetail({ universeId, handle, digest }: { universeId: string; handle
 /// this is where it came from rather than a way back; a session the viewer
 /// cannot read is named by its id without a link.
 function LinkedFrom({ universeId, handle, sessionId }: { universeId: string; handle: string; sessionId: string }) {
+  const sessionHref = useSessionPageHref(handle, sessionId);
   const source = useQuery({
     queryKey: ["session", universeId, sessionId],
     queryFn: () => api<SessionView>("GET", `/api/ui/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`),
@@ -94,9 +96,9 @@ function LinkedFrom({ universeId, handle, sessionId }: { universeId: string; han
   return (
     <p className="truncate text-xs text-muted-foreground">
       Linked from session:{" "}
-      {source.error
+      {source.error || !sessionHref
         ? <span className="font-mono" title={sessionId}>{label}</span>
-        : <Link to={`/u/${handle}/sessions/${encodeURIComponent(sessionId)}`} title={label}
+        : <Link to={sessionHref} title={label}
             className="font-medium text-foreground underline-offset-2 hover:underline">{label}</Link>}
     </p>
   );

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { organizationModuleSchema } from "./modules.js";
 import { CREDENTIAL_OPERATIONS, credentialRestrictionsSchema } from "./credential-api.js";
 import { SESSION_OPERATIONS, platformSessionViewSchema } from "./session-api.js";
 import { baseUniverseRoleSchema, organizationActionSchema, organizationRoleSchema, universeRoleSchema } from "./access.js";
@@ -110,6 +111,8 @@ export const PLATFORM_OPERATIONS = {
     result: z.object({ organizationId: id, enrolled: z.boolean().describe("True when this request created the organization; false when the workload already belongs to it.") }) },
   "platform/organizations/create": { helper: { name: "createOrganization" }, method: "POST", path: "/api/v1/platform/organizations", params: organizationCreateSchema, result: z.object({ organization: organizationViewSchema }) },
   "platform/organizations/read": { helper: { name: "readOrganization" }, method: "GET", path: "/api/v1/platform/organizations/{organizationId}", params: z.object(organizationPath).strict(), result: z.object({ organization: organizationViewSchema }) },
+  "platform/organizations/modules/list": { helper: { name: "listOrganizationModules" }, method: "GET", path: "/api/v1/platform/organizations/{organizationId}/modules", params: z.object(organizationPath).strict(), result: z.object({ modules: z.array(organizationModuleSchema) }) },
+  "platform/organizations/modules/put": { helper: { name: "setOrganizationModule" }, method: "PUT", path: "/api/v1/platform/organizations/{organizationId}/modules/{moduleId}", params: z.object({ ...organizationPath, moduleId: id, enabled: z.boolean() }).strict(), result: z.object({ module: organizationModuleSchema }) },
   "platform/organizations/update": { helper: { name: "updateOrganization" }, method: "PATCH", path: "/api/v1/platform/organizations/{organizationId}", params: organizationUpdateSchema.extend(organizationPath), result: z.object({ organization: organizationViewSchema }) },
   "platform/organizations/members/list": { helper: { name: "listOrganizationMembers" }, method: "GET", path: "/api/v1/platform/organizations/{organizationId}/members", params: z.object(organizationPath).strict(), result: z.object({ members: z.array(organizationMemberViewSchema) }) },
   "platform/organizations/members/put": { helper: { name: "putOrganizationMember" }, method: "PUT", path: "/api/v1/platform/organizations/{organizationId}/members/{userId}", params: organizationMemberPutSchema.extend(organizationPath), result: z.object({ member: organizationMemberViewSchema }) },

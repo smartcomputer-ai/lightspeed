@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
+import type { PlatformModule } from "@lightspeed-ai/platform-shared";
 import type { AuthContext } from "../src/auth-context.js";
 import type { ApiVariables, AppContext } from "../src/context.js";
 import { universeRoutes } from "../src/routes/universes.js";
@@ -9,7 +10,7 @@ import { platformRoutes } from "../src/routes/platform.js";
 import { identityEnv, identityFixture } from "./identity-fixture.js";
 import { userSubject } from "./subject-fixture.js";
 
-export async function organizationFixture() {
+export async function organizationFixture(modules: readonly PlatformModule[] = []) {
   const fixture = await identityFixture({ ...identityEnv, oidc: null, personalOrganizations: false, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "organization-fixture-runtime-token-1234567890" });
   const context = { ...fixture, pool: {} as never } as AppContext;
   for (const id of ["owner", "creator", "viewer", "other", "organization-admin"]) await fixture.db.insert(schema.user).values({ id, name: id, email: `${id}@example.test`, emailVerified: true }).onConflictDoNothing();
@@ -23,7 +24,7 @@ export async function organizationFixture() {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("auth", subject); await next(); });
   app.route("/api/ui/universes", universeRoutes(context));
-  app.route("/api/v1/platform", platformRoutes(context));
+  app.route("/api/v1/platform", platformRoutes(context, modules));
   app.route("/api/v1", runtimeHttpRoutes(context));
   return { ...fixture, context, universe: universe!, ownerGrant: ownerGrant!,
     setSubject(auth: AuthContext) { subject = auth; },

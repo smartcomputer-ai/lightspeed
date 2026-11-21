@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ContextEntryView, SessionEventView } from "@lightspeed-ai/sdk";
-import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
+import { applyEvents, emptyTranscript } from "@session-ui/model/transcript";
 import { createDemoStore } from "./fixtures";
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 import { PERSONAL_ASSISTANT_UNIVERSE_ID } from "./fixtures/personal-assistant";

@@ -124,6 +124,7 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireColumn(pool, "universes", "handle");
   await requireColumn(pool, "universes", "access_policy");
   await requireColumn(pool, "organization", "membership_policy");
+  await requireTable(pool, "organization_modules");
   await requireColumn(pool, "universes", "lightspeed_universe_id");
   await requireColumn(pool, "universes", "gateway_url", false);
   await requireColumn(pool, "universes", "icon");

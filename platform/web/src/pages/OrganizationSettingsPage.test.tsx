@@ -74,15 +74,12 @@ beforeEach(() => {
   mocks.empty = false;
   mocks.personal = false;
   mocks.quotaSource = "deployment";
-  mocks.api
-    .mockReset()
-    .mockImplementation(async (operation) =>
-      operation.endsWith("members/list")
-        ? { members: [] }
-        : operation.endsWith("service-users/list")
-          ? { serviceUsers: [] }
-          : {},
-    );
+  mocks.api.mockReset().mockImplementation(async (operation) => {
+    if (operation.endsWith("modules/list")) return { modules: [] };
+    if (operation.endsWith("members/list")) return { members: [] };
+    if (operation.endsWith("service-users/list")) return { serviceUsers: [] };
+    return {};
+  });
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   });
@@ -124,6 +121,24 @@ async function type(selector: string, value: string) {
   });
 }
 const submit = () => act(async () => dialog().querySelector<HTMLFormElement>("form")!.requestSubmit());
+
+it("saves module availability for the current organization", async () => {
+  mocks.role = "admin";
+  let enabled = true;
+  mocks.api.mockImplementation(async (operation, params) => {
+    if (operation.endsWith("modules/put")) enabled = params.enabled;
+    const module = { id: "artifacts", name: "Artifacts", description: "Workspace files", enabled };
+    return operation.endsWith("modules/list") ? { modules: [module] } : { module };
+  });
+  await show("/admin/organizations/team/settings");
+  const toggle = () => container.querySelector<HTMLElement>('[role="switch"][aria-describedby="module-help-artifacts"]');
+  await waitForUi(() => expect(toggle()?.getAttribute("aria-checked")).toBe("true"));
+  await act(async () => toggle()!.click());
+  await waitForUi(() => expect(toggle()?.getAttribute("aria-checked")).toBe("false"));
+  expect(mocks.api).toHaveBeenCalledWith("platform/organizations/modules/put", {
+    organizationId: "team", moduleId: "artifacts", enabled: false,
+  });
+});
 
 it("saves a changed universe quota only when its own Save is pressed", async () => {
   await show("/admin/organizations/team/settings", true);

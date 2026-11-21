@@ -59,6 +59,12 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/organizations/read': {'method': 'GET',
                                  'path': '/api/v1/platform/organizations/{organizationId}',
                                  'helper': {'name': 'readOrganization'}},
+ 'platform/organizations/modules/list': {'method': 'GET',
+                                         'path': '/api/v1/platform/organizations/{organizationId}/modules',
+                                         'helper': {'name': 'listOrganizationModules'}},
+ 'platform/organizations/modules/put': {'method': 'PUT',
+                                        'path': '/api/v1/platform/organizations/{organizationId}/modules/{moduleId}',
+                                        'helper': {'name': 'setOrganizationModule'}},
  'platform/organizations/update': {'method': 'PATCH',
                                    'path': '/api/v1/platform/organizations/{organizationId}',
                                    'helper': {'name': 'updateOrganization'}},
@@ -178,6 +184,12 @@ class PlatformApi:
 
     async def read_organization(self, params: Api.PlatformOrganizationsReadParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsReadResult:
         return cast(Api.PlatformOrganizationsReadResult, await self._invoke('platform/organizations/read', dict(params or {}), headers))
+
+    async def list_organization_modules(self, params: Api.PlatformOrganizationsModulesListParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsModulesListResult:
+        return cast(Api.PlatformOrganizationsModulesListResult, await self._invoke('platform/organizations/modules/list', dict(params or {}), headers))
+
+    async def set_organization_module(self, params: Api.PlatformOrganizationsModulesPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsModulesPutResult:
+        return cast(Api.PlatformOrganizationsModulesPutResult, await self._invoke('platform/organizations/modules/put', dict(params or {}), headers))
 
     async def update_organization(self, params: Api.PlatformOrganizationsUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsUpdateResult:
         return cast(Api.PlatformOrganizationsUpdateResult, await self._invoke('platform/organizations/update', dict(params or {}), headers))

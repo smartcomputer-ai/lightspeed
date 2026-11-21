@@ -52,8 +52,13 @@ stage_runtime() {
     -C "$root" -czf "$dist_dir/runtime/$name.tar.gz" .
 }
 
+# A distribution can ship just the host, with no module descriptors to copy.
+shopt -s nullglob
 stage_runtime platform @lightspeed-ai/platform-backend \
   clients/typescript/dist \
+  distributions/standard/api.ts \
+  distributions/standard/catalog.ts \
+  modules/*/module.ts \
   platform/backend/src \
   platform/db/src \
   platform/db/migrations \

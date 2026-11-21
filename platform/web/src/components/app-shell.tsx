@@ -24,13 +24,14 @@ import {
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
-import { UNIVERSE_NAV, navItemVisible, universeSectionTrail } from "@/components/universe-nav";
+import { universeNavigation, navItemVisible, universeSectionTrail, type UniverseNavGroup } from "@/components/universe-nav";
 import { DocumentTitleProvider } from "@/lib/document-title";
 import { demoMode } from "@/lib/demo-mode";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
-import { isMobileDetailRoute } from "@/lib/shell-navigation";
+import { useAvailableWebModules } from "@/lib/web-modules";
+import { isMasterDetailRoute, isMobileDetailRoute } from "@/lib/shell-navigation";
 import { WelcomeDialog } from "@/components/onboarding/welcome-dialog";
 import { PageNebula } from "@/components/starscape/page-nebula";
 import { useDialogStarscapeWarmth } from "@/components/starscape/use-dialog-starscape-warmth";
@@ -74,7 +75,7 @@ const ORGANIZATION_NAV: Array<{ path: string; icon: ComponentType; label: string
 /// The part of the page title the route alone determines, most specific
 /// first: the sidebar's name for the page and the universe or mode holding
 /// it. Pages add what they have open through `useDocumentTitle`.
-export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
+export function shellTitleTrail(pathname: string, universeName: string | undefined, groups: UniverseNavGroup[]): string[] {
   const mode = shellMode(pathname);
   if (mode === "admin") {
     const item = PLATFORM_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
@@ -85,7 +86,7 @@ export function shellTitleTrail(pathname: string, universeName: string | undefin
   if (mode !== "universe") return [MODE_TITLE[mode]];
   const universe = matchPath("/u/:handle/*", pathname);
   if (!universe) return [];
-  const section = universeSectionTrail(universe.params["*"] ?? "");
+  const section = universeSectionTrail(universe.params["*"] ?? "", groups);
   return universeName ? [...section, universeName] : section;
 }
 
@@ -169,6 +170,8 @@ export function AppShell({ user }: { user: SessionUser }) {
     ? universes.data?.find((u) => u.handle === activeHandle && (!adminMatch || u.organizationId === adminMatch.params.organizationId))
     : undefined;
   const permissions = useActionPermissions(active?.id);
+  const { modules } = useAvailableWebModules(match ? active : undefined);
+  const navGroups = universeNavigation(modules);
   const location = useLocation();
   const mode = shellMode(location.pathname);
   useEffect(() => {
@@ -230,7 +233,7 @@ export function AppShell({ user }: { user: SessionUser }) {
           )}
         </SidebarHeader>
         <SidebarContent className="relative">
-          {mode === "universe" && active && UNIVERSE_NAV.map((group, index) => {
+          {mode === "universe" && active && navGroups.map((group, index) => {
             const items = group.items.filter((item) => navItemVisible(item, permissions.can, active.features));
             if (items.length === 0) return null;
             return (
@@ -292,7 +295,7 @@ export function AppShell({ user }: { user: SessionUser }) {
         {/* The pages' background: behind the content area and the single-column
             pages (the list pane draws its own surface over it). */}
         <PageNebula className="absolute inset-0 -z-10" />
-        {!isMobileDetailRoute(location.pathname) && (
+        {!isMobileDetailRoute(location.pathname, modules) && (
           <header className="flex h-12 shrink-0 items-center gap-2 px-4 md:hidden">
             <SidebarTrigger />
             <span className="text-sm font-medium">{mobileTitle}</span>
@@ -301,8 +304,8 @@ export function AppShell({ user }: { user: SessionUser }) {
         {/* Master-detail surfaces (sessions, workspaces, profiles, bots)
             manage their own panes and scrolling — full-bleed. Everything else
             gets the centered scrolling column. */}
-        <DocumentTitleProvider base={shellTitleTrail(location.pathname, active?.name)}>
-          {/\/u\/[^/]+\/(sessions|workspaces|profiles|bots)/.test(location.pathname) ? (
+        <DocumentTitleProvider base={shellTitleTrail(location.pathname, active?.name, navGroups)}>
+          {isMasterDetailRoute(location.pathname, modules) ? (
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
               <Outlet />
             </main>

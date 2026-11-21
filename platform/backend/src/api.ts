@@ -10,7 +10,7 @@ import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withApiErrors } from "./http.js";
 import { Hono } from "hono";
 import { desc, eq, sql } from "drizzle-orm";
-import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared";
+import { auditQuerySchema, type AuditPage, type PlatformModule } from "@lightspeed-ai/platform-shared";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { botRoutes } from "./routes/bots.js";
@@ -22,7 +22,7 @@ import { sessionAllows } from "./context.js";
 import { publicAuthConfig } from "./auth.js";
 
 
-export function buildApp(ctx: AppContext) {
+export function buildApp(ctx: AppContext, modules: readonly PlatformModule[] = []) {
   const app = new Hono();
   app.onError((error, c) => {
     if (error instanceof CredentialRateLimit) return error.response();
@@ -64,7 +64,7 @@ export function buildApp(ctx: AppContext) {
   shared.use("*", authenticated);
   shared.route("/platform", sessionRoutes(ctx));
   shared.route("/platform", credentialRoutes(ctx));
-  shared.route("/platform", platformRoutes(ctx));
+  shared.route("/platform", platformRoutes(ctx, modules));
   shared.route("/", runtimeHttpRoutes(ctx));
   app.route("/api/v1", shared);
 

@@ -2667,6 +2667,110 @@
       ],
       "additionalProperties": false
     },
+    "PlatformOrganizationsModulesListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsModulesListResult": {
+      "type": "object",
+      "properties": {
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "enabled"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "modules"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsModulesPutParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "moduleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "organizationId",
+        "moduleId",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsModulesPutResult": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "enabled"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "module"
+      ],
+      "additionalProperties": false
+    },
     "PlatformOrganizationsUpdateParams": {
       "type": "object",
       "properties": {

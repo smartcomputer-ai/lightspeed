@@ -8,6 +8,9 @@ const { organizationActions, universeActions } = await vi.hoisted(() => import("
 import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
+import { standardWebModules } from "@distribution/web";
+import { WebModuleProvider } from "@/lib/web-modules";
+import { universeNavigation } from "./universe-nav";
 import { AppShell, shellTitleTrail } from "./app-shell";
 import { documentTitle } from "@/lib/document-title";
 import { settleQueries } from "@/test/settle-queries";
@@ -21,7 +24,7 @@ vi.mock("@/lib/universes", async (original) => ({
 vi.mock("@/components/universe-switcher", () => ({ UniverseSwitcher: () => null }));
 vi.mock("@/components/user-menu", () => ({ UserMenu: () => null }));
 
-const WORK = ["Bots", "Sessions", "Workspaces"];
+const WORK = ["Bots", "Sessions", "Artifacts", "Workspaces"];
 const SETUP = ["Profiles", "Environments", "MCP servers", "Models"];
 
 let root: Root;
@@ -50,6 +53,7 @@ afterEach(async () => {
 async function sidebarFor(role: string, features = { bots: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
+    if (path.endsWith("/team/modules")) return { modules: standardWebModules.map(({ id }) => ({ id, enabled: true })) };
     if (path === "/api/v1/platform/organizations") {
       // The server's view: the caller's own role, plus Admin's actions for a Platform Admin.
       const roles = [organizationRole ?? "member", ...(platformAdmin ? ["admin"] : [])] as never[];
@@ -60,13 +64,13 @@ async function sidebarFor(role: string, features = { bots: true }, platformAdmin
   });
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}>
-      <MemoryRouter initialEntries={[adminPath ?? (platformAdmin ? "/admin/platform/audit" : "/u/test/bots")]}>
+      <WebModuleProvider value={standardWebModules}><MemoryRouter initialEntries={[adminPath ?? (platformAdmin ? "/admin/platform/audit" : "/u/test/bots")]}>
         <Routes>
           <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} />}>
             <Route path="/admin/organizations/:organizationId/*" element={null} /><Route path="*" element={null} />
           </Route>
         </Routes>
-      </MemoryRouter>
+      </MemoryRouter></WebModuleProvider>
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settleQueries(client);
@@ -101,7 +105,7 @@ it("gives an Owner the universe's own settings and members in its menu", async (
 
 it("leaves bots out of the menu", async () => {
   expect(await sidebarFor("owner", { bots: false })).toMatchObject({
-    "": ["Sessions", "Workspaces"],
+    "": ["Sessions", "Artifacts", "Workspaces"],
     Settings: ["General", "Members"],
   });
 });
@@ -124,17 +128,17 @@ it.each([
   ["/accounts-elsewhere", []],
   ["/", []],
 ])("names %s from the menu", (path, trail) => {
-  expect(shellTitleTrail(path, "Test")).toEqual(trail);
+  expect(shellTitleTrail(path, "Test", universeNavigation(standardWebModules))).toEqual(trail);
 });
 
 it("leaves the universe out until it has loaded", () => {
-  expect(shellTitleTrail("/u/test/sessions", undefined)).toEqual(["Sessions"]);
+  expect(shellTitleTrail("/u/test/sessions", undefined, universeNavigation(standardWebModules))).toEqual(["Sessions"]);
 });
 
 it("links each page at its flat route", async () => {
   await sidebarFor("owner");
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-    "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
+    "/u/test/bots", "/u/test/sessions", "/u/test/artifacts", "/u/test/workspaces",
     "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
     "/u/test/credentials",
     "/u/test/settings/general", "/u/test/settings/members",

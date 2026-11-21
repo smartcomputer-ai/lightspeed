@@ -21,6 +21,8 @@ export const PLATFORM_CLIENT_HELPERS = {
   "enrollOrganization": "platform/organizations/enroll",
   "createOrganization": "platform/organizations/create",
   "readOrganization": "platform/organizations/read",
+  "listOrganizationModules": "platform/organizations/modules/list",
+  "setOrganizationModule": "platform/organizations/modules/put",
   "updateOrganization": "platform/organizations/update",
   "listOrganizationMembers": "platform/organizations/members/list",
   "putOrganizationMember": "platform/organizations/members/put",
@@ -96,6 +98,12 @@ export class PlatformHelpers {
   }
   readOrganization(params: PlatformOperationParams<"platform/organizations/read">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/read">> {
     return this.client.call("platform/organizations/read", params, options);
+  }
+  listOrganizationModules(params: PlatformOperationParams<"platform/organizations/modules/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/modules/list">> {
+    return this.client.call("platform/organizations/modules/list", params, options);
+  }
+  setOrganizationModule(params: PlatformOperationParams<"platform/organizations/modules/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/modules/put">> {
+    return this.client.call("platform/organizations/modules/put", params, options);
   }
   updateOrganization(params: PlatformOperationParams<"platform/organizations/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/update">> {
     return this.client.call("platform/organizations/update", params, options);

@@ -7,6 +7,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { retryRead } from "@/lib/read-errors";
 import { App } from "./App.js";
+import { BotSessionControllerPresentation } from "@/components/bot/session-controller-presentation";
+import { SessionControllerPresenter } from "@session-ui/controller-presentation";
+import { standardWebModules } from "@distribution/web";
+import { WebModuleProvider } from "@/lib/web-modules";
 import { debugModeEnabled } from "@/devtools/debug-mode";
 import "./index.css";
 
@@ -26,7 +30,11 @@ createRoot(document.getElementById("root")!).render(
       <ThemeProvider>
         <TooltipProvider>
           <BrowserRouter basename={appBasename}>
-            <App />
+            <WebModuleProvider value={standardWebModules}>
+              <SessionControllerPresenter.Provider value={BotSessionControllerPresentation}>
+                <App />
+              </SessionControllerPresenter.Provider>
+            </WebModuleProvider>
           </BrowserRouter>
           {DebugToolbar && <Suspense fallback={null}><DebugToolbar /></Suspense>}
         </TooltipProvider>

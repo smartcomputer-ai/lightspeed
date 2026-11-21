@@ -70,8 +70,8 @@ it("falls back to the first active membership when the last universe is gone or 
   ]);
   localStorage.setItem("lightspeed:last-universe", "browsed");
   await show(true);
-  // Bots switched off lands on sessions instead.
-  await waitForUi(() => expect(landed()).toBe("/u/member/sessions"));
+  // The universe index picks an enabled module after the organization loads.
+  await waitForUi(() => expect(landed()).toBe("/u/member"));
 });
 
 it("offers an admin a first universe when there is none", async () => {

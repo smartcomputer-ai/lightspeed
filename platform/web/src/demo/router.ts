@@ -1,4 +1,4 @@
-import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared";
+import { auditQuerySchema, type AuditPage, type PlatformModule } from "@lightspeed-ai/platform-shared";
 import { demoDeploymentAllows } from "./access";
 import { organizationRoutes } from "./routes/organizations";
 import { watchRoutes } from "./routes/watch";
@@ -18,7 +18,7 @@ import { transcriptionRoutes } from "./routes/transcriptions";
 import { sessionRoutes } from "./routes/sessions";
 import { workspaceRoutes } from "./routes/workspaces";
 
-export function createDemoRouter(store: DemoStore): Hono {
+export function createDemoRouter(store: DemoStore, modules: readonly PlatformModule[] = []): Hono {
   const app = new Hono();
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
   app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
@@ -85,7 +85,7 @@ export function createDemoRouter(store: DemoStore): Hono {
     api.route("/universes", routes(store));
   }
   app.route("/api/ui", api);
-  app.route("/api/v1/platform", organizationRoutes(store));
+  app.route("/api/v1/platform", organizationRoutes(store, modules));
   app.route("/api/v1/universes", watchRoutes(store));
 
   // A missing stub surfaces as an ordinary API error in the UI instead of a

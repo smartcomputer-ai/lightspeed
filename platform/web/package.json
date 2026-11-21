@@ -2,12 +2,18 @@
   "name": "@lightspeed-ai/platform-web",
   "private": true,
   "type": "module",
+  "exports": {
+    "./modules": "./src/module-api/index.ts",
+    "./modules/ui": "./src/module-api/ui.ts",
+    "./modules/workspaces": "./src/module-api/workspaces.ts"
+  },
   "scripts": {
     "dev": "vite",
     "dev:demo": "vite --mode demo",
     "build": "vite build",
     "build:demo": "vite build --mode demo",
     "test": "vitest run",
+    "test:modules": "playwright test -c playwright.config.ts modules.pw.ts",
     "screenshots:demo": "node scripts/screendiff.mjs capture",
     "screendiff:demo": "node scripts/screendiff.mjs diff",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p e2e/tsconfig.json"

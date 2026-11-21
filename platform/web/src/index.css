@@ -13,6 +13,9 @@
 @import "@fontsource/ibm-plex-mono/700.css";
 @import "@fontsource/ibm-plex-mono/700-italic.css";
 
+@source "../../../modules/*/web";
+@source "../../session-ui";
+
 @custom-variant dark (&:is(.dark *));
 
 /* Reduced motion follows the choice in Preferences, which defaults to the

@@ -102,10 +102,11 @@ import * as Icons from "@/icons";
 import type { IconComponent } from "@/icons";
 import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
-import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
+import { GROUP_ORDER, StepRow, groupStyle } from "@session-ui/components/tool-trace";
 import { BotAvatar } from "@/components/bot/face";
 import { idColor, idHue } from "@/lib/identity-colors";
-import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { useBundledModules } from "@/lib/web-modules";
+import { universeNavigation } from "@/components/universe-nav";
 import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListExpand, type ListRowTree } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
@@ -2215,15 +2216,14 @@ const TRIGGER_ENTITIES: PlainEntity[] = [
   { entity: "Run a command", icon: Icons.CommandIcon, source: "bot/triggers.tsx" },
 ];
 
-/// The universe's sections, straight from the sidebar definition.
-const NAV_ENTITIES: PlainEntity[] = UNIVERSE_NAV.flatMap((group) =>
-  group.items.map((item) => ({ entity: item.label, icon: item.icon as IconComponent, source: "universe-nav.tsx" })),
-);
-
 /// Bot ids for the bot colours specimen: the demo's bots and a few more,
 /// spread around the hue wheel.
 
 function EntitiesSection() {
+  const navigation = universeNavigation(useBundledModules());
+  const navEntities: PlainEntity[] = navigation.flatMap(group => group.items.map(item => ({
+    entity: item.label, icon: item.icon as IconComponent, source: "Universe navigation",
+  })));
   const Brain = Icons.ThinkingIcon;
   return (
     <Category
@@ -2272,7 +2272,7 @@ function EntitiesSection() {
       <PlainEntities
         title="Universe sections"
         note="The sidebar"
-        entities={NAV_ENTITIES}
+        entities={navEntities}
       />
     </Category>
   );

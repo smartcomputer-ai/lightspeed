@@ -1,3 +1,4 @@
+import { refreshWorkspace } from "@/module-api/workspaces";
 import {
   createContext,
   useContext,
@@ -154,14 +155,7 @@ export function WorkspaceTransfers({
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
-  const invalidate = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: treeKey }),
-      queryClient.invalidateQueries({
-        queryKey: ["workspace-file", universeId, workspaceId],
-      }),
-      queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] }),
-    ]);
+  const invalidate = () => refreshWorkspace(queryClient, universeId, workspaceId);
 
   // Paths are fixed by the invoked menu or drop target. Only collisions and
   // failures need a dialog; a normal upload goes straight to one atomic commit.
@@ -1153,12 +1147,14 @@ export function WorkspaceActionsMenu({
   disabled = false,
   tabIndex,
   fileCount,
+  children,
 }: {
   path?: string;
   kind: "workspace" | "folder" | "file";
   disabled?: boolean;
   tabIndex?: number;
   fileCount?: number;
+  children?: ReactNode;
 }) {
   const transfers = useContext(Transfers);
   // Ghost and muted on its own; the group's look in a header's tool group.
@@ -1204,6 +1200,7 @@ export function WorkspaceActionsMenu({
       </DropdownMenuTrigger>
       </WithTooltip>
       <DropdownMenuContent notch align="end" className="w-56">
+        {children}
         <WorkspaceActionsItems path={path} kind={kind} disabled={disabled} fileCount={fileCount} />
       </DropdownMenuContent>
     </DropdownMenu>

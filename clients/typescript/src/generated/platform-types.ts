@@ -932,6 +932,46 @@ export interface PlatformOrganizationsReadResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsModulesListParams".
+ */
+export interface PlatformOrganizationsModulesListParams {
+  organizationId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsModulesListResult".
+ */
+export interface PlatformOrganizationsModulesListResult {
+  modules: {
+    id: string;
+    name: string;
+    description: string;
+    enabled: boolean;
+  }[];
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsModulesPutParams".
+ */
+export interface PlatformOrganizationsModulesPutParams {
+  organizationId: string;
+  moduleId: string;
+  enabled: boolean;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsModulesPutResult".
+ */
+export interface PlatformOrganizationsModulesPutResult {
+  module: {
+    id: string;
+    name: string;
+    description: string;
+    enabled: boolean;
+  };
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformOrganizationsUpdateParams".
  */
 export interface PlatformOrganizationsUpdateParams {

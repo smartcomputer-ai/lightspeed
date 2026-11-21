@@ -1,7 +1,7 @@
 import { startDeclaredUniverseSync } from "./declared-universes.js";
 import { serve } from "@hono/node-server";
 import { createDb, migrateDb } from "@lightspeed-ai/platform-db";
-import { buildApp } from "./api.js";
+import { buildStandardApi } from "../../../distributions/standard/api.js";
 import { createAuth } from "./auth.js";
 import { bootstrapAdmin } from "./bootstrap.js";
 import { seedDevelopment } from "./development-seed.js";
@@ -17,7 +17,7 @@ await seedDevelopment(db, env);
 
 const auth = createAuth(db, env);
 const context = { db, pool, auth, env };
-const app = buildApp(context);
+const app = buildStandardApi(context);
 const stopUniverseSync = startDeclaredUniverseSync(context);
 
 const server = serve({ fetch: app.fetch, port: env.port }, (info) => {

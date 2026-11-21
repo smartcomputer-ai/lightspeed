@@ -181,6 +181,26 @@
       "result": "PlatformOrganizationsReadResult"
     },
     {
+      "operationId": "platform/organizations/modules/list",
+      "helper": {
+        "name": "listOrganizationModules"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/modules",
+      "params": "PlatformOrganizationsModulesListParams",
+      "result": "PlatformOrganizationsModulesListResult"
+    },
+    {
+      "operationId": "platform/organizations/modules/put",
+      "helper": {
+        "name": "setOrganizationModule"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/organizations/{organizationId}/modules/{moduleId}",
+      "params": "PlatformOrganizationsModulesPutParams",
+      "result": "PlatformOrganizationsModulesPutResult"
+    },
+    {
       "operationId": "platform/organizations/update",
       "helper": {
         "name": "updateOrganization"

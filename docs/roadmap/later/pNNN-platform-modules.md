@@ -1,10 +1,20 @@
 # Platform modules on a shared Lightspeed deployment
 
-**Status** — Proposed for review.
+**Status** — The first Platform prototype is implemented on this branch. The runtime and worker changes below are proposals.
 
 Lightspeed teams contribute product features as **modules**. The Sessions module adds pages for sessions the Rust runtime already manages. The Bots module owns the whole feature, from its pages and API to its worker and database tables. They use the same plugin system. Platform defines how modules register pages and operations, and each distribution selects the modules it includes.
 
 An organization can enable the modules it needs on a shared deployment. Its universes remain the boundaries for sessions, credentials, and other resources.
+
+## Try the prototype
+
+Run `./dev.sh demo` and open the demo URL printed by the launcher. Pick a universe, open **Workspaces**, select a workspace, and choose **View artifacts** from its actions menu. Publish a file and open its preview. The file lives under `artifacts/` in that workspace and is readable from either page. Artifacts uses the existing VFS permissions, revision checks, and blob store. The demo keeps its data in the browser until reload.
+
+In **Organization settings → Modules**, turn off Artifacts and revisit its URL. The route, navigation entry, and workspace action all follow the organization's choice. Turning Artifacts back on shows the same files. Turning off Sessions removes the standalone Sessions pages while Bots can still open its conversations using the shared session view. Both modules default to enabled in the standard distribution. The real Platform persists explicit choices in PostgreSQL. Its public API exposes them to the SDK and CLI.
+
+The [standard catalog](../../../distributions/standard/catalog.ts) selects the modules for the frontend build and API startup. A new module supplies its metadata and a web entry point. The [Artifacts entry](../../../modules/artifacts/web/index.ts) shows how to contribute a page, navigation, and a workspace action. Its [page](../../../modules/artifacts/web/ArtifactsPage.tsx) uses Platform's module-facing UI and workspace interfaces. The [Sessions module](../../../modules/sessions/web/index.ts) and Bots share the [session detail view](../../../platform/session-ui/SessionDetail.tsx).
+
+This first version supports organization-wide installation of bundled web modules. The Rust runtime still owns Bots and its worker. Module-owned services, worker credentials, and per-universe installation overrides are future work.
 
 ## How teams contribute and ship
 

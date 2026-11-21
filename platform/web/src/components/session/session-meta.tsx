@@ -41,10 +41,8 @@ export interface SessionMetaInput {
   /// Sub-agent sessions under it, when known; `more` when there are more
   /// than counted, `first` the first one's name.
   subAgents?: { count: number; more?: boolean; first?: string };
-  /// Who drives a controlled session, when known. Without it, a session id
-  /// minted by a bot names "a bot", any other "an integration".
-  /// `href` opens the conversation in its bot; `botId` colours its icon.
-  controller?: { bot: boolean; botId?: string; label?: string; href?: string };
+  /// Display information supplied by the controller's UI when available.
+  controller?: { label: string; icon?: MetaItem["icon"]; iconColor?: string; href?: string };
   /// Its lineage, on its page: the parent, and each sub-agent by name.
   lineage?: SessionLineage;
   lineageHref?: (sessionId: string) => string;
@@ -127,35 +125,20 @@ export function sessionMetaItems({ session, subAgents, controller, lineage, line
 
   // Who drives it.
   if (session.lifecycleControlled) {
-    const driver = controller ?? { bot: session.id.startsWith("bot:v1:") };
-    if (driver.bot) {
-      const href = driver.href;
-      // The bot's own colour, as in its list and header: the page names it,
-      // else a session id a bot minted (bot:v1:<bot id>…) does.
-      const botId = driver.botId ?? (session.id.startsWith("bot:v1:") ? session.id.slice("bot:v1:".length).split(":")[0] : undefined);
-      items.push({
-        key: SESSION_META.controller,
-        label: driver.label ? `Run by ${driver.label}` : "Bot session",
-        icon: BotIcon,
-        iconColor: botId ? botColor(botId) : undefined,
-        text: driver.label ? `via ${driver.label}` : "Bot",
-        // Which bot: its name where the page knows it, else its id.
-        tooltip: `Run by ${driver.label ?? botId ?? "a bot"}: ${href
-          ? "open this conversation in its bot"
-          : "the bot controls this session's lifecycle and chat input"}`,
-        href,
-        priority: 8,
-      });
-    } else {
-      items.push({
-        key: SESSION_META.controller,
-        label: driver.label ? `Managed by ${driver.label}` : "Managed session",
-        icon: ManagedIcon,
-        text: driver.label ? `Managed by ${driver.label}` : "Managed",
-        tooltip: `Managed: ${driver.label ?? "an integration"} controls this session's lifecycle and chat input`,
-        priority: 8,
-      });
-    }
+    // Legacy list summaries carry no controller descriptor. Keep their compact
+    // bot mark when its id was minted by the built-in bot controller.
+    const botId = !controller && session.id.startsWith("bot:v1:") ? session.id.split(":")[2] : undefined;
+    const name = controller?.label ?? botId;
+    items.push({
+      key: SESSION_META.controller,
+      label: name ? `Managed by ${name}` : "Managed session",
+      icon: controller?.icon ?? (botId ? BotIcon : ManagedIcon),
+      iconColor: controller?.iconColor ?? (botId ? botColor(botId) : undefined),
+      text: controller ? `Managed by ${name}` : botId ? "Bot" : "Managed",
+      tooltip: `${name ?? "An integration"} controls this session's lifecycle and chat input`,
+      href: controller?.href,
+      priority: 8,
+    });
   }
 
   // How many it delegated to, the first by name. On its page a click lists

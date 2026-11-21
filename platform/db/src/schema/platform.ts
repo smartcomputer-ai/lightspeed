@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { apikey, organization, user } from "./auth.js";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -17,6 +17,13 @@ export const platformSettings = pgTable("platform_settings", {
   updatedBy: text("updated_by"),
   updatedAt: updatedAt(),
 });
+
+/** Explicit organization choices survive a distribution changing its defaults. */
+export const organizationModules = pgTable("organization_modules", {
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  moduleId: text("module_id").notNull(),
+  enabled: boolean("enabled").notNull(),
+}, (table) => [primaryKey({ columns: [table.organizationId, table.moduleId] })]);
 
 // Attribution must survive deletion of the referenced identity or resource.
 export const identityAudit = pgTable("identity_audit", {

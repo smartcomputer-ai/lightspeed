@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { SaveButton } from "@/components/ui/save-button";
 import { Switch } from "@/components/ui/switch";
 import { InfoBox, type InfoBoxTone } from "@/components/ui/info-box";
+import { OrganizationModules } from "./organization-modules";
 
 type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
 type OrganizationChange = Omit<PlatformOperationParams<"platform/organizations/update">, "organizationId">;
@@ -23,6 +24,7 @@ export function OrganizationSettings({ organization }: { organization: Organizat
   return (
     <div className="grid gap-6">
       {!organization.personal && <NameCard organization={organization} />}
+      <OrganizationModules organizationId={organization.id} />
       {organization.enrollment && <Card>
         <CardHeader><CardTitle>Workload enrollment</CardTitle></CardHeader>
         <CardContent><dl className="grid gap-2 text-sm">

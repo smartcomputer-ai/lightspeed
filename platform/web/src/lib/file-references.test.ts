@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { findFileReference, filesByHandle, filesFromAttachments } from "./file-references";
-import { applyEvents, emptyTranscript } from "./sessions/transcript";
-import { TranscriptWindow } from "./sessions/transcript-window";
+import { applyEvents, emptyTranscript } from "@session-ui/model/transcript";
+import { TranscriptWindow } from "@session-ui/model/transcript-window";
 import type { SessionEvent, ToolAttachmentView } from "@/api";
 
 const handle = `file:${"a".repeat(24)}`;

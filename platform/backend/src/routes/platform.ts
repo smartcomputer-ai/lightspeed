@@ -11,6 +11,7 @@ import { auditAsSubject } from "../identity-audit.js";
 import { effectiveUniverseQuota, listPlatformSettings, platformSettings, putPlatformSetting } from "../platform-settings.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
+import { organizationModuleView, type PlatformModule } from "@lightspeed-ai/platform-shared";
 import { policyBody, problem } from "../runtime-http.js";
 import { activeGrantIds, universeView, adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess, type UniverseReference } from "./universes.js";
 
@@ -35,7 +36,7 @@ async function enrollmentDetails(ctx: AppContext, auth: AuthContext, ids: string
   return new Map(rows.map(({ organizationId, issuer, subject, subjectPattern }) => [organizationId, { issuer, subject, subjectPattern }]));
 }
 
-export function platformRoutes(ctx: AppContext) {
+export function platformRoutes(ctx: AppContext, modules: readonly PlatformModule[] = []) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.onError((error, c) => {
     if (error instanceof HTTPException || error instanceof GateRefusal) return problem(c, error.status, error.status === 404 ? "notFound" : error.status === 409 ? "conflict" : error.status === 400 || error.status === 413 ? "invalidRequest" : "forbidden", error.message);
@@ -63,7 +64,7 @@ export function platformRoutes(ctx: AppContext) {
       if (!parsed.success) return problem(c, 400, "invalidRequest", parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
       if (auth.credential.restrictions.universeIds && operation.startsWith("platform/organizations/") && spec.method !== "GET") throw new GateRefusal(403, "universe-restricted credential cannot mutate organization-wide resources");
       enforceRestrictions(auth, { operation, ...(typeof parameters.organizationId === "string" ? { organizationId: parameters.organizationId } : {}), write: spec.method !== "GET" && typeof parameters.universe !== "string" });
-      return c.json(await dispatch(ctx, auth, operation as PlatformOperationId, parsed.data as Record<string, unknown>));
+      return c.json(await dispatch(ctx, auth, operation as PlatformOperationId, parsed.data as Record<string, unknown>, modules));
     });
   }
   return app;
@@ -75,9 +76,29 @@ function requireSettingsAuthority(auth: AuthContext) {
   if (auth.credential.restrictions.organizationIds || auth.credential.restrictions.universeIds) throw new GateRefusal(403, "credential is limited to some organizations or universes");
 }
 
-async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformOperationId, params: Record<string, unknown>): Promise<unknown> {
+async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformOperationId, params: Record<string, unknown>, modules: readonly PlatformModule[]): Promise<unknown> {
   const organizationId = params.organizationId as string;
   switch (operation) {
+    case "platform/organizations/modules/list": {
+      if (!await organizationForPrincipal(ctx, auth, organizationId)) throw new GateRefusal(404, "organization not found");
+      const table = schema.organizationModules;
+      const rows = await ctx.db.select().from(table).where(eq(table.organizationId, organizationId));
+      const settings = new Map(rows.map(row => [row.moduleId, row.enabled]));
+      return { modules: modules.map(module => organizationModuleView(module, settings.get(module.id))) };
+    }
+    case "platform/organizations/modules/put": {
+      await requireOrganizationAction(ctx, auth, organizationId, "managePolicy");
+      const { moduleId, enabled } = params as PlatformOperationParams<typeof operation>;
+      const module = modules.find(entry => entry.id === moduleId);
+      if (!module) throw new GateRefusal(404, "module is unavailable in this distribution");
+      const table = schema.organizationModules;
+      await ctx.db.transaction(async tx => {
+        await tx.insert(table).values({ organizationId, moduleId, enabled })
+          .onConflictDoUpdate({ target: [table.organizationId, table.moduleId], set: { enabled } });
+        await auditAsSubject(tx, auth, { action: "organization.module.put", targetId: organizationId, details: { moduleId, enabled } });
+      });
+      return { module: organizationModuleView(module, enabled) };
+    }
     case "platform/service-users/federated-credentials/list": return listFederatedCredentials(ctx, auth, params as PlatformOperationParams<typeof operation>);
     case "platform/service-users/federated-credentials/put": return putFederatedCredential(ctx, auth, params as PlatformOperationParams<typeof operation>);
     case "platform/service-users/federated-credentials/delete": return deleteFederatedCredential(ctx, auth, params as PlatformOperationParams<typeof operation>);

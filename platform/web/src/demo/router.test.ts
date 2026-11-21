@@ -16,8 +16,8 @@ import type {
   ModelDefaults,
 } from "@/api";
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
-import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
-import { sectionsByRun } from "@/lib/sessions/run-sections";
+import { applyEvents, emptyTranscript } from "@session-ui/model/transcript";
+import { sectionsByRun } from "@session-ui/model/run-sections";
 import { appendScriptedRun, startRun } from "./engine";
 
 /// Walks the demo router the way the UI does: every read path each page

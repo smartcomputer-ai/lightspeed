@@ -13,8 +13,10 @@
     "isolatedModules": true,
     "useDefineForClassFields": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@session-ui/*": ["../session-ui/*"],
+      "@distribution/*": ["../../distributions/standard/*"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "../session-ui", "../../modules/*/web/**/*.ts", "../../modules/*/web/**/*.tsx", "../../distributions/standard/web.ts"]
 }

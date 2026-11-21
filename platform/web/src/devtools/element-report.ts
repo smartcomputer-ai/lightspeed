@@ -172,18 +172,15 @@ function componentName(type: unknown): string | undefined {
   return undefined;
 }
 
-/// The first application file in a JSX creation stack, as a src-relative path.
+/// The first application file in a JSX creation stack. Vite serves module
+/// and shared session sources outside the web host via /@fs/.
 export function sourceFileFromStack(stack: string | undefined): string | undefined {
   if (!stack) return undefined;
-  for (const match of stack.matchAll(/\((?:https?:\/\/[^/)]+)?([^)]*?\/src\/[^)?:]+)/g)) {
-    const path = match[1]!;
-    if (path.includes("/node_modules/")) continue;
-    return path.slice(path.indexOf("/src/") + 1);
-  }
-  for (const match of stack.matchAll(/(?:https?:\/\/[^/\s]+)?(\S*?\/src\/[^\s?:)]+)/g)) {
-    const path = match[1]!;
-    if (path.includes("/node_modules/")) continue;
-    return path.slice(path.indexOf("/src/") + 1);
+  for (const frame of stack.split("\n")) {
+    if (frame.includes("/node_modules/")) continue;
+    const file = frame.match(/\/((?:modules\/[^/]+\/web|platform\/session-ui)\/[^)?:\s]+)/)
+      ?? frame.match(/\/(src\/[^)?:\s]+)/);
+    if (file) return file[1];
   }
   return undefined;
 }

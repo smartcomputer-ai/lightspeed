@@ -791,6 +791,31 @@ class PlatformOrganizationsReadResult(TypedDict):
     organization: Organization3
 
 
+class PlatformOrganizationsModulesListParams(TypedDict):
+    organizationId: str
+
+
+class Module(TypedDict):
+    id: str
+    name: str
+    description: str
+    enabled: bool
+
+
+class PlatformOrganizationsModulesListResult(TypedDict):
+    modules: list[Module]
+
+
+class PlatformOrganizationsModulesPutParams(TypedDict):
+    organizationId: str
+    moduleId: str
+    enabled: bool
+
+
+class PlatformOrganizationsModulesPutResult(TypedDict):
+    module: Module
+
+
 class Members6(TypedDict):
     email: str
     role: Literal['member', 'creator', 'admin']

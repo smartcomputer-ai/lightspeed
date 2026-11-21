@@ -1,10 +1,10 @@
-import { useWatchConnected } from "@/lib/universe-watch";
+import { useWorkspaceList, useWorkspaceTree } from "@/module-api/workspaces";
 import { useActionPermissions } from "@/lib/permissions";
 import { useDocumentTitle } from "@/lib/document-title";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
 import { AddIcon, DownloadIcon, FileIcon, WorkspaceIcon } from "@/icons";
 import {
@@ -13,7 +13,6 @@ import {
   type VfsFileEntry,
   type VfsTreeEntry,
   type WorkspaceRow,
-  type WorkspaceTree,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +40,8 @@ import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { DetailHeader } from "@/components/detail-header";
+import { useAvailableWebModules } from "@/lib/web-modules";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { MetaToolbar } from "@/components/meta-toolbar";
 import { fileMetaItems } from "@/components/workspace-file-meta";
 import { ListPane, ListPaneHeader, ListPaneToolbar } from "@/components/list-pane";
@@ -177,25 +178,8 @@ function WorkspacePane({
   const navigate = useNavigate();
   const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("createWorkspace");
-  const watchConnected = useWatchConnected(universeId);
-  const workspaces = useQuery({
-    queryKey: ["workspaces", universeId],
-    refetchInterval: watchConnected ? 60_000 : 10_000,
-    refetchIntervalInBackground: false,
-    queryFn: () =>
-      api<WorkspaceRow[]>("GET", `/api/ui/universes/${universeId}/workspaces`),
-  });
-  const tree = useQuery({
-    queryKey: ["workspace-tree", universeId, workspaceId],
-    refetchInterval: watchConnected ? 60_000 : 10_000,
-    refetchIntervalInBackground: false,
-    queryFn: () =>
-      api<WorkspaceTree>(
-        "GET",
-        `/api/ui/universes/${universeId}/workspaces/${workspaceId}/tree`,
-      ),
-    enabled: workspaceId !== undefined,
-  });
+  const workspaces = useWorkspaceList(universeId);
+  const tree = useWorkspaceTree(universeId, workspaceId);
   const workspaceName = workspaceId && workspaces.data
     ? (workspaces.data.find((w) => w.workspaceId === workspaceId)?.displayName ?? workspaceId)
     : undefined;
@@ -263,7 +247,11 @@ function WorkspacePane({
           </p>
         )}
         </div>
-        {tree.data && <WorkspaceActionsMenu kind="workspace" fileCount={tree.data.workspace.files} />}
+        {tree.data && workspaceId && (
+          <WorkspaceActionsMenu kind="workspace" fileCount={tree.data.workspace.files}>
+            <WorkspaceModuleActions handle={handle} workspaceId={workspaceId} />
+          </WorkspaceActionsMenu>
+        )}
       </ListPaneToolbar>
       {/* The scrolling body is the drop target, so a drop anywhere below the
           tree lands in the workspace root. */}
@@ -295,6 +283,16 @@ function WorkspacePane({
       )}
     </>
   );
+}
+
+function WorkspaceModuleActions({ handle, workspaceId }: { handle: string; workspaceId: string }) {
+  const { universe } = useActiveUniverse();
+  const { modules } = useAvailableWebModules(universe);
+  return modules.map(({ id, icon: Icon, workspaceAction }) => workspaceAction && (
+    <DropdownMenuItem key={id} render={<Link to={workspaceAction.href(handle, workspaceId)} />}>
+      <Icon /> {workspaceAction.label}
+    </DropdownMenuItem>
+  ));
 }
 
 function findFile(
@@ -337,21 +335,11 @@ function FileDetail({
   fileIdentity: number;
   relocation: FileRelocation | null;
 }) {
-  const watchConnected = useWatchConnected(universeId);
   const permissions = useActionPermissions(universeId);
   const canEditFiles = permissions.can("useResource");
   const downloads = useWorkspaceDownload();
   const [mode, setMode] = useSetting(SETTINGS.workspaceFileMode(universeId, workspaceId, filePath));
-  const tree = useQuery({
-    queryKey: ["workspace-tree", universeId, workspaceId],
-    refetchInterval: watchConnected ? 60_000 : 10_000,
-    refetchIntervalInBackground: false,
-    queryFn: () =>
-      api<WorkspaceTree>(
-        "GET",
-        `/api/ui/universes/${universeId}/workspaces/${workspaceId}/tree`,
-      ),
-  });
+  const tree = useWorkspaceTree(universeId, workspaceId);
   const file = tree.data
     ? findFile(tree.data.manifest.root.entries, filePath)
     : null;

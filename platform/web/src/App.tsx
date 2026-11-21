@@ -34,7 +34,10 @@ import { UniverseRedirect } from "@/components/universe-redirect";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { SettingsPage, SettingsRedirect } from "@/pages/SettingsPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
-import { SessionsPage } from "@/pages/SessionsPage";
+import { ModuleRoute } from "@/components/module-route";
+import { CenteredNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { ReadError } from "@/components/read-error";
+import { useAvailableWebModules, useBundledModules } from "@/lib/web-modules";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
@@ -47,14 +50,19 @@ import { debugModeEnabled } from "@/devtools/debug-mode";
 const DebugRoutes = import.meta.env.DEV || debugModeEnabled ? lazy(() => import("@/devtools/DebugRoutes")) : null;
 
 function UniverseIndexRedirect() {
-  const { universe } = useActiveUniverse();
-  if (!universe) {
-    return null;
-  }
-  return <Navigate to={universeHome(universe)} replace />;
+  const { universe, handle, isLoading } = useActiveUniverse();
+  const available = useAvailableWebModules(universe);
+  if (isLoading) return <LoadingNote />;
+  if (!universe) return <UniverseNotFound handle={handle} />;
+  if (!universe.actions?.includes("read")) return <CenteredNote>You do not have access to this universe.</CenteredNote>;
+  if (universe.features.bots) return <Navigate to={universeHome(universe)} replace />;
+  if (available.isLoading) return <LoadingNote />;
+  if (available.error) return <ReadError error={available.error} prefix="Module availability" />;
+  return <Navigate to={`/u/${universe.handle}/${available.modules[0]?.id ?? "workspaces"}`} replace />;
 }
 
 export function App() {
+  const modules = useBundledModules();
   const location = useLocation();
   const session = authClient.useSession();
   const loginConfig = useLoginConfig();
@@ -123,11 +131,11 @@ export function App() {
       }>
         <Route index element={<HomeRedirect />} />
         <Route path="u/:handle" element={<UniverseIndexRedirect />} />
-        <Route path="u/:handle/sessions" element={<SessionsPage />} />
-        <Route
-          path="u/:handle/sessions/:sessionId"
-          element={<SessionsPage />}
-        />
+        <Route path="u/:handle/*" element={<UniverseIndexRedirect />} />
+        {modules.flatMap(module => module.routes.map(({ path, Page }) => (
+          <Route key={`${module.id}/${path}`} path={`u/:handle/${module.id}${path && `/${path}`}`}
+            element={<ModuleRoute module={module} Page={Page} />} />
+        )))}
         <Route path="u/:handle/workspaces" element={<WorkspacesPage />} />
         <Route
           path="u/:handle/workspaces/:workspaceId"

@@ -988,7 +988,7 @@ it("offers the open file’s actions in its detail header and on its row’s rig
     ),
   );
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith(
-    "GET", "/api/ui/universes/u/workspaces/ws/tree",
+    "GET", "/api/ui/universes/u/workspaces/ws/tree", undefined, expect.any(AbortSignal),
   ));
   expect(container.querySelector("textarea")).toBeNull();
   await act(async () => snapshot.resolve({ ...tree(), workspace }));

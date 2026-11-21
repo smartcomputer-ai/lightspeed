@@ -3,10 +3,11 @@ import { Hono } from "hono";
 import { demoDeploymentAllows, demoOrganizationActions, demoUniverseQuota, demoUniverseView } from "../access";
 import { PLATFORM_SETTINGS, platformSettingPutSchema, type PlatformSettingKey, organizationCreateSchema, organizationUpdateSchema, organizationMemberPutSchema, serviceUserCreateSchema, serviceUserUpdateSchema, organizationUniverseCreateSchema, universeGrantPutSchema, universeLifecycleUpdateSchema, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type { DemoStore } from "../store";
+import { organizationModuleView, type PlatformModule } from "@lightspeed-ai/platform-shared";
 type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
 type ServiceUser = PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number];
 type Grant = PlatformOperationResult<"platform/universes/grants/list">["grants"][number];
-export function organizationRoutes(store: DemoStore) {
+export function organizationRoutes(store: DemoStore, modules: readonly PlatformModule[]) {
   const app = new Hono();
   const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
   if (!organizations.has("demo-organization")) {
@@ -15,6 +16,25 @@ export function organizationRoutes(store: DemoStore) {
   }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
   app.use("/organizations/:organizationId/*", async (c, next) => { if (!organizations.has(c.req.param("organizationId")!)) return c.json({ error: "Organization not found" }, 404); await next(); });
+  app.get("/organizations/:organizationId/modules", c => {
+    const id = c.req.param("organizationId");
+    if (!memberships.get(id)?.has(store.currentUser.id) && !demoDeploymentAllows(store, "administerOrganizations")) return c.json({ error: "Organization not found" }, 404);
+    const settings = store.organizationModules.get(id);
+    return c.json({ modules: modules.map(module => organizationModuleView(module, settings?.get(module.id))) });
+  });
+  app.put("/organizations/:organizationId/modules/:moduleId", async c => {
+    const id = c.req.param("organizationId");
+    const role = memberships.get(id)?.get(store.currentUser.id);
+    if (!demoOrganizationActions(store, role).has("managePolicy")) return c.json({ error: "Organization permission required" }, 403);
+    const module = modules.find(entry => entry.id === c.req.param("moduleId"));
+    if (!module) return c.json({ error: "Module unavailable" }, 404);
+    const body = await c.req.json().catch(() => null);
+    if (typeof body?.enabled !== "boolean") return c.json({ error: "Expected an enabled setting" }, 400);
+    const settings = store.organizationModules.get(id) ?? new Map<string, boolean>();
+    settings.set(module.id, body.enabled);
+    store.organizationModules.set(id, settings);
+    return c.json({ module: organizationModuleView(module, body.enabled) });
+  });
   // An organization without its own limit follows the deployment default for its kind.
   const setting = (key: PlatformSettingKey) => store.platformSettings.get(key) ?? PLATFORM_SETTINGS[key].defaultValue;
   const quota = (organization: Organization) => demoUniverseQuota(store, organization);

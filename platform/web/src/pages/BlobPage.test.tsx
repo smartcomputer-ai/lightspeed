@@ -8,23 +8,28 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { waitForUi } from "@/test/wait-for-ui";
 import { documentTitle } from "@/lib/document-title";
+import { standardWebModules } from "@distribution/web";
+import { WebModuleProvider } from "@/lib/web-modules";
 import { BlobPage } from "./BlobPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "viewer", actions: [...universeActions(["viewer"])], handle: "acme", name: "Acme" }, handle: "acme", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", organizationId: "team", role: "viewer", actions: [...universeActions(["viewer"])], handle: "acme", name: "Acme" }, handle: "acme", isLoading: false }) }));
 
 const digest = "c".repeat(64);
 const filePath = "docs/résumé #?.txt";
 let root: Root;
 let container: HTMLDivElement;
 let stored: string;
+let sessionsEnabled: boolean;
 let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  sessionsEnabled = true;
   stored = "# Instructions\n\n<script>alert(1)</script>";
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
+    if (path.endsWith("/team/modules")) return { modules: [{ id: "sessions", enabled: sessionsEnabled }] };
     if (path.endsWith("/access")) return { actions: ["read"], resources: [] };
     if (path.endsWith("/sessions/s1")) return { id: "s1", displayName: "HIT login debugging" };
     if (path.endsWith("/sessions/private")) throw new Error("not found");
@@ -60,9 +65,9 @@ async function open(url: string) {
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <PermissionIdentityProvider userId="user" platformAdmin={false}>
-        <MemoryRouter initialEntries={[url]}>
+        <WebModuleProvider value={standardWebModules}><MemoryRouter initialEntries={[url]}>
           <Routes><Route path="/u/:handle/blobs/:digest" element={<BlobPage />} /></Routes>
-        </MemoryRouter>
+        </MemoryRouter></WebModuleProvider>
       </PermissionIdentityProvider>
     </QueryClientProvider>,
   ));
@@ -81,6 +86,13 @@ it("shows stored text exactly as stored, named from the link, with its source se
   await waitForUi(() => expect(container.textContent).toContain("Linked from session: HIT login debugging"));
   expect(container.querySelector('header a[href="/u/acme/sessions/s1"]')!.textContent).toBe("HIT login debugging");
   expect(document.title).toBe(documentTitle(["Profile instructions"]));
+});
+
+it("keeps a readable source session named when its page is disabled", async () => {
+  sessionsEnabled = false;
+  await open(`/u/acme/blobs/${digest}?session=s1`);
+  expect(container.textContent).toContain("Linked from session: HIT login debugging");
+  expect(container.querySelector('header a[href="/u/acme/sessions/s1"]')).toBeNull();
 });
 
 it("hands images to the browser and names unnamed blobs by digest", async () => {

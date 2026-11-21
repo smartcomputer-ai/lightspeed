@@ -183,7 +183,7 @@ export const SETTINGS = {
   /// page; null keeps the default.
   listWidth: layoutWidth("listWidth"),
   /// A composer's unsent text, by draft key (see `sessionDraftKey` in
-  /// lib/sessions/draft.ts).
+  /// platform/session-ui/model/draft.ts).
   composerDraft: defineSettingFamily("composerDraft", (draftKey: string) => ({
     persistence: "device" as const,
     key: draftKey,

@@ -36,10 +36,9 @@ export function useActiveUniverse(): {
   };
 }
 
-/// Landing page inside a universe: its bots while that feature is on, its
-/// sessions otherwise.
+/// The universe index resolves the first enabled module after loading its organization.
 export function universeHome(universe: { handle: string; features?: FeatureStates }): string {
-  return `/u/${universe.handle}/${universe.features?.bots ? "bots" : "sessions"}`;
+  return `/u/${universe.handle}${universe.features?.bots ? "/bots" : ""}`;
 }
 
 /// Whether a feature is on in the active universe. The Platform refuses a

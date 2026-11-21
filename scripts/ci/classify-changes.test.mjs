@@ -27,6 +27,9 @@ test('unrelated code and internal prose do not run docs checks', () => {
   assert.deepEqual(classifyPaths(['crates/api/src/lib.rs']), { ...none, rust: true, consumers: true });
   assert.deepEqual(classifyPaths(['platform/web/src/main.tsx', 'clients/typescript/src/index.ts']),
     { ...none, consumers: true });
+  for (const path of ['modules/sessions/web/index.ts', 'distributions/standard/catalog.ts']) {
+    assert.deepEqual(classifyPaths([path]), { ...none, consumers: true });
+  }
   assert.deepEqual(classifyPaths(['docs/roadmap/documentation.md', 'docs/site/README.md', 'docs/variables.md', 'README.md']), none);
 });
 

@@ -19,6 +19,8 @@ export interface PlatformOperationMap {
   "platform/organizations/enroll": { params: T.PlatformOrganizationsEnrollParams; result: T.PlatformOrganizationsEnrollResult };
   "platform/organizations/create": { params: T.PlatformOrganizationsCreateParams; result: T.PlatformOrganizationsCreateResult };
   "platform/organizations/read": { params: T.PlatformOrganizationsReadParams; result: T.PlatformOrganizationsReadResult };
+  "platform/organizations/modules/list": { params: T.PlatformOrganizationsModulesListParams; result: T.PlatformOrganizationsModulesListResult };
+  "platform/organizations/modules/put": { params: T.PlatformOrganizationsModulesPutParams; result: T.PlatformOrganizationsModulesPutResult };
   "platform/organizations/update": { params: T.PlatformOrganizationsUpdateParams; result: T.PlatformOrganizationsUpdateResult };
   "platform/organizations/members/list": { params: T.PlatformOrganizationsMembersListParams; result: T.PlatformOrganizationsMembersListResult };
   "platform/organizations/members/put": { params: T.PlatformOrganizationsMembersPutParams; result: T.PlatformOrganizationsMembersPutResult };
@@ -114,6 +116,14 @@ export const PLATFORM_OPERATIONS = {
   "platform/organizations/read": {
     "method": "GET",
     "path": "/api/v1/platform/organizations/{organizationId}"
+  },
+  "platform/organizations/modules/list": {
+    "method": "GET",
+    "path": "/api/v1/platform/organizations/{organizationId}/modules"
+  },
+  "platform/organizations/modules/put": {
+    "method": "PUT",
+    "path": "/api/v1/platform/organizations/{organizationId}/modules/{moduleId}"
   },
   "platform/organizations/update": {
     "method": "PATCH",

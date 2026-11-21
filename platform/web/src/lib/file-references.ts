@@ -1,7 +1,7 @@
 import { validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
 import { blobDigest } from "./blob-view";
 import type { SessionEventsPage, ToolAttachmentView } from "@/api";
-import type { TranscriptEntry } from "./sessions/transcript";
+import type { TranscriptEntry } from "@session-ui/model/transcript";
 
 export interface FileReference {
   handle: string;

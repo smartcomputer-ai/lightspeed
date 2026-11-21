@@ -37,18 +37,18 @@ it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
 
 it("treats a universe that names no feature states as having every feature off", () => {
   const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test/sessions");
+  expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test");
   const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
-  expect(settingsIndexPath({ handle: "test" }, viewer)).toBe("/u/test/sessions");
+  expect(settingsIndexPath({ handle: "test" }, viewer)).toBe("/u/test");
 });
 
-it("lands on the universe home when no settings page is on, sessions when bots are off", () => {
+it("uses the universe index when no settings page is available and bots are off", () => {
   const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
   expect(settingsIndexPath({ handle: "test", features: { bots: true } }, operator))
     .toBe("/u/test/bots");
   const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
   expect(settingsIndexPath({ handle: "test", features: { bots: false } }, viewer))
-    .toBe("/u/test/sessions");
+    .toBe("/u/test");
 });
 
 let root: Root;

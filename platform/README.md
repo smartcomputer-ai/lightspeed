@@ -53,28 +53,28 @@ The SDK [transcript metadata helpers and session-view data guide](../docs/docume
 describe author/time derivation, materialized list fields and watch integration.
 The helpers are available independently of the current UI presentation.
 
-The [history loader](web/src/components/session/history-loader.tsx) starts
-with recent events, while the [live reader](web/src/lib/sessions/tail.ts)
+The [history loader](session-ui/components/history-loader.tsx) starts
+with recent events, while the [live reader](session-ui/model/tail.ts)
 follows from that window's head. Older pages load as the reader scrolls up.
-[Transcript reconstruction](web/src/lib/sessions/transcript.ts) merges those
+[Transcript reconstruction](session-ui/model/transcript.ts) merges those
 streams by event and entry ID; historical lifecycle events must not overwrite
 live session controls. Changing sessions cancels both read paths. Transient
 read failures retain existing content while retrying, and authorization or
 integrity errors remain visible immediately.
 
-[Submission reconciliation](web/src/lib/sessions/submissions.ts) combines local
+[Submission reconciliation](session-ui/model/submissions.ts) combines local
 sends with event history in one projection. Local render keys survive confirmation;
 input stays visible while the event tail catches up with HTTP receipts. Steering
 matches submission and steering IDs and renders within its run from the start.
 Local messages appear immediately; incoming messages retain entrance motion.
 
-[Run sections](web/src/lib/sessions/run-sections.ts) select the final answer
+[Run sections](session-ui/model/run-sections.ts) select the final answer
 from the run's recorded output reference, so loading older history cannot
 promote an interim message to the final answer. Partially loaded runs must
 not present partial usage as a whole-run total. Context statistics describe
 the last model request; cumulative usage describes the run. Missing provider
 measurements remain unavailable. The
-[transcript view](web/src/components/session/transcript-view.tsx) owns the
+[transcript view](session-ui/components/transcript-view.tsx) owns the
 presentation and its tests; see [Sessions and runs](../docs/documentation/using-lightspeed/sessions-and-runs.md)
 for the user controls.
 

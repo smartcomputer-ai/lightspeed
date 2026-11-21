@@ -1,4 +1,4 @@
-import { useSessionCompaction } from "@/lib/sessions/compaction";
+import { useSessionCompaction } from "@session-ui/model/compaction";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfigureIcon, GoToIcon, LoadingIcon, PauseIcon, ResetIcon, ResumeIcon } from "@/icons";
@@ -23,6 +23,7 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { foldActivity } from "@/components/activity-dot";
 import type { ResourceAccessSummary } from "@lightspeed-ai/sdk";
 import { useDocumentTitle } from "@/lib/document-title";
+import { useSessionPageHref } from "@/lib/web-modules";
 import { useActionPermissions, usePermissionIdentity } from "@/lib/permissions";
 import { BotActivity } from "./activity";
 import { BotActionsMenu } from "./bot-actions-menu";
@@ -262,6 +263,7 @@ function ConversationMenu({
 }) {
   const queryClient = useQueryClient();
   const [resetOpen, setResetOpen] = useState(false);
+  const sessionHref = useSessionPageHref(handle, sessionId);
   const managedHere = (controller.sessions ?? []).some((entry) => entry.sessionId === sessionId);
   const session = useQuery({
     queryKey: ["session", universeId, sessionId],
@@ -293,11 +295,11 @@ function ConversationMenu({
         metadata={session.data?.metadata}
         onCompact={canCompact && session.data && session.data.lifecycleStatus !== "closed" ? compaction.compact : undefined}
         compactionLabel={compaction.label}
-        open={{
+        open={sessionHref ? {
           label: "Open on the Sessions page",
-          href: `/u/${handle}/sessions/${encodeURIComponent(sessionId)}`,
+          href: sessionHref,
           icon: <GoToIcon />,
-        }}
+        } : undefined}
         lifecycle={manage && managedHere && bot.closedAtMs == null ? (
           <DropdownMenuItem disabled={reset.isPending} onClick={() => setResetOpen(true)}>
             <ResetIcon /> Reset {label}…

@@ -45,11 +45,12 @@ describe("element report", () => {
     const chrome = [
       "Error: react-stack-top-frame",
       "    at exports.jsxDEV (http://localhost:5173/app/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=1:250:30)",
-      "    at SessionList (http://localhost:5173/app/src/pages/SessionsPage.tsx?t=17:412:9)",
+      "    at SessionList (http://localhost:5173/app/@fs/repo/modules/sessions/web/session-list.tsx?t=17:412:9)",
     ].join("\n");
-    expect(sourceFileFromStack(chrome)).toBe("src/pages/SessionsPage.tsx");
-    const firefox = "jsxDEV@http://localhost:5173/app/node_modules/.vite/deps/react.js:1:2\nSessionList@http://localhost:5173/app/src/pages/SessionsPage.tsx:412:9";
-    expect(sourceFileFromStack(firefox)).toBe("src/pages/SessionsPage.tsx");
+    expect(sourceFileFromStack(chrome)).toBe("modules/sessions/web/session-list.tsx");
+    const firefox = "jsxDEV@http://localhost:5173/app/node_modules/.vite/deps/react.js:1:2\nSessionDetail@http://localhost:5173/app/@fs/repo/platform/session-ui/SessionDetail.tsx:412:9";
+    expect(sourceFileFromStack(firefox)).toBe("platform/session-ui/SessionDetail.tsx");
+    expect(sourceFileFromStack("at App (http://localhost:5173/app/src/App.tsx:12:9)")).toBe("src/App.tsx");
     expect(sourceFileFromStack(undefined)).toBeUndefined();
   });
 });

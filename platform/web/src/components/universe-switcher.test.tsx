@@ -126,7 +126,7 @@ it("groups all accessible active universes and switches directly across organiza
   ].find((item) => item.textContent === "Production")!;
   await act(async () => production.click());
   expect(container.querySelector("output")!.textContent).toBe(
-    "/u/production/sessions",
+    "/u/production",
   );
 });
 it("drops the organization headings when every universe is in one organization", async () => {

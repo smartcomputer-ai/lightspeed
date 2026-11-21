@@ -13,7 +13,7 @@ export function classifyPaths(paths) {
       checks.rust = checks.consumers = true;
     } else if (/^(crates\/|Cargo\.(toml|lock)$|rust-toolchain\.toml$)/.test(path)) {
       checks.rust = true;
-    } else if (/^(clients\/|platform\/|package(?:-lock)?\.json$|tsconfig\.json$)/.test(path)) {
+    } else if (/^(clients\/|platform\/|modules\/|distributions\/|package(?:-lock)?\.json$|tsconfig\.json$)/.test(path)) {
       checks.consumers = true;
     } else if (/^(\.github\/workflows\/|release\/|scripts\/)/.test(path)) {
       checks.rust = checks.consumers = checks.docs = true;

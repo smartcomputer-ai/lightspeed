@@ -16,7 +16,7 @@ vi.mock("@/lib/universes", () => ({
   useFeature: () => true,
 }));
 // The conversation, with the header the bot page gives it (its switcher and ⋯ menu).
-vi.mock("@/pages/SessionsPage", () => ({
+vi.mock("@session-ui/SessionDetail", () => ({
   SessionDetail: ({ embeddedHeader }: { embeddedHeader?: { title: ReactNode; actions?: ReactNode } }) => (
     <div>{embeddedHeader?.title}{embeddedHeader?.actions}Readable transcript</div>
   ),

@@ -3,8 +3,8 @@ import { LoadingIcon } from "@/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView } from "@/api";
 import { useActionPermissions } from "@/lib/permissions";
-import { sessionDraftKey } from "@/lib/sessions/draft";
-import { SessionDetail } from "@/pages/SessionsPage";
+import { sessionDraftKey } from "@session-ui/model/draft";
+import { SessionDetail } from "@session-ui/SessionDetail";
 
 /** The first thing a freshly created bot hears; its answer is the smoke test. */
 export const INTRODUCTION_PROMPT =

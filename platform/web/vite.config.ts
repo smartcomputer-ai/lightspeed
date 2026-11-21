@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { standardModules } from "../../distributions/standard/catalog.js";
 import { defineConfig, type Plugin } from "vite";
 
 // The SPA lives under /app on the platform origin (path-based routing).
@@ -19,15 +20,18 @@ export default defineConfig(({ mode }) => {
     define: {
       __LIGHTSPEED_VERSION__: JSON.stringify(releaseVersion()),
     },
-    plugins: [react(), tailwindcss(), todoGuard(), ...(demo ? [demoEntry()] : [])],
+    plugins: [react(), tailwindcss(), todoGuard(), webModuleEntries(), ...(demo ? [demoEntry()] : [])],
     resolve: {
       alias: {
+        "@session-ui": path.resolve(import.meta.dirname, "../session-ui"),
+        "@distribution": path.resolve(import.meta.dirname, "../../distributions/standard"),
         "@": path.resolve(import.meta.dirname, "./src"),
       },
     },
     build: demo ? { outDir: "dist-demo" } : undefined,
     test: {
       setupFiles: ["./src/test/fresh-settings.ts"],
+      include: ["src/**/*.test.{ts,tsx}", "../session-ui/**/*.test.{ts,tsx}", "../../modules/*/web/**/*.test.{ts,tsx}"],
     },
     server: {
       port: demo ? 5175 : 5173,
@@ -45,6 +49,26 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
+
+// Import the chosen native entry points at build time. An omitted module has
+// no import (including its lazy page chunks) in the distribution.
+function webModuleEntries(): Plugin {
+  const name = "virtual:lightspeed/web-module-entries";
+  const internalId = "\0" + name;
+  return {
+    name: "lightspeed-web-module-entries",
+    resolveId(id) { if (id === name) return internalId; },
+    load(id) {
+      if (id !== internalId) return;
+      const lines = standardModules.map(({ id }, index) => {
+        const entry = path.resolve(import.meta.dirname, "../../modules", id, "web/index.ts");
+        return `import module${index} from ${JSON.stringify(entry)};`;
+      });
+      const entries = standardModules.map(({ id }, index) => `{id: ${JSON.stringify(id)}, module: module${index}}`);
+      return [...lines, `export default [${entries.join(", ")}];`].join("\n");
+    },
+  };
+}
 
 /// The version shown in the UI. Release builds export
 /// LIGHTSPEED_RELEASE_VERSION (scripts/release/build-dist.sh); other builds
