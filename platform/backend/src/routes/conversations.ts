@@ -149,7 +149,7 @@ export function conversationRoutes(ctx: AppContext) {
       after: after === null ? null : { seq: after },
       limit: Math.min(limit, 500),
       waitMs: Math.min(waitMs, 30_000),
-    });
+    }, { signal: c.req.raw.signal });
     return c.json(response);
   }));
 

@@ -1,9 +1,10 @@
-import { LightspeedApiError } from "@lightspeed-ai/sdk";
+import { LightspeedApiError, LightspeedTransportError } from "@lightspeed-ai/sdk";
 import { WorkspaceTransferError } from "@lightspeed-ai/platform-shared";
 import { UniverseHandleCacheConflict } from "./universe-handles.js";
 import { RuntimeUnconfigured, GateRefusal } from "./runtime-client.js";
 import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { routePath } from "hono/route";
 import type { ZodType } from "zod";
 
 /// Parses and validates a JSON body, returning a 400 response on failure.
@@ -34,18 +35,24 @@ export async function parseBody<T>(c: Context, schema: ZodType<T>): Promise<
 /// typed errors carry their message; anything else (a database driver error
 /// includes its SQL and parameters) is logged here and answered generically.
 export async function withApiErrors(
-  c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 410 | 500 | 501 | 502) => Response },
+  c: Context,
   fn: () => Promise<Response>,
 ): Promise<Response> {
   try {
     return await fn();
   } catch (error) {
+    const signal = c.req.raw.signal;
+    if (signal.aborted && error === signal.reason) return new Response(null, { status: 499 });
     // Preserve the framework status and let the app choose its UI/problem shape.
     if (error instanceof HTTPException) throw error;
     if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
     if (error instanceof UniverseHandleCacheConflict) return c.json({ error: error.message }, 409);
     if (error instanceof RuntimeUnconfigured) {
       return c.json({ error: error.message }, 501);
+    }
+    if (error instanceof LightspeedTransportError) {
+      console.warn("runtime transport failure", { method: c.req.method, route: routePath(c), upstreamStatus: error.status });
+      return c.json({ error: "runtime unavailable" }, 502);
     }
     if (error instanceof GateRefusal) {
       return c.json({ error: error.status === 404 ? "not found" : error.message }, error.status);

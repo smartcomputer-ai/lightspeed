@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { LightspeedTransportError } from "@lightspeed-ai/sdk";
 import { AuthorizationRefusal } from "./auth-context.js";
 import { withApiErrors } from "./http.js";
 
@@ -24,4 +25,17 @@ it("keeps untyped database diagnostics out of API responses", async () => {
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "internal error" });
   } finally { log.mockRestore(); }
+});
+
+it("reports an unavailable runtime without exposing the upstream response or request identifiers", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const app = new Hono();
+    const error = new LightspeedTransportError("sensitive upstream diagnostic", { status: 503, body: "private upstream body" });
+    app.get("/sessions/:id", c => withApiErrors(c, async () => { throw error; }));
+    const response = await app.request("/sessions/private-session");
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "runtime unavailable" });
+    expect(warning).toHaveBeenCalledExactlyOnceWith("runtime transport failure", { method: "GET", route: "/sessions/:id", upstreamStatus: 503 });
+  } finally { warning.mockRestore(); }
 });

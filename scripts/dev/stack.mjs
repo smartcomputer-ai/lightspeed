@@ -30,6 +30,8 @@ const debug = process.argv.includes("--debug");
 const children = [];
 let cli;
 let stopping = false;
+let runtimeReady = false;
+let lastRuntimeRestart = -Infinity;
 let phase = "reading command arguments";
 let infrastructureTouched = false;
 
@@ -109,6 +111,7 @@ async function main() {
     if (!seeded) console.log("[models] No development credential available; configure universe defaults with lightspeed model defaults set.");
   }
   if (!stopping) {
+    runtimeReady = true;
     printRunning(plan);
     if (plan.cliHandoff) console.log("CLI connection ready: lightspeed connect dev");
     else if (plan.profile === "runtime" || plan.profile === "full") console.log("No CLI credential prepared; use lightspeed connect add with your own key.");
@@ -264,12 +267,14 @@ function createPlan(profile, sourceEnv) {
   const readiness = [];
 
   if (profile === "runtime" || profile === "full") {
-    ports.push({ name: "runtime gateway", port: runtimePort });
-    readiness.push({ name: "runtime gateway", url: `http://127.0.0.1:${runtimePort}/health` });
-    ports.push({ name: "runtime public", port: publicPort });
-    readiness.push({ name: "runtime public", url: `http://127.0.0.1:${publicPort}/health` });
-    ports.push({ name: "environment gateway", port: environmentPort });
-    readiness.push({ name: "environment gateway", url: `http://127.0.0.1:${environmentPort}/health` });
+    const listeners = [
+      { name: "runtime gateway", port: runtimePort },
+      { name: "runtime public", port: publicPort },
+      { name: "environment gateway", port: environmentPort },
+    ];
+    const healthChecks = listeners.map(({ name, port }) => ({ name, url: `http://127.0.0.1:${port}/health` }));
+    ports.push(...listeners);
+    readiness.push(...healthChecks);
     preparations.push({
       name: "runtime migration",
       command: "cargo",
@@ -278,6 +283,7 @@ function createPlan(profile, sourceEnv) {
     });
     processes.push({
       name: "runtime",
+      healthChecks,
       command: "cargo",
       args: ["run", "-p", "temporal-runtime"],
       cwd: repoRoot,
@@ -646,7 +652,39 @@ function startProcess(processPlan) {
   children.push(record);
   record.done.then(() => {
     if (!stopping) return fail(commandFailure(processPlan, { code: 0, tail: record.tail() }));
-  }, (error) => fail(error));
+  }, (error) => handleProcessFailure(processPlan, record, error));
+}
+
+async function handleProcessFailure(plan, record, error) {
+  if (stopping) return;
+  if (plan.name !== "runtime" || !runtimeReady || record.child.exitCode !== 1 ||
+      Date.now() - lastRuntimeRestart < 60_000 || !exitedAfterLeaseLoss(record.tail())) {
+    return fail(error);
+  }
+  // A fenced replica must exit. A new process registers a fresh identity.
+  runtimeReady = false;
+  lastRuntimeRestart = Date.now();
+  console.warn("[runtime] Gateway lease expired. Restarting the local runtime.");
+  try {
+    await stopCommands([record]);
+    if (stopping) return;
+    children.splice(children.indexOf(record), 1);
+    startProcess(plan);
+    await Promise.all(plan.healthChecks.map(waitForService));
+    if (!stopping) {
+      runtimeReady = true;
+      console.log("[runtime] Replacement runtime is ready.");
+    }
+  } catch (restartError) {
+    await fail(restartError);
+  }
+}
+
+function exitedAfterLeaseLoss(output) {
+  // An open HTTP request can make the drain timeout the final error after fencing.
+  const lastLine = output.trimEnd().split("\n").at(-1);
+  return lastLine === "Error: environment gateway instance lease expired" ||
+    (lastLine === "Error: gateway HTTP shutdown exceeded 5 seconds" && output.includes("gateway lease lost; closing connections"));
 }
 
 async function shutdown(exitCode) {

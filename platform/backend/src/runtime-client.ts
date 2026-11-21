@@ -174,7 +174,7 @@ export class UniverseClient extends LightspeedClient {
       params = { ...params, deleteAfterCloseMs: null };
     }
     if (!privileged && SESSION_TARGET_OPERATIONS.has(method)) {
-      await this.requireSession(method, (params as { sessionId?: string }).sessionId);
+      await this.requireSession(method, (params as { sessionId?: string }).sessionId, options.signal);
     }
     if (!privileged && method === "session/list") {
       params = { ...params, visibleTo: this.caller.actorId };
@@ -182,14 +182,14 @@ export class UniverseClient extends LightspeedClient {
     return { params };
   }
 
-  private async requireSession(method: string, sessionId: string | undefined): Promise<void> {
+  private async requireSession(method: string, sessionId: string | undefined, signal?: AbortSignal): Promise<void> {
     if (!sessionId) {
       if (CREATION_OPERATIONS.has(method)) return;
       throw new GateRefusal(404, "session not found");
     }
     let access;
     try {
-      access = (await super.call("session/read", { sessionId, runLimit: 1 })).session.access;
+      access = (await super.call("session/read", { sessionId, runLimit: 1 }, { signal })).session.access;
     } catch (error) {
       if (error instanceof LightspeedApiError && error.kind === "notFound" && CREATION_OPERATIONS.has(method)) return;
       throw error;

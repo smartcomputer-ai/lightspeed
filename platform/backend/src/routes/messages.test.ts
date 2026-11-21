@@ -48,7 +48,7 @@ function fixture(steeringError?: { type: string; title: string; status: number; 
   const call = (path: string, body: unknown) => app.request(`/universe${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const get = (path: string) => app.request(`/universe${path}`);
+  const get = (path: string, init?: RequestInit) => app.request(`/universe${path}`, init);
   return { call, get, requests, fetch };
 }
 
@@ -60,6 +60,27 @@ it("reads complete run input through the member-scoped client", async () => {
     source: { type: "input", items: [{ type: "text", text: "Complete queued input" }] },
   });
   expect(f.requests).toMatchObject([{ method: "session/runs/read", params: { sessionId: "s1", runId: "run_1" } }]);
+});
+
+it.each(["session/read", "session/events/read"])("cancels an abandoned event poll during %s", async operation => {
+  const f = fixture();
+  let recordSignal!: (signal: RequestInit["signal"]) => void;
+  const started = new Promise<RequestInit["signal"]>(resolve => { recordSignal = resolve; });
+  f.fetch.mockImplementation(async (url, init) => {
+    const request = decodeHttpRequest(url as Request | string | URL, init);
+    if (request.method !== operation) return Response.json({ session: { access: { visibility: "universe" } } });
+    recordSignal(init.signal);
+    return new Promise<Response>((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    });
+  });
+  const browser = new AbortController();
+  const pending = f.get("/sessions/s1/events?waitMs=30000", { signal: browser.signal });
+  const upstream = await started;
+  expect(upstream).toBeDefined();
+  browser.abort();
+  expect(upstream?.aborted).toBe(true);
+  expect((await pending).status).toBe(499);
 });
 
 it("returns whether a cancelled run had already started", async () => {
