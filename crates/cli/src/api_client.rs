@@ -18,9 +18,9 @@ use api::{
     EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse, EnvironmentListParams,
     EnvironmentListResponse, EnvironmentPowerPutParams, EnvironmentPowerPutResponse,
     EnvironmentReadParams, EnvironmentReadResponse, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
-    METHOD_BLOBS_READ, METHOD_CREDENTIALS_CLIENTS_CREATE, METHOD_CREDENTIALS_CLIENTS_DELETE,
-    METHOD_CREDENTIALS_CLIENTS_LIST, METHOD_CREDENTIALS_CLIENTS_READ,
-    METHOD_CREDENTIALS_FLOWS_READ, METHOD_CREDENTIALS_FLOWS_START,
+    METHOD_BLOBS_READ, METHOD_BLOBS_UPLOAD, METHOD_CREDENTIALS_CLIENTS_CREATE,
+    METHOD_CREDENTIALS_CLIENTS_DELETE, METHOD_CREDENTIALS_CLIENTS_LIST,
+    METHOD_CREDENTIALS_CLIENTS_READ, METHOD_CREDENTIALS_FLOWS_READ, METHOD_CREDENTIALS_FLOWS_START,
     METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST,
     METHOD_CREDENTIALS_GRANTS_LIST, METHOD_CREDENTIALS_GRANTS_READ,
     METHOD_CREDENTIALS_GRANTS_REVOKE, METHOD_CREDENTIALS_PROVIDERS_CREATE,
@@ -284,23 +284,77 @@ impl HttpAgentApi {
         self.request(METHOD_BLOBS_HAS, params).await
     }
 
-    pub(crate) async fn read_blob(&self, params: BlobReadParams) -> Result<Vec<u8>, AgentApiError> {
-        let response = self
-            .send(
+    /// Stream one blob from disk through `blobs/upload`. The Runtime verifies the
+    /// length and digest against `blob_ref` before publishing it.
+    pub(crate) async fn upload_blob(
+        &self,
+        blob_ref: &str,
+        body: reqwest::Body,
+        size_bytes: u64,
+    ) -> Result<api::BlobPutResult, AgentApiError> {
+        let result: anyhow::Result<api::BlobPutResult> = async {
+            let parts = api::http_request(
+                METHOD_BLOBS_UPLOAD,
+                self.connection.universe.as_deref(),
+                serde_json::to_value(api::BlobUploadParams {
+                    blob_ref: blob_ref.to_owned(),
+                })?,
+            )?;
+            let mut headers = self.connection.headers(METHOD_BLOBS_UPLOAD)?;
+            headers.insert(
+                reqwest::header::CONTENT_TYPE,
+                reqwest::header::HeaderValue::from_static("application/octet-stream"),
+            );
+            headers.insert(reqwest::header::CONTENT_LENGTH, size_bytes.into());
+            let response = self
+                .send_parts_with(parts, headers, RequestBody::Binary(body))
+                .await?;
+            response
+                .json::<api::BlobPutResult>()
+                .await
+                .map_err(|_| AgentApiError::internal("invalid API response").into())
+        }
+        .await;
+        result.map_err(into_api_error)
+    }
+
+    /// Open a blob download, asking for the bytes from `offset` on when it is
+    /// not zero. [`BlobDownload::offset`] says where the body really starts: a
+    /// Runtime without range support answers with the whole blob.
+    pub(crate) async fn open_blob(
+        &self,
+        params: BlobReadParams,
+        offset: u64,
+    ) -> Result<BlobDownload, AgentApiError> {
+        let result: anyhow::Result<BlobDownload> = async {
+            let parts = api::http_request(
                 METHOD_BLOBS_READ,
-                serde_json::to_value(params)
-                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
-            )
-            .await
-            .map_err(|error| match error.downcast::<AgentApiError>() {
-                Ok(error) => error,
-                Err(error) => AgentApiError::internal(error.to_string()),
-            })?;
-        response
-            .bytes()
-            .await
-            .map(|bytes| bytes.to_vec())
-            .map_err(|error| AgentApiError::internal(error.to_string()))
+                self.connection.universe.as_deref(),
+                serde_json::to_value(params)?,
+            )?;
+            let mut headers = self.connection.headers(METHOD_BLOBS_READ)?;
+            if offset > 0 {
+                headers.insert(
+                    reqwest::header::RANGE,
+                    reqwest::header::HeaderValue::from_str(&format!("bytes={offset}-"))?,
+                );
+            }
+            let response = self
+                .send_parts_with(parts, headers, RequestBody::None)
+                .await?;
+            let start = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+                content_range_start(response.headers())
+                    .ok_or_else(|| AgentApiError::internal("invalid Content-Range"))?
+            } else {
+                0
+            };
+            Ok(BlobDownload {
+                offset: start,
+                response,
+            })
+        }
+        .await;
+        result.map_err(into_api_error)
     }
 
     pub(crate) async fn commit_vfs_snapshot(
@@ -722,6 +776,16 @@ impl HttpAgentApi {
         parts: api::HttpRequestParts,
         headers: reqwest::header::HeaderMap,
     ) -> anyhow::Result<reqwest::Response> {
+        self.send_parts_with(parts, headers, RequestBody::None)
+            .await
+    }
+
+    async fn send_parts_with(
+        &self,
+        parts: api::HttpRequestParts,
+        headers: reqwest::header::HeaderMap,
+        binary: RequestBody,
+    ) -> anyhow::Result<reqwest::Response> {
         let endpoint = crate::connection::endpoint_with_policy(
             &self.connection.endpoint,
             self.connection.allow_insecure_http,
@@ -741,6 +805,9 @@ impl HttpAgentApi {
             .headers(headers);
         if let Some(body) = parts.body {
             request = request.json(&body);
+        }
+        if let RequestBody::Binary(body) = binary {
+            request = request.body(body);
         }
         let response = request.send().await.map_err(|error| {
             if error.is_connect() || error.is_timeout() {
@@ -784,6 +851,30 @@ impl HttpAgentApi {
             _ => AgentApiErrorKind::Internal,
         };
         Err(AgentApiError::new(kind, format!("API request failed: HTTP {status}")).into())
+    }
+}
+
+enum RequestBody {
+    None,
+    Binary(reqwest::Body),
+}
+
+/// An open blob download whose body starts at `offset` within the blob.
+pub(crate) struct BlobDownload {
+    pub offset: u64,
+    pub response: reqwest::Response,
+}
+
+fn content_range_start(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let value = headers.get(reqwest::header::CONTENT_RANGE)?.to_str().ok()?;
+    let range = value.strip_prefix("bytes ")?;
+    range.split_once('-')?.0.parse().ok()
+}
+
+fn into_api_error(error: anyhow::Error) -> AgentApiError {
+    match error.downcast::<AgentApiError>() {
+        Ok(error) => error,
+        Err(error) => AgentApiError::internal(error.to_string()),
     }
 }
 
@@ -882,18 +973,41 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn blob_upload_sends_raw_bytes_with_length() {
+        let (client, task) = fixture(
+            200,
+            "application/json",
+            br#"{"blobRef":"sha256:test","bytes":5}"#.to_vec(),
+        )
+        .await;
+        let result = client
+            .upload_blob("sha256:test", reqwest::Body::from(b"hello".to_vec()), 5)
+            .await
+            .unwrap();
+        assert_eq!(result.bytes, 5);
+        let headers = task.await.unwrap();
+        assert!(
+            headers.starts_with("PUT /api/v1/universes/team%20space/blobs/sha256%3Atest/content")
+        );
+        assert!(headers.contains("content-type: application/octet-stream"));
+        assert!(headers.contains("content-length: 5"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn blob_download_returns_unmodified_binary_bytes() {
         let bytes = vec![0, 255, 128, 1, 10];
         let (client, task) = fixture(200, "application/octet-stream", bytes.clone()).await;
-        assert_eq!(
-            client
-                .read_blob(BlobReadParams {
-                    blob_ref: "sha256:test".into()
-                })
-                .await
-                .unwrap(),
-            bytes
-        );
+        let download = client
+            .open_blob(
+                BlobReadParams {
+                    blob_ref: "sha256:test".into(),
+                },
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(download.offset, 0);
+        assert_eq!(download.response.bytes().await.unwrap().to_vec(), bytes);
         assert!(task.await.unwrap().contains("/blobs/sha256%3Atest/content"));
     }
 }

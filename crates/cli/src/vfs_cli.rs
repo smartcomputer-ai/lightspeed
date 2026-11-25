@@ -44,7 +44,8 @@ struct SnapshotArgs {
     /// Max total file bytes in the snapshot.
     #[arg(long = "max-total-bytes", default_value_t = DEFAULT_MAX_TOTAL_BYTES)]
     max_total_bytes: u64,
-    /// Max single file bytes in the snapshot.
+    /// Max single file bytes in the snapshot. Each file goes in one request, so
+    /// the Runtime's request body limit also bounds it.
     #[arg(long = "max-file-bytes", default_value_t = DEFAULT_MAX_SINGLE_FILE_BYTES)]
     max_file_bytes: u64,
     /// Max VFS path depth in the snapshot.
@@ -362,7 +363,13 @@ async fn put_workspace_attachment(
 
 async fn materialize(args: MaterializeArgs) -> Result<()> {
     let api = HttpAgentApi::from_active();
-    let summary = materialize_snapshot(&api, args.snapshot_ref, args.destination).await?;
+    let summary = materialize_snapshot(
+        &api,
+        args.snapshot_ref,
+        args.destination,
+        show_progress(args.json),
+    )
+    .await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
         return Ok(());
@@ -394,5 +401,13 @@ fn snapshot_options(args: &SnapshotArgs) -> SnapshotUploadOptions {
         max_put_many_batch_bytes: args.put_batch_bytes,
         max_put_many_batch_files: args.put_batch_files,
         max_has_many_refs: args.has_batch_refs,
+        stream_threshold_bytes: crate::vfs_transfer::DEFAULT_STREAM_THRESHOLD_BYTES,
+        progress: show_progress(args.json),
     }
+}
+
+/// Progress lines go to stderr, and only when a person is watching it.
+fn show_progress(json: bool) -> bool {
+    use std::io::IsTerminal as _;
+    !json && std::io::stderr().is_terminal()
 }

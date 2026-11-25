@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use api::{
@@ -10,8 +14,11 @@ use api::{
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use futures_util::StreamExt as _;
+use futures_util::stream::BoxStream;
 use harness::BlobRef;
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use vfs::{
     VfsDirectory, VfsEntry, VfsFile, VfsPath, VfsSnapshotLimits, VfsSnapshotManifest,
     create_manifest_directory, write_manifest_file_ref,
@@ -24,8 +31,16 @@ pub(crate) const DEFAULT_PUT_MANY_MAX_BATCH_FILES: usize = 128;
 pub(crate) const DEFAULT_HAS_MANY_MAX_REFS: usize = 1_000;
 pub(crate) const DEFAULT_MAX_FILES: u64 = 10_000;
 pub(crate) const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
-pub(crate) const DEFAULT_MAX_SINGLE_FILE_BYTES: u64 = DEFAULT_PUT_MANY_MAX_BATCH_BYTES;
+/// One file travels in one `blobs/upload` request, so the Runtime's request
+/// body limit (64 MiB by default) bounds it.
+pub(crate) const DEFAULT_MAX_SINGLE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const DEFAULT_MAX_DEPTH: usize = 64;
+/// Files above this size stream from disk in a request of their own; smaller
+/// ones are batched through `blobs/put`.
+pub(crate) const DEFAULT_STREAM_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
+/// Files at least this large get a progress line on an interactive terminal.
+const PROGRESS_MIN_BYTES: u64 = 8 * 1024 * 1024;
+const READ_BUFFER_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SnapshotUploadOptions {
@@ -33,6 +48,9 @@ pub(crate) struct SnapshotUploadOptions {
     pub max_put_many_batch_bytes: u64,
     pub max_put_many_batch_files: usize,
     pub max_has_many_refs: usize,
+    pub stream_threshold_bytes: u64,
+    /// Draw progress lines for large files on stderr.
+    pub progress: bool,
 }
 
 impl Default for SnapshotUploadOptions {
@@ -47,6 +65,8 @@ impl Default for SnapshotUploadOptions {
             max_put_many_batch_bytes: DEFAULT_PUT_MANY_MAX_BATCH_BYTES,
             max_put_many_batch_files: DEFAULT_PUT_MANY_MAX_BATCH_FILES,
             max_has_many_refs: DEFAULT_HAS_MANY_MAX_REFS,
+            stream_threshold_bytes: DEFAULT_STREAM_THRESHOLD_BYTES,
+            progress: false,
         }
     }
 }
@@ -116,13 +136,38 @@ pub(crate) enum SnapshotEntrySource {
     Bytes(Vec<u8>),
 }
 
+/// Where an uploaded blob's bytes come from.
+#[derive(Clone, Debug)]
+pub(crate) enum UploadSource {
+    Path(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+/// A blob download whose chunks start at `offset` within the blob.
+pub(crate) struct BlobChunks {
+    pub offset: u64,
+    pub chunks: BoxStream<'static, Result<Vec<u8>, AgentApiError>>,
+}
+
 #[async_trait]
 pub(crate) trait CasVfsApi {
     async fn has_blobs(&self, blob_refs: Vec<String>) -> Result<Vec<BlobHasItem>, AgentApiError>;
 
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResult>, AgentApiError>;
 
-    async fn get_blob(&self, blob_ref: String) -> Result<Vec<u8>, AgentApiError>;
+    /// Stream one blob in a request of its own; the Runtime checks its length
+    /// and digest against `blob_ref`.
+    async fn upload_blob(
+        &self,
+        blob_ref: &BlobRef,
+        source: UploadSource,
+        size_bytes: u64,
+        progress: Arc<Progress>,
+    ) -> Result<BlobPutResult, AgentApiError>;
+
+    /// Open a blob for reading from `offset` on. The returned offset is where
+    /// the chunks really start, which is zero when the Runtime ignores ranges.
+    async fn open_blob(&self, blob_ref: String, offset: u64) -> Result<BlobChunks, AgentApiError>;
 
     async fn commit_vfs_snapshot(
         &self,
@@ -155,8 +200,50 @@ impl CasVfsApi for HttpAgentApi {
             .blobs)
     }
 
-    async fn get_blob(&self, blob_ref: String) -> Result<Vec<u8>, AgentApiError> {
-        Ok(HttpAgentApi::read_blob(self, BlobReadParams { blob_ref }).await?)
+    async fn upload_blob(
+        &self,
+        blob_ref: &BlobRef,
+        source: UploadSource,
+        size_bytes: u64,
+        progress: Arc<Progress>,
+    ) -> Result<BlobPutResult, AgentApiError> {
+        let body = match source {
+            UploadSource::Bytes(bytes) => {
+                progress.advance(bytes.len() as u64);
+                reqwest::Body::from(bytes)
+            }
+            UploadSource::Path(path) => {
+                let file = tokio::fs::File::open(&path).await.map_err(|error| {
+                    AgentApiError::invalid_request(format!(
+                        "failed to open {}: {error}",
+                        path.display()
+                    ))
+                })?;
+                reqwest::Body::wrap_stream(file_chunks(file, progress))
+            }
+        };
+        HttpAgentApi::upload_blob(self, blob_ref.as_str(), body, size_bytes).await
+    }
+
+    async fn open_blob(&self, blob_ref: String, offset: u64) -> Result<BlobChunks, AgentApiError> {
+        let download = HttpAgentApi::open_blob(self, BlobReadParams { blob_ref }, offset).await?;
+        let chunks = futures_util::stream::unfold(download.response, |mut response| async move {
+            match response.chunk().await {
+                Ok(Some(chunk)) => Some((Ok(chunk.to_vec()), response)),
+                Ok(None) => None,
+                Err(error) => Some((
+                    Err(AgentApiError::internal(format!(
+                        "download interrupted: {error}"
+                    ))),
+                    response,
+                )),
+            }
+        })
+        .boxed();
+        Ok(BlobChunks {
+            offset: download.offset,
+            chunks,
+        })
     }
 
     async fn commit_vfs_snapshot(
@@ -174,6 +261,124 @@ impl CasVfsApi for HttpAgentApi {
         snapshot_ref: String,
     ) -> Result<VfsSnapshotReadResponse, AgentApiError> {
         Ok(HttpAgentApi::read_vfs_snapshot(self, VfsSnapshotReadParams { snapshot_ref }).await?)
+    }
+}
+
+/// Read a file as a stream of bounded chunks, counting them as progress.
+fn file_chunks(
+    file: tokio::fs::File,
+    progress: Arc<Progress>,
+) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> + Send + 'static {
+    futures_util::stream::try_unfold(file, move |mut file| {
+        let progress = progress.clone();
+        async move {
+            use tokio::io::AsyncReadExt as _;
+            let mut buffer = vec![0u8; READ_BUFFER_BYTES];
+            let read = file.read(&mut buffer).await?;
+            if read == 0 {
+                return Ok(None);
+            }
+            buffer.truncate(read);
+            progress.advance(read as u64);
+            Ok(Some((buffer, file)))
+        }
+    })
+}
+
+/// SHA-256 ref and length of a file, read in bounded chunks.
+fn hash_file(path: &Path) -> Result<(BlobRef, u64)> {
+    let mut file =
+        fs::File::open(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let length = hash_reader(&mut file, &mut hasher)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    Ok((blob_ref_from_hasher(hasher), length))
+}
+
+fn hash_reader(reader: &mut impl std::io::Read, hasher: &mut Sha256) -> std::io::Result<u64> {
+    let mut buffer = vec![0u8; READ_BUFFER_BYTES];
+    let mut length = 0u64;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(length);
+        }
+        hasher.update(&buffer[..read]);
+        length += read as u64;
+    }
+}
+
+fn blob_ref_from_hasher(hasher: Sha256) -> BlobRef {
+    BlobRef::parse(format!("sha256:{}", hex::encode(hasher.finalize())))
+        .expect("SHA-256 digests form canonical blob refs")
+}
+
+/// A one-line progress display on stderr for one large transfer. Disabled
+/// instances only count.
+pub(crate) struct Progress {
+    label: String,
+    total: u64,
+    done: AtomicU64,
+    enabled: bool,
+    last_draw: std::sync::Mutex<Option<Instant>>,
+}
+
+impl Progress {
+    pub(crate) fn new(
+        enabled: bool,
+        verb: &str,
+        label: impl Into<String>,
+        total: u64,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            label: format!("{verb} {}", label.into()),
+            total,
+            done: AtomicU64::new(0),
+            enabled: enabled && total >= PROGRESS_MIN_BYTES,
+            last_draw: std::sync::Mutex::new(None),
+        })
+    }
+
+    pub(crate) fn advance(&self, bytes: u64) {
+        let done = self.done.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        if !self.enabled {
+            return;
+        }
+        let mut last = self
+            .last_draw
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let now = Instant::now();
+        if last.is_some_and(|at| now.duration_since(at) < Duration::from_millis(200))
+            && done < self.total
+        {
+            return;
+        }
+        *last = Some(now);
+        eprint!(
+            "\r{}: {} / {} ({}%)   ",
+            self.label,
+            format_bytes(done),
+            format_bytes(self.total),
+            (done.min(self.total) * 100)
+                .checked_div(self.total)
+                .unwrap_or(100)
+        );
+    }
+
+    pub(crate) fn finish(&self) {
+        if self.enabled {
+            eprintln!();
+        }
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const MIB: f64 = 1024.0 * 1024.0;
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.2} GiB", bytes as f64 / (MIB * 1024.0))
+    } else {
+        format!("{:.1} MiB", bytes as f64 / MIB)
     }
 }
 
@@ -285,6 +490,7 @@ pub(crate) async fn materialize_snapshot(
     api: &(impl CasVfsApi + Sync),
     snapshot_ref: impl Into<String>,
     destination: impl AsRef<Path>,
+    progress: bool,
 ) -> Result<SnapshotMaterializeSummary> {
     let snapshot_ref = snapshot_ref.into();
     let destination = prepare_materialize_destination(destination.as_ref())?;
@@ -311,7 +517,8 @@ pub(crate) async fn materialize_snapshot(
     let mut materializer = LocalMaterializer {
         api,
         destination: destination.clone(),
-        blob_cache: BTreeMap::new(),
+        written: BTreeMap::new(),
+        progress,
         summary: SnapshotMaterializeSummary {
             destination: destination.display().to_string(),
             snapshot_ref,
@@ -400,6 +607,14 @@ async fn upload_missing_blobs(
         if !missing_refs.contains(&blob_ref) || !seen.insert(blob_ref.clone()) {
             continue;
         }
+        if file.size_bytes
+            > options
+                .stream_threshold_bytes
+                .min(options.max_put_many_batch_bytes)
+        {
+            stats = add_upload_stats(stats, stream_upload(api, file, options.progress).await?)?;
+            continue;
+        }
         let bytes = read_source_bytes(file)
             .with_context(|| format!("failed to read {}", file.source.display()))?;
         let actual_ref = BlobRef::from_bytes(&bytes);
@@ -411,14 +626,6 @@ async fn upload_missing_blobs(
                 file.blob_ref,
                 bytes.len(),
                 actual_ref
-            );
-        }
-        if bytes.len() as u64 > options.max_put_many_batch_bytes {
-            bail!(
-                "blob {} is {} bytes, larger than blobs/put batch limit {}; raise --put-batch-bytes and the gateway request body limit or lower --max-file-bytes",
-                file.blob_ref,
-                bytes.len(),
-                options.max_put_many_batch_bytes
             );
         }
         let would_exceed_bytes =
@@ -437,6 +644,47 @@ async fn upload_missing_blobs(
         stats = add_upload_stats(stats, flush_put_many(api, &mut batch, &mut expected).await?)?;
     }
     Ok(stats)
+}
+
+async fn stream_upload(
+    api: &(impl CasVfsApi + Sync),
+    file: &SnapshotUploadEntry,
+    progress: bool,
+) -> Result<UploadStats> {
+    let (source, label) = match &file.source {
+        SnapshotEntrySource::HostPath(path) => {
+            (UploadSource::Path(path.clone()), path.display().to_string())
+        }
+        SnapshotEntrySource::Bytes(bytes) => (
+            UploadSource::Bytes(bytes.clone()),
+            file.vfs_path.to_string(),
+        ),
+    };
+    let progress = Progress::new(progress, "Uploading", label, file.size_bytes);
+    let result = api
+        .upload_blob(&file.blob_ref, source, file.size_bytes, progress.clone())
+        .await;
+    progress.finish();
+    let item = result.map_err(crate::api_client::api_error).with_context(|| {
+        format!(
+            "failed to upload {} ({} bytes); if it changed while uploading, run the upload again",
+            file.source.display(),
+            file.size_bytes
+        )
+    })?;
+    if item.blob_ref != file.blob_ref.as_str() || item.bytes != file.size_bytes {
+        bail!(
+            "gateway stored unexpected blob: expected {} {} bytes, got {} {} bytes",
+            file.blob_ref,
+            file.size_bytes,
+            item.blob_ref,
+            item.bytes
+        );
+    }
+    Ok(UploadStats {
+        blobs: 1,
+        bytes: item.bytes,
+    })
 }
 
 async fn flush_put_many(
@@ -577,7 +825,10 @@ fn prepare_materialize_destination(destination: &Path) -> Result<PathBuf> {
 struct LocalMaterializer<'a, A: CasVfsApi + Sync + ?Sized> {
     api: &'a A,
     destination: PathBuf,
-    blob_cache: BTreeMap<String, Vec<u8>>,
+    /// Files already written in this run, by blob, so repeated content is
+    /// copied locally instead of downloaded again.
+    written: BTreeMap<String, PathBuf>,
+    progress: bool,
     summary: SnapshotMaterializeSummary,
 }
 
@@ -639,11 +890,22 @@ impl<A: CasVfsApi + Sync + ?Sized> LocalMaterializer<'_, A> {
             return Ok(());
         }
 
-        let bytes = self.download_blob(&entry.file).await?;
-        fs::write(&target, &bytes)
-            .with_context(|| format!("failed to write {}", target.display()))?;
+        let blob_ref = entry.file.blob_ref.as_str().to_owned();
+        match self.written.get(&blob_ref).cloned() {
+            Some(source) => {
+                fs::copy(&source, &target).with_context(|| {
+                    format!(
+                        "failed to copy {} to {}",
+                        source.display(),
+                        target.display()
+                    )
+                })?;
+            }
+            None => self.download_file(&entry.file, &target).await?,
+        }
         apply_executable(&target, entry.file.executable)
             .with_context(|| format!("failed to update mode for {}", target.display()))?;
+        self.written.insert(blob_ref, target);
         self.summary.written_files += 1;
         self.summary.written_bytes += entry.file.size_bytes;
         Ok(())
@@ -671,36 +933,124 @@ impl<A: CasVfsApi + Sync + ?Sized> LocalMaterializer<'_, A> {
             return Ok(false);
         }
 
-        let bytes =
-            fs::read(target).with_context(|| format!("failed to read {}", target.display()))?;
-        Ok(BlobRef::from_bytes(&bytes) == file.blob_ref)
+        let (blob_ref, length) = hash_file(target)?;
+        Ok(length == file.size_bytes && blob_ref == file.blob_ref)
     }
 
-    async fn download_blob(&mut self, file: &VfsFile) -> Result<Vec<u8>> {
+    /// Download one blob into `target` through a partial file beside it. An
+    /// interrupted download leaves the partial file, and the next run asks
+    /// only for the rest when the Runtime supports ranges.
+    async fn download_file(&mut self, file: &VfsFile, target: &Path) -> Result<()> {
         let blob_ref = file.blob_ref.as_str().to_owned();
-        if let Some(bytes) = self.blob_cache.get(&blob_ref) {
-            return Ok(bytes.clone());
-        }
+        let partial = partial_path(target);
+        let mut hasher = Sha256::new();
+        let mut have = match fs::symlink_metadata(&partial) {
+            Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_dir() => {
+                bail!(
+                    "refusing to write partial download over {}",
+                    partial.display()
+                );
+            }
+            Ok(metadata) if metadata.len() < file.size_bytes => {
+                let mut existing = fs::File::open(&partial)
+                    .with_context(|| format!("failed to read {}", partial.display()))?;
+                hash_reader(&mut existing, &mut hasher)
+                    .with_context(|| format!("failed to read {}", partial.display()))?
+            }
+            Ok(_) => 0,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to inspect {}", partial.display()));
+            }
+        };
 
-        let response = self
+        let download = self
             .api
-            .get_blob(blob_ref.clone())
+            .open_blob(blob_ref.clone(), have)
             .await
             .map_err(crate::api_client::api_error)
             .with_context(|| format!("failed to download blob {blob_ref}"))?;
-        let bytes = response;
-        if file.size_bytes != bytes.len() as u64 || BlobRef::from_bytes(&bytes) != file.blob_ref {
+        if download.offset != have {
+            if download.offset != 0 {
+                bail!(
+                    "gateway resumed blob {blob_ref} at byte {} instead of {have}",
+                    download.offset
+                );
+            }
+            // The Runtime answered with the whole blob: start over.
+            have = 0;
+            hasher = Sha256::new();
+        }
+        let mut output = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(have > 0)
+            .truncate(have == 0)
+            .open(&partial)
+            .with_context(|| format!("failed to write {}", partial.display()))?;
+
+        let progress = Progress::new(
+            self.progress,
+            "Downloading",
+            target.display().to_string(),
+            file.size_bytes,
+        );
+        progress.advance(have);
+        let mut chunks = download.chunks;
+        let mut received = have;
+        let streamed: Result<()> = async {
+            while let Some(chunk) = chunks.next().await {
+                let chunk = chunk.map_err(crate::api_client::api_error)?;
+                received += chunk.len() as u64;
+                if received > file.size_bytes {
+                    bail!(
+                        "blob {blob_ref} is longer than the manifest's {} bytes",
+                        file.size_bytes
+                    );
+                }
+                hasher.update(&chunk);
+                output
+                    .write_all(&chunk)
+                    .with_context(|| format!("failed to write {}", partial.display()))?;
+                progress.advance(chunk.len() as u64);
+            }
+            output
+                .flush()
+                .with_context(|| format!("failed to write {}", partial.display()))
+        }
+        .await;
+        progress.finish();
+        drop(output);
+        if let Err(error) = streamed {
+            if received > file.size_bytes {
+                let _ = fs::remove_file(&partial);
+            }
+            return Err(error.context(format!(
+                "download of {} stopped after {received} of {} bytes; run it again to resume",
+                target.display(),
+                file.size_bytes
+            )));
+        }
+
+        let actual = blob_ref_from_hasher(hasher);
+        if received != file.size_bytes || actual != file.blob_ref {
+            let _ = fs::remove_file(&partial);
             bail!(
-                "downloaded blob {blob_ref} did not match manifest metadata: downloaded bytes={}, manifest bytes={}",
-                bytes.len(),
+                "downloaded blob {blob_ref} did not match manifest metadata: downloaded bytes={received}, manifest bytes={}",
                 file.size_bytes
             );
         }
-
+        fs::rename(&partial, target).with_context(|| {
+            format!(
+                "failed to move {} to {}",
+                partial.display(),
+                target.display()
+            )
+        })?;
         self.summary.downloaded_blobs += 1;
-        self.summary.downloaded_bytes += bytes.len() as u64;
-        self.blob_cache.insert(blob_ref, bytes.clone());
-        Ok(bytes)
+        self.summary.downloaded_bytes += received - have;
+        Ok(())
     }
 
     fn path_for_vfs_path(&self, path: &VfsPath) -> PathBuf {
@@ -710,6 +1060,15 @@ impl<A: CasVfsApi + Sync + ?Sized> LocalMaterializer<'_, A> {
         }
         host_path
     }
+}
+
+/// The hidden partial file a download writes before it is complete.
+fn partial_path(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    target.with_file_name(format!(".{name}.lightspeed-partial"))
 }
 
 impl SnapshotEntrySource {
@@ -806,9 +1165,15 @@ impl DirectoryScanner {
             );
         }
 
-        let bytes = fs::read(&host_path)
-            .with_context(|| format!("failed to read {}", host_path.display()))?;
-        let size_bytes = bytes.len() as u64;
+        if metadata.len() > self.limits.max_single_file_bytes {
+            bail!(
+                "vfs snapshot limit exceeded for single_file_bytes: value {} is greater than max {} at {}",
+                metadata.len(),
+                self.limits.max_single_file_bytes,
+                host_path.display()
+            );
+        }
+        let (blob_ref, size_bytes) = hash_file(&host_path)?;
         if size_bytes > self.limits.max_single_file_bytes {
             bail!(
                 "vfs snapshot limit exceeded for single_file_bytes: value {} is greater than max {} at {}",
@@ -834,7 +1199,7 @@ impl DirectoryScanner {
         self.plan.files.push(SnapshotUploadEntry {
             vfs_path,
             source: SnapshotEntrySource::HostPath(host_path),
-            blob_ref: BlobRef::from_bytes(&bytes),
+            blob_ref,
             size_bytes,
             media_type: None,
             executable: executable(metadata),
@@ -1015,7 +1380,7 @@ mod tests {
         let destination = tempdir().unwrap();
         fs::write(destination.path().join("README.md"), &readme).unwrap();
 
-        let summary = materialize_snapshot(&api, snapshot_ref.clone(), destination.path())
+        let summary = materialize_snapshot(&api, snapshot_ref.clone(), destination.path(), false)
             .await
             .unwrap();
 
@@ -1071,7 +1436,7 @@ mod tests {
         let outside = tempdir().unwrap();
         symlink(outside.path(), destination.path().join("linked")).unwrap();
 
-        let error = materialize_snapshot(&api, snapshot_ref, destination.path())
+        let error = materialize_snapshot(&api, snapshot_ref, destination.path(), false)
             .await
             .expect_err("symlink destination must be rejected");
 
@@ -1079,11 +1444,198 @@ mod tests {
         assert!(!outside.path().join("file.txt").exists());
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn snapshot_streams_files_above_the_threshold_and_batches_the_rest() {
+        let temp = tempdir().unwrap();
+        let large = vec![7u8; 64];
+        fs::write(temp.path().join("large.bin"), &large).unwrap();
+        fs::write(temp.path().join("small.txt"), b"small").unwrap();
+        let api = FakeCasVfsApi::new([]);
+        let options = SnapshotUploadOptions {
+            stream_threshold_bytes: 16,
+            ..SnapshotUploadOptions::default()
+        };
+
+        let summary = upload_snapshot_directory(&api, temp.path(), options)
+            .await
+            .unwrap();
+
+        assert_eq!(summary.uploaded_blobs, 2);
+        assert_eq!(summary.uploaded_bytes, 69);
+        assert_eq!(
+            api.streamed.lock().unwrap().as_slice(),
+            &[BlobRef::from_bytes(&large).as_str().to_owned()]
+        );
+        assert_eq!(
+            api.put_batches.lock().unwrap().as_slice(),
+            &[vec![b"small".to_vec()]]
+        );
+    }
+
+    #[test]
+    fn hash_file_matches_whole_file_digest_across_buffer_boundaries() {
+        let temp = tempdir().unwrap();
+        let bytes = (0..(READ_BUFFER_BYTES * 2 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let path = temp.path().join("data");
+        fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(
+            hash_file(&path).unwrap(),
+            (BlobRef::from_bytes(&bytes), bytes.len() as u64)
+        );
+    }
+
+    fn single_file_snapshot(name: &str, bytes: &[u8]) -> (String, VfsSnapshotManifest) {
+        let mut manifest = VfsSnapshotManifest::empty();
+        write_manifest_file_ref(
+            &mut manifest,
+            &VfsPath::parse(format!("/{name}")).unwrap(),
+            BlobRef::from_bytes(bytes),
+            bytes.len() as u64,
+            None,
+            false,
+        )
+        .unwrap();
+        (snapshot_ref_for_manifest(&manifest), manifest)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn interrupted_download_keeps_partial_file_and_resumes_from_it() {
+        let bytes = b"0123456789abcdefghij".to_vec();
+        let (snapshot_ref, manifest) = single_file_snapshot("data.bin", &bytes);
+        let api = FakeCasVfsApi::new([]).with_snapshot(
+            snapshot_ref.clone(),
+            manifest,
+            [(BlobRef::from_bytes(&bytes), bytes.clone())],
+        );
+        *api.fail_after_chunks.lock().unwrap() = Some(2);
+        let destination = tempdir().unwrap();
+
+        let error = materialize_snapshot(&api, snapshot_ref.clone(), destination.path(), false)
+            .await
+            .expect_err("interrupted download fails");
+        assert!(format!("{error:#}").contains("run it again to resume"));
+        let partial = destination.path().join(".data.bin.lightspeed-partial");
+        assert_eq!(fs::read(&partial).unwrap(), b"012345");
+        assert!(!destination.path().join("data.bin").exists());
+
+        let summary = materialize_snapshot(&api, snapshot_ref, destination.path(), false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read(destination.path().join("data.bin")).unwrap(),
+            bytes
+        );
+        assert!(!partial.exists());
+        assert_eq!(summary.downloaded_bytes, 14);
+        let blob_ref = BlobRef::from_bytes(&bytes).as_str().to_owned();
+        assert_eq!(
+            api.opened.lock().unwrap().as_slice(),
+            &[(blob_ref.clone(), 0), (blob_ref, 6)]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn download_starts_over_when_the_runtime_ignores_the_range() {
+        let bytes = b"0123456789abcdefghij".to_vec();
+        let (snapshot_ref, manifest) = single_file_snapshot("data.bin", &bytes);
+        let mut api = FakeCasVfsApi::new([]).with_snapshot(
+            snapshot_ref.clone(),
+            manifest,
+            [(BlobRef::from_bytes(&bytes), bytes.clone())],
+        );
+        api.ranges = false;
+        let destination = tempdir().unwrap();
+        fs::write(
+            destination.path().join(".data.bin.lightspeed-partial"),
+            b"0123",
+        )
+        .unwrap();
+
+        let summary = materialize_snapshot(&api, snapshot_ref, destination.path(), false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read(destination.path().join("data.bin")).unwrap(),
+            bytes
+        );
+        assert_eq!(summary.downloaded_bytes, 20);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn corrupt_partial_file_is_discarded_after_digest_mismatch() {
+        let bytes = b"0123456789abcdefghij".to_vec();
+        let (snapshot_ref, manifest) = single_file_snapshot("data.bin", &bytes);
+        let api = FakeCasVfsApi::new([]).with_snapshot(
+            snapshot_ref.clone(),
+            manifest,
+            [(BlobRef::from_bytes(&bytes), bytes.clone())],
+        );
+        let destination = tempdir().unwrap();
+        let partial = destination.path().join(".data.bin.lightspeed-partial");
+        fs::write(&partial, b"XXXX").unwrap();
+
+        materialize_snapshot(&api, snapshot_ref.clone(), destination.path(), false)
+            .await
+            .expect_err("a wrong prefix fails the digest check");
+        assert!(!partial.exists());
+
+        materialize_snapshot(&api, snapshot_ref, destination.path(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read(destination.path().join("data.bin")).unwrap(),
+            bytes
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_content_is_downloaded_once_and_copied() {
+        let bytes = b"same content".to_vec();
+        let blob_ref = BlobRef::from_bytes(&bytes);
+        let mut manifest = VfsSnapshotManifest::empty();
+        for name in ["/a.txt", "/b.txt"] {
+            write_manifest_file_ref(
+                &mut manifest,
+                &VfsPath::parse(name).unwrap(),
+                blob_ref.clone(),
+                bytes.len() as u64,
+                None,
+                false,
+            )
+            .unwrap();
+        }
+        let snapshot_ref = snapshot_ref_for_manifest(&manifest);
+        let api = FakeCasVfsApi::new([]).with_snapshot(
+            snapshot_ref.clone(),
+            manifest,
+            [(blob_ref, bytes.clone())],
+        );
+        let destination = tempdir().unwrap();
+
+        let summary = materialize_snapshot(&api, snapshot_ref, destination.path(), false)
+            .await
+            .unwrap();
+
+        assert_eq!(summary.downloaded_blobs, 1);
+        assert_eq!(summary.written_files, 2);
+        assert_eq!(fs::read(destination.path().join("b.txt")).unwrap(), bytes);
+        assert_eq!(api.opened.lock().unwrap().len(), 1);
+    }
+
     struct FakeCasVfsApi {
         existing: Mutex<BTreeSet<String>>,
         blobs: Mutex<BTreeMap<String, Vec<u8>>>,
         snapshots: Mutex<BTreeMap<String, VfsSnapshotManifest>>,
         put_batches: Mutex<Vec<Vec<Vec<u8>>>>,
+        streamed: Mutex<Vec<String>>,
+        opened: Mutex<Vec<(String, u64)>>,
+        fail_after_chunks: Mutex<Option<usize>>,
+        ranges: bool,
         commits: Mutex<Vec<VfsSnapshotManifest>>,
     }
 
@@ -1094,6 +1646,10 @@ mod tests {
                 blobs: Mutex::new(BTreeMap::new()),
                 snapshots: Mutex::new(BTreeMap::new()),
                 put_batches: Mutex::new(Vec::new()),
+                streamed: Mutex::new(Vec::new()),
+                opened: Mutex::new(Vec::new()),
+                fail_after_chunks: Mutex::new(None),
+                ranges: true,
                 commits: Mutex::new(Vec::new()),
             }
         }
@@ -1157,12 +1713,67 @@ mod tests {
                 .collect())
         }
 
-        async fn get_blob(&self, blob_ref: String) -> Result<Vec<u8>, AgentApiError> {
-            let blobs = self.blobs.lock().unwrap();
-            let bytes = blobs
+        async fn upload_blob(
+            &self,
+            blob_ref: &BlobRef,
+            source: UploadSource,
+            size_bytes: u64,
+            progress: Arc<Progress>,
+        ) -> Result<BlobPutResult, AgentApiError> {
+            let bytes = match source {
+                UploadSource::Bytes(bytes) => bytes,
+                UploadSource::Path(path) => fs::read(path).unwrap(),
+            };
+            progress.advance(bytes.len() as u64);
+            if bytes.len() as u64 != size_bytes || BlobRef::from_bytes(&bytes) != *blob_ref {
+                return Err(AgentApiError::invalid_request(
+                    "blob length/digest mismatch",
+                ));
+            }
+            self.streamed
+                .lock()
+                .unwrap()
+                .push(blob_ref.as_str().to_owned());
+            self.existing
+                .lock()
+                .unwrap()
+                .insert(blob_ref.as_str().to_owned());
+            self.blobs
+                .lock()
+                .unwrap()
+                .insert(blob_ref.as_str().to_owned(), bytes.clone());
+            Ok(BlobPutResult {
+                blob_ref: blob_ref.as_str().to_owned(),
+                bytes: bytes.len() as u64,
+            })
+        }
+
+        async fn open_blob(
+            &self,
+            blob_ref: String,
+            offset: u64,
+        ) -> Result<BlobChunks, AgentApiError> {
+            self.opened.lock().unwrap().push((blob_ref.clone(), offset));
+            let bytes = self
+                .blobs
+                .lock()
+                .unwrap()
                 .get(&blob_ref)
+                .cloned()
                 .ok_or_else(|| AgentApiError::not_found(format!("blob not found: {blob_ref}")))?;
-            Ok(bytes.clone())
+            let start = if self.ranges { offset as usize } else { 0 };
+            let mut chunks: Vec<Result<Vec<u8>, AgentApiError>> = bytes[start..]
+                .chunks(3)
+                .map(|chunk| Ok(chunk.to_vec()))
+                .collect();
+            if let Some(after) = self.fail_after_chunks.lock().unwrap().take() {
+                chunks.truncate(after);
+                chunks.push(Err(AgentApiError::internal("connection reset")));
+            }
+            Ok(BlobChunks {
+                offset: start as u64,
+                chunks: futures_util::stream::iter(chunks).boxed(),
+            })
         }
 
         async fn commit_vfs_snapshot(
