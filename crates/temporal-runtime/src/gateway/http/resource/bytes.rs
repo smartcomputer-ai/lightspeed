@@ -14,6 +14,7 @@ pub(super) async fn download_operation(
     service: Arc<crate::gateway::GatewayAgentApi>,
     operation: &str,
     params: Value,
+    headers: &HeaderMap,
 ) -> Result<Response, Failure> {
     let blob_ref = match operation {
         api::METHOD_BLOBS_READ => {
@@ -32,32 +33,125 @@ pub(super) async fn download_operation(
         }
         _ => return Err(AgentApiError::internal("unknown binary download binding").into()),
     };
-    download(service.store().clone(), blob_ref).await
+    download(
+        service.store().clone(),
+        blob_ref,
+        headers.get(header::RANGE),
+    )
+    .await
 }
 
-async fn download(store: Arc<dyn BlobStore>, blob_ref: BlobRef) -> Result<Response, Failure> {
+/// One satisfiable byte range of a blob, `start..end` (end exclusive).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ByteRange {
+    Whole,
+    Part { start: u64, end: u64 },
+    Unsatisfiable,
+}
+
+/// Interpret a `Range` header for a blob of `length` bytes. Only one
+/// `bytes=` range is honoured (`start-`, `start-end` or `-suffix`); anything
+/// else is ignored and the whole blob is sent, as HTTP allows.
+fn byte_range(value: Option<&HeaderValue>, length: u64) -> ByteRange {
+    let Some(spec) = value
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().strip_prefix("bytes="))
+    else {
+        return ByteRange::Whole;
+    };
+    if spec.contains(',') {
+        return ByteRange::Whole;
+    }
+    let Some((first, last)) = spec.trim().split_once('-') else {
+        return ByteRange::Whole;
+    };
+    let digits = |text: &str| -> Option<u64> {
+        (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| text.parse().ok())
+            .flatten()
+    };
+    let (start, end) = match (first.is_empty(), last.is_empty()) {
+        (true, false) => {
+            let Some(suffix) = digits(last) else {
+                return ByteRange::Whole;
+            };
+            if suffix == 0 {
+                return ByteRange::Unsatisfiable;
+            }
+            (length.saturating_sub(suffix), length)
+        }
+        (false, _) => {
+            let Some(start) = digits(first) else {
+                return ByteRange::Whole;
+            };
+            let end = if last.is_empty() {
+                length
+            } else {
+                match digits(last) {
+                    Some(last) if last >= start => last.saturating_add(1).min(length),
+                    _ => return ByteRange::Whole,
+                }
+            };
+            (start, end)
+        }
+        (true, true) => return ByteRange::Whole,
+    };
+    if start >= length {
+        return ByteRange::Unsatisfiable;
+    }
+    if start == 0 && end == length {
+        return ByteRange::Whole;
+    }
+    ByteRange::Part { start, end }
+}
+
+async fn download(
+    store: Arc<dyn BlobStore>,
+    blob_ref: BlobRef,
+    range: Option<&HeaderValue>,
+) -> Result<Response, Failure> {
     let info = store.stat_blob(&blob_ref).await.map_err(blob_error)?;
     let length = info.byte_len;
     if length == 0 && blob_ref != BlobRef::from_bytes(&[]) {
         return Err(AgentApiError::internal("empty blob digest mismatch").into());
     }
     // stat_blob enforces universe ownership before response headers are sent.
+    let (start, end) = match byte_range(range, length) {
+        ByteRange::Whole => (0, length),
+        ByteRange::Part { start, end } => (start, end),
+        ByteRange::Unsatisfiable => {
+            let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+            response.headers_mut().insert(
+                header::CONTENT_RANGE,
+                HeaderValue::from_str(&format!("bytes */{length}")).expect("range header"),
+            );
+            response
+                .headers_mut()
+                .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+            return Ok(response);
+        }
+    };
+    let partial = start != 0 || end != length;
+    // A whole transfer verifies the digest at its end; a range cannot, so the
+    // client checks the reassembled file.
     let stream = futures_util::stream::try_unfold(
-        (store, blob_ref, 0u64, Sha256::new()),
+        (store, blob_ref, start, Sha256::new()),
         move |(store, blob_ref, offset, mut digest)| async move {
-            if offset == length {
+            if offset == end {
                 return Ok(None);
             }
-            let count = (length - offset).min(CHUNK_BYTES as u64) as usize;
+            let count = (end - offset).min(CHUNK_BYTES as u64) as usize;
             let chunk = store.read_blob_range(&blob_ref, offset, count).await?;
             if chunk.len() != count {
                 return Err(BlobStoreError::Store {
                     message: "blob length changed during transfer".to_owned(),
                 });
             }
-            digest.update(&chunk);
+            if !partial {
+                digest.update(&chunk);
+            }
             let offset = offset + chunk.len() as u64;
-            if offset == length && !digest_matches(digest.clone(), &blob_ref) {
+            if !partial && offset == length && !digest_matches(digest.clone(), &blob_ref) {
                 return Err(BlobStoreError::Store {
                     message: "blob digest mismatch during transfer".to_owned(),
                 });
@@ -69,14 +163,25 @@ async fn download(store: Arc<dyn BlobStore>, blob_ref: BlobRef) -> Result<Respon
         },
     );
     let mut response = Body::from_stream(stream).into_response();
+    if partial {
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+        response.headers_mut().insert(
+            header::CONTENT_RANGE,
+            HeaderValue::from_str(&format!("bytes {start}-{}/{length}", end - 1))
+                .expect("range header"),
+        );
+    }
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/octet-stream"),
     );
     response.headers_mut().insert(
         header::CONTENT_LENGTH,
-        HeaderValue::from_str(&length.to_string()).expect("byte length header"),
+        HeaderValue::from_str(&(end - start).to_string()).expect("byte length header"),
     );
+    response
+        .headers_mut()
+        .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -296,7 +401,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn download_reads_only_when_polled_and_stops_after_drop() {
         let store = store();
-        let response = download(store.clone(), store.reference.clone())
+        let response = download(store.clone(), store.reference.clone(), None)
             .await
             .unwrap();
         assert_eq!(
@@ -314,7 +419,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn download_transfers_exact_bytes_and_refuses_unowned_references_before_headers() {
         let store = store();
-        let response = download(store.clone(), store.reference.clone())
+        let response = download(store.clone(), store.reference.clone(), None)
             .await
             .unwrap();
         let bytes = axum::body::to_bytes(response.into_body(), store.bytes.len())
@@ -322,10 +427,94 @@ mod tests {
             .unwrap();
         assert_eq!(bytes.as_ref(), &store.bytes);
         assert_eq!(store.reads.load(Ordering::SeqCst), 4);
-        let error = download(store, BlobRef::from_bytes(b"not owned"))
+        let error = download(store, BlobRef::from_bytes(b"not owned"), None)
             .await
             .unwrap_err();
         assert_eq!(error.error.kind, AgentApiErrorKind::NotFound);
+    }
+    #[test]
+    fn byte_range_honours_one_range_and_ignores_the_rest() {
+        let header = |value: &str| HeaderValue::from_str(value).unwrap();
+        let range = |value: &str| byte_range(Some(&header(value)), 100);
+        assert_eq!(byte_range(None, 100), ByteRange::Whole);
+        assert_eq!(
+            range("bytes=10-"),
+            ByteRange::Part {
+                start: 10,
+                end: 100
+            }
+        );
+        assert_eq!(range("bytes=10-19"), ByteRange::Part { start: 10, end: 20 });
+        assert_eq!(
+            range("bytes=90-500"),
+            ByteRange::Part {
+                start: 90,
+                end: 100
+            }
+        );
+        assert_eq!(
+            range("bytes=-30"),
+            ByteRange::Part {
+                start: 70,
+                end: 100
+            }
+        );
+        assert_eq!(range("bytes=0-"), ByteRange::Whole);
+        assert_eq!(range("bytes=-500"), ByteRange::Whole);
+        assert_eq!(range("bytes=100-"), ByteRange::Unsatisfiable);
+        assert_eq!(range("bytes=-0"), ByteRange::Unsatisfiable);
+        assert_eq!(range("bytes=0-1,5-6"), ByteRange::Whole);
+        assert_eq!(range("bytes=20-10"), ByteRange::Whole);
+        assert_eq!(range("bytes=a-"), ByteRange::Whole);
+        assert_eq!(range("bytes=+1-"), ByteRange::Whole);
+        assert_eq!(range("items=0-1"), ByteRange::Whole);
+        assert_eq!(
+            byte_range(Some(&header("bytes=0-")), 0),
+            ByteRange::Unsatisfiable
+        );
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn ranged_download_sends_only_the_requested_bytes() {
+        let mut bytes = vec![0u8; CHUNK_BYTES + 100];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = (index % 251) as u8;
+        }
+        let store = Arc::new(RangeStore {
+            reference: BlobRef::from_bytes(&bytes),
+            bytes,
+            reads: AtomicUsize::new(0),
+        });
+        let start = CHUNK_BYTES as u64 - 10;
+        let header = HeaderValue::from_str(&format!("bytes={start}-")).unwrap();
+        let response = download(store.clone(), store.reference.clone(), Some(&header))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        let total = store.bytes.len();
+        assert_eq!(
+            response.headers()[header::CONTENT_RANGE],
+            format!("bytes {start}-{}/{total}", total - 1).as_str()
+        );
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "110");
+        assert_eq!(response.headers()[header::ACCEPT_RANGES], "bytes");
+        let body = axum::body::to_bytes(response.into_body(), total)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), &store.bytes[start as usize..]);
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn unsatisfiable_range_reports_the_length() {
+        let store = store();
+        let header = HeaderValue::from_static("bytes=999999999-");
+        let response = download(store.clone(), store.reference.clone(), Some(&header))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            response.headers()[header::CONTENT_RANGE],
+            format!("bytes */{}", store.bytes.len()).as_str()
+        );
+        assert_eq!(store.reads.load(Ordering::SeqCst), 0);
     }
     #[tokio::test(flavor = "current_thread")]
     async fn upload_spool_verifies_digest_and_length_and_supplies_bounded_chunks() {

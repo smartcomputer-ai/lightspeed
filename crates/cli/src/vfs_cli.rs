@@ -6,8 +6,9 @@ use clap::{Args, Subcommand, ValueEnum};
 use crate::api_client::HttpAgentApi;
 use crate::vfs_transfer::{
     DEFAULT_HAS_MANY_MAX_REFS, DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILES, DEFAULT_MAX_SINGLE_FILE_BYTES,
-    DEFAULT_MAX_TOTAL_BYTES, DEFAULT_PUT_MANY_MAX_BATCH_BYTES, DEFAULT_PUT_MANY_MAX_BATCH_FILES,
-    SnapshotUploadOptions, materialize_snapshot, upload_snapshot_directory,
+    DEFAULT_MAX_TOTAL_BYTES, DEFAULT_PART_BYTES, DEFAULT_PUT_MANY_MAX_BATCH_BYTES,
+    DEFAULT_PUT_MANY_MAX_BATCH_FILES, SnapshotUploadOptions, materialize_snapshot,
+    upload_snapshot_directory,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -38,6 +39,11 @@ struct SnapshotArgs {
     /// Max refs per blobs/has request.
     #[arg(long = "has-batch-refs", default_value_t = DEFAULT_HAS_MANY_MAX_REFS)]
     has_batch_refs: usize,
+    /// Files above this size are uploaded as parts of this size and joined on
+    /// the Runtime; parts already there are skipped, so a rerun resumes. Keep it
+    /// at or below the Runtime's LIGHTSPEED_GATEWAY_MAX_BLOB_UPLOAD_BYTES.
+    #[arg(long = "part-bytes", default_value_t = DEFAULT_PART_BYTES)]
+    part_bytes: u64,
     /// Max file count in the snapshot.
     #[arg(long = "max-files", default_value_t = DEFAULT_MAX_FILES)]
     max_files: u64,
@@ -362,7 +368,13 @@ async fn put_workspace_attachment(
 
 async fn materialize(args: MaterializeArgs) -> Result<()> {
     let api = HttpAgentApi::from_active();
-    let summary = materialize_snapshot(&api, args.snapshot_ref, args.destination).await?;
+    let summary = materialize_snapshot(
+        &api,
+        args.snapshot_ref,
+        args.destination,
+        show_progress(args.json),
+    )
+    .await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
         return Ok(());
@@ -394,5 +406,14 @@ fn snapshot_options(args: &SnapshotArgs) -> SnapshotUploadOptions {
         max_put_many_batch_bytes: args.put_batch_bytes,
         max_put_many_batch_files: args.put_batch_files,
         max_has_many_refs: args.has_batch_refs,
+        stream_threshold_bytes: crate::vfs_transfer::DEFAULT_STREAM_THRESHOLD_BYTES,
+        part_bytes: args.part_bytes,
+        progress: show_progress(args.json),
     }
+}
+
+/// Progress lines go to stderr, and only when a person is watching it.
+fn show_progress(json: bool) -> bool {
+    use std::io::IsTerminal as _;
+    !json && std::io::stderr().is_terminal()
 }

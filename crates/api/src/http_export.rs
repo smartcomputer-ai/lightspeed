@@ -32,7 +32,7 @@ pub(crate) fn export_http_contract() -> (Value, Value) {
         route_paths.insert(binding.path);
         let description = match spec.method {
             METHOD_BLOBS_READ => {
-                "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported."
+                "Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes."
             }
             METHOD_INITIALIZE => {
                 "Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused."

@@ -24,6 +24,7 @@ base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 ed25519-dalek = "3"
 rand = "0.10"
+hex = "0.4"
 sha2 = "0.11"
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"

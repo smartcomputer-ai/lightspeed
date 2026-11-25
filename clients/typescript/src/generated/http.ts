@@ -9246,12 +9246,141 @@ export const HTTP_OPERATIONS = {
       }
     }
   },
+  "blobs/compose": {
+    "access": {
+      "action": "useResource",
+      "kind": "universe"
+    },
+    "description": "Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.",
+    "events": null,
+    "group": "blobs/put",
+    "method": "POST",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "universe",
+        "required": true,
+        "schema": {
+          "description": "Universe UUID or active handle.",
+          "type": "string"
+        }
+      },
+      {
+        "in": "path",
+        "name": "blobRef",
+        "required": true,
+        "schema": {
+          "description": "The ref of the joined content.",
+          "type": "string"
+        }
+      }
+    ],
+    "params": {
+      "schema": {
+        "$ref": "api.schema.json#/definitions/BlobComposeParams"
+      },
+      "type": "BlobComposeParams"
+    },
+    "path": "/api/v1/universes/{universe}/blobs/{blobRef}/compose",
+    "pathFields": [
+      {
+        "field": "blobRef",
+        "parameter": "blobRef"
+      }
+    ],
+    "queryFields": [],
+    "result": {
+      "schema": {
+        "$ref": "api.schema.json#/definitions/BlobPutResult"
+      },
+      "type": "BlobPutResult"
+    },
+    "role": "contributor",
+    "scope": "universe",
+    "success": "ok",
+    "summary": "Join uploaded parts into one blob",
+    "target": null,
+    "transfer": "json",
+    "operationId": "blobs/compose",
+    "responses": {
+      "200": {
+        "contentTypes": [
+          "application/json"
+        ]
+      },
+      "400": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "401": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "403": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "404": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "405": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "409": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "410": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "413": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "415": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "422": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "500": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "503": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "504": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      }
+    }
+  },
   "blobs/read": {
     "access": {
       "action": "read",
       "kind": "universe"
     },
-    "description": "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.",
+    "description": "Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.",
     "events": null,
     "group": "session",
     "method": "GET",

@@ -224,7 +224,7 @@ operation without adding organization ownership.
 | environments/jobs | `createEnvironmentJobs`, `readEnvironmentJobs`, `cancelEnvironmentJobs` |
 | environments/registration-keys | `createEnvironmentRegistrationKey`, `putEnvironmentRegistrationKey`, `readEnvironmentRegistrationKey`, `listEnvironmentRegistrationKeys`, `updateEnvironmentRegistrationKey`, `rotateEnvironmentRegistrationKey`, `revokeEnvironmentRegistrationKey` |
 | transcriptions | `startTranscription`, `readTranscription`, `cancelTranscription` |
-| blobs | `putBlobs`, `hasBlobs`, `readBlobBytes`, `uploadBlob` |
+| blobs | `putBlobs`, `hasBlobs`, `composeBlob`, `readBlobBytes`, `uploadBlob` |
 | credentials/grants | `importCredentialGrant`, `leaseCredentialGrant`, `readCredentialGrant`, `listCredentialGrants`, `putCredentialGrant`, `revokeCredentialGrant` |
 | credentials/clients | `createCredentialClient`, `readCredentialClient`, `listCredentialClients`, `deleteCredentialClient` |
 | credentials/flows | `startCredentialFlow`, `readCredentialFlow` |

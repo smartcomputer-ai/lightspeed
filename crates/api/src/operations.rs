@@ -451,6 +451,9 @@ macro_rules! for_each_universe_operation {
     $crate::METHOD_BLOBS_PUT => put_blobs($crate::BlobPutParams) -> $crate::BlobPutResponse =>
         ["Store content-addressed blobs", "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated."], access: $crate::MethodAccess::Universe($crate::UniverseAction::UseResource),
         http: (POST, "/api/v1/universes/{universe}/blobs/batch", [], [], Json, Ok),
+    $crate::METHOD_BLOBS_COMPOSE => compose_blob($crate::BlobComposeParams) -> $crate::BlobPutResult =>
+        ["Join uploaded parts into one blob", "Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period."], access: $crate::MethodAccess::Universe($crate::UniverseAction::UseResource),
+        http: (POST, "/api/v1/universes/{universe}/blobs/{blobRef}/compose", [("blobRef", "blobRef")], [], Json, Ok),
     $crate::METHOD_BLOBS_READ => read_blob($crate::BlobReadParams) -> Vec<u8> =>
         ["Read a content-addressed blob", "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
         http: (GET, "/api/v1/universes/{universe}/blobs/{blobRef}/content", [("blobRef", "blobRef")], [], BinaryDownload, Ok),

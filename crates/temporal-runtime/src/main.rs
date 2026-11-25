@@ -7,10 +7,10 @@ use temporal_runtime::{
         postgres_pool_from_env, task_queues_from_env,
     },
     gateway::{
-        DEFAULT_ENVIRONMENT_GATEWAY_BIND, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES,
-        DEFAULT_PUBLIC_BIND, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, GatewayRoutes,
-        GatewayState, TemporalConnectionSettings, gateway_router, prewarm_single_universe,
-        registration, replica::GatewayReplica,
+        DEFAULT_ENVIRONMENT_GATEWAY_BIND, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_BLOB_UPLOAD_BYTES,
+        DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_PUBLIC_BIND, DEFAULT_TEMPORAL_NAMESPACE,
+        DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, TemporalConnectionSettings,
+        gateway_router_with_limits, prewarm_single_universe, registration, replica::GatewayReplica,
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
@@ -149,6 +149,17 @@ struct RunArgs {
         default_value_t = DEFAULT_MAX_REQUEST_BODY_BYTES
     )]
     max_request_body_bytes: usize,
+
+    /// Largest body one streamed blob upload (`blobs/upload`) may carry. It is
+    /// spooled to a temporary file, not held in memory, so it can exceed the
+    /// general request limit; large files are uploaded as parts of this size
+    /// at most and joined with `blobs/compose`.
+    #[arg(
+        long,
+        env = "LIGHTSPEED_GATEWAY_MAX_BLOB_UPLOAD_BYTES",
+        default_value_t = DEFAULT_MAX_BLOB_UPLOAD_BYTES
+    )]
+    max_blob_upload_bytes: usize,
 
     /// Externally reachable URL for OAuth callbacks and webhook ingest.
     /// Defaults to http://{public-bind}.
@@ -552,6 +563,7 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 state,
                 listeners,
                 args.max_request_body_bytes,
+                args.max_blob_upload_bytes,
                 roles.has(Role::EnvironmentGateway),
             ))
         } else {
@@ -612,6 +624,7 @@ async fn serve_gateways(
     state: Arc<GatewayState>,
     listeners: Vec<(tokio::net::TcpListener, GatewayRoutes)>,
     max_request_body_bytes: usize,
+    max_blob_upload_bytes: usize,
     environment: bool,
 ) -> anyhow::Result<()> {
     use futures::StreamExt as _;
@@ -621,7 +634,12 @@ async fn serve_gateways(
     let mut servers = futures::stream::FuturesUnordered::new();
     for (listener, routes) in listeners {
         let address = listener.local_addr()?;
-        let app = gateway_router(state.clone(), max_request_body_bytes, routes);
+        let app = gateway_router_with_limits(
+            state.clone(),
+            max_request_body_bytes,
+            max_blob_upload_bytes,
+            routes,
+        );
         let mut stopped = http_stopped.clone();
         tracing::info!(
             target: "temporal_runtime",

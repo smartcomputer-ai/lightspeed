@@ -37,6 +37,27 @@ pub struct BlobReadParams {
     pub blob_ref: String,
 }
 
+/// Most parts one `blobs/compose` may join. At the CLI's 256 MiB parts this
+/// covers more than the one TiB a store accepts for one blob.
+pub const MAX_BLOB_COMPOSE_PARTS: usize = 10_000;
+
+/// Join already uploaded blobs, in order, into the blob `blobRef`. A client
+/// uploads a large file as parts through `blobs/upload`, asks `blobs/has`
+/// which parts already exist to resume, then composes them. The Runtime checks
+/// the joined length and SHA-256 against `blobRef` before publishing it.
+/// Parts stay ordinary blobs and are collected after the usual grace period.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BlobComposeParams {
+    /// The ref of the joined content.
+    pub blob_ref: String,
+    /// Refs of the parts in order, at least one and at most 10,000. A part may
+    /// repeat.
+    pub parts: Vec<String>,
+    /// Length of the joined content: the sum of the parts' lengths.
+    pub size_bytes: u64,
+}
+
 /// Immutable content and its encoding. A reference can name plain text,
 /// provider-native JSON, or media; it does not imply a UTF-8 text payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

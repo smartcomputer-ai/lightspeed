@@ -73,6 +73,7 @@ export const OPERATIONS = [
   "profiles/put",
   "profiles/delete",
   "blobs/put",
+  "blobs/compose",
   "blobs/read",
   "blobs/has",
   "vfs/snapshots/commit",
@@ -690,13 +691,21 @@ export const OPERATION_INFO = {
     summary: "Store content-addressed blobs",
     description: "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
   },
+  "blobs/compose": {
+    scope: "universe",
+    streaming: false,
+    notifications: [],
+    access: {"action":"useResource","kind":"universe"},
+    summary: "Join uploaded parts into one blob",
+    description: "Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.",
+  },
   "blobs/read": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "Read a content-addressed blob",
-    description: "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.",
+    description: "Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.",
   },
   "blobs/has": {
     scope: "universe",
@@ -1881,9 +1890,18 @@ export interface OperationMap {
     result: Api.BlobPutResponse;
   };
   /**
+   * Join uploaded parts into one blob
+   *
+   * Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.
+   */
+  "blobs/compose": {
+    params: Api.BlobComposeParams;
+    result: Api.BlobPutResult;
+  };
+  /**
    * Read a content-addressed blob
    *
-   * Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.
+   * Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.
    */
   "blobs/read": {
     params: Api.BlobReadParams;

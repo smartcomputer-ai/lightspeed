@@ -2414,6 +2414,28 @@ export interface AvailableEnvironmentProviderReadParams {
 export interface AvailableEnvironmentProviderReadResponse {
   provider: AvailableEnvironmentProviderView;
 }
+/**
+ * Join already uploaded blobs, in order, into the blob `blobRef`. A client
+ * uploads a large file as parts through `blobs/upload`, asks `blobs/has`
+ * which parts already exist to resume, then composes them. The Runtime checks
+ * the joined length and SHA-256 against `blobRef` before publishing it.
+ * Parts stay ordinary blobs and are collected after the usual grace period.
+ */
+export interface BlobComposeParams {
+  /**
+   * The ref of the joined content.
+   */
+  blobRef: string;
+  /**
+   * Refs of the parts in order, at least one and at most 10,000. A part may
+   * repeat.
+   */
+  parts: string[];
+  /**
+   * Length of the joined content: the sum of the parts' lengths.
+   */
+  sizeBytes: number;
+}
 export interface BlobHasItem {
   blobRef: string;
   exists: boolean;

@@ -83,6 +83,7 @@ export const CLIENT_HELPERS = {
   putModelDefaults: "models/defaults/put",
   putBlobs: "blobs/put",
   hasBlobs: "blobs/has",
+  composeBlob: "blobs/compose",
   commitSnapshot: "vfs/snapshots/commit",
   readSnapshot: "vfs/snapshots/read",
   updateWorkspace: "vfs/workspaces/update",
@@ -845,6 +846,15 @@ export abstract class LightspeedHelpers {
    */
   hasBlobs(options: Api.BlobHasParams & CallOptions = {}): Promise<Api.BlobHasResponse> {
     return this.invoke("blobs/has", {  }, options);
+  }
+
+  /**
+   * Join uploaded parts into one blob
+   *
+   * Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.
+   */
+  composeBlob(blobRef: Api.BlobComposeParams["blobRef"], options: Omit<Api.BlobComposeParams, "blobRef"> & CallOptions): Promise<Api.BlobPutResult> {
+    return this.invoke("blobs/compose", { blobRef }, options);
   }
 
   /**

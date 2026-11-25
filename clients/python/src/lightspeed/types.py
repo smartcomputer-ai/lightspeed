@@ -179,6 +179,30 @@ class AvailableEnvironmentProviderView(TypedDict):
     providerId: str
 
 
+class BlobComposeParams(TypedDict):
+    """
+    Join already uploaded blobs, in order, into the blob `blobRef`. A client
+    uploads a large file as parts through `blobs/upload`, asks `blobs/has`
+    which parts already exist to resume, then composes them. The Runtime checks
+    the joined length and SHA-256 against `blobRef` before publishing it.
+    Parts stay ordinary blobs and are collected after the usual grace period.
+    """
+
+    blobRef: str
+    """
+    The ref of the joined content.
+    """
+    parts: list[str]
+    """
+    Refs of the parts in order, at least one and at most 10,000. A part may
+    repeat.
+    """
+    sizeBytes: int
+    """
+    Length of the joined content: the sum of the parts' lengths.
+    """
+
+
 class BlobHasItem(TypedDict):
     blobRef: str
     exists: bool

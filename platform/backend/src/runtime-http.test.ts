@@ -121,6 +121,16 @@ describe("shared resource API admission", () => {
     await reader.cancel();
     expect(canceled).toHaveBeenCalledOnce(); expect(upstreamSignal?.aborted).toBe(true);
   });
+  it("forwards byte ranges of blob downloads", async () => {
+    let upstreamRange: string | null = null;
+    runtime((_url, init) => { upstreamRange = new Headers(init.headers).get("range"); return new Response(new Uint8Array([1, 2]), { status: 206, headers: { "content-type": "application/octet-stream", "content-range": "bytes 8-9/10", "accept-ranges": "bytes" } }); });
+    const response = await app("viewer").request(path(`/blobs/${encodeURIComponent(`sha256:${"a".repeat(64)}`)}/content`), { headers: { range: "bytes=8-" } });
+    expect(upstreamRange).toBe("bytes=8-");
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe("bytes 8-9/10");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2]));
+  });
   it("ends the event stream cleanly when the watch must be reauthorized", async () => {
     vi.useFakeTimers();
     try {

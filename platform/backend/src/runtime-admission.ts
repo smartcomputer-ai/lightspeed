@@ -71,6 +71,7 @@ export const MEMBER_OPERATIONS: ReadonlySet<string> = new Set([
   "blobs/put",
   "blobs/read",
   "blobs/has",
+  "blobs/compose",
   "vfs/snapshots/commit",
   "vfs/snapshots/read",
   "vfs/workspaces/create",

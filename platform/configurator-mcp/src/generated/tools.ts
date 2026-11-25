@@ -8043,11 +8043,52 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_blobs_compose",
+    "method": "blobs/compose",
+    "group": "blobs/put",
+    "summary": "Join uploaded parts into one blob",
+    "description": "Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.",
+    "paramsType": "BlobComposeParams",
+    "resultType": "BlobPutResult",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Join already uploaded blobs, in order, into the blob `blobRef`. A client\nuploads a large file as parts through `blobs/upload`, asks `blobs/has`\nwhich parts already exist to resume, then composes them. The Runtime checks\nthe joined length and SHA-256 against `blobRef` before publishing it.\nParts stay ordinary blobs and are collected after the usual grace period.",
+      "properties": {
+        "blobRef": {
+          "description": "The ref of the joined content.",
+          "type": "string"
+        },
+        "parts": {
+          "description": "Refs of the parts in order, at least one and at most 10,000. A part may\nrepeat.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sizeBytes": {
+          "description": "Length of the joined content: the sum of the parts' lengths.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blobRef",
+        "parts",
+        "sizeBytes"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_blobs_read",
     "method": "blobs/read",
     "group": "session",
     "summary": "Read a content-addressed blob",
-    "description": "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.",
+    "description": "Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.",
     "paramsType": "BlobReadParams",
     "resultType": "bytes",
     "inputSchema": {
