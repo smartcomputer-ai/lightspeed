@@ -666,8 +666,13 @@ async fn stream_upload(
         .await;
     progress.finish();
     let item = result.map_err(crate::api_client::api_error).with_context(|| {
+        let hint = if file.size_bytes > DEFAULT_MAX_SINGLE_FILE_BYTES {
+            "; a file this large also needs the Runtime's LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES above its size"
+        } else {
+            "; if it changed while uploading, run the upload again"
+        };
         format!(
-            "failed to upload {} ({} bytes); if it changed while uploading, run the upload again",
+            "failed to upload {} ({} bytes){hint}",
             file.source.display(),
             file.size_bytes
         )
