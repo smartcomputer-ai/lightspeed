@@ -3319,9 +3319,13 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                'transfer': 'json'},
  'blobs/read': {'access': {'action': 'read', 'kind': 'universe'},
                 'description': 'Streams immutable blob bytes from this '
-                               'universe. Content-Length reports the complete '
-                               'representation size. Range requests are not '
-                               'supported.',
+                               'universe. Accepts one `Range: bytes=` range '
+                               '(start-, start-end or -suffix) and answers it '
+                               'with 206 and Content-Range; other ranges are '
+                               'ignored and the whole blob is sent. An '
+                               'unsatisfiable range gets 416 with the blob '
+                               'length. Content-Length reports the size of the '
+                               'sent bytes.',
                 'events': None,
                 'group': 'session',
                 'method': 'GET',

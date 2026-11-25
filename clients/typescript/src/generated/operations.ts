@@ -696,7 +696,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "Read a content-addressed blob",
-    description: "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.",
+    description: "Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.",
   },
   "blobs/has": {
     scope: "universe",
@@ -1883,7 +1883,7 @@ export interface OperationMap {
   /**
    * Read a content-addressed blob
    *
-   * Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.
+   * Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.
    */
   "blobs/read": {
     params: Api.BlobReadParams;

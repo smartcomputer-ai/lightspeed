@@ -61,7 +61,7 @@ pub(super) fn router(max_body: usize) -> Router<Arc<GatewayState>> {
         }};
         ($service:ident, BinaryDownload, $params:ty, $state:ident, $received:ident, $binding:ident, $id:path) => {{
             let service = $state.api_for_request(&$received.context).await?;
-            bytes::download_operation(service, $id, $received.params).await
+            bytes::download_operation(service, $id, $received.params, &$received.headers).await
         }};
         ($service:ident, Json, $params:ty, $state:ident, $received:ident, $binding:ident, $id:path) => {{
             let params: $params = serde_json::from_value($received.params).map_err(invalid_json)?;

@@ -1090,7 +1090,7 @@ Decodes and stores a batch of base64 payloads, returning immutable content refer
 
 **Read a content-addressed blob**
 
-Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.
+Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.
 
 - HTTP: `GET /api/v1/universes/{universe}/blobs/{blobRef}/content`
 - Success: `200`

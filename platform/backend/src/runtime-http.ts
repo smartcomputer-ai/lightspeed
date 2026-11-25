@@ -167,7 +167,7 @@ async function forward(request: Request, url: URL, identity: Record<string, stri
   const cleanup = () => { if (timer) clearTimeout(timer); request.signal.removeEventListener("abort", cancel); };
   const headers = new Headers(identity);
   headers.set("accept-encoding", "identity");
-  for (const name of ["content-type", "accept", "if-match", "if-none-match", "last-event-id"]) {
+  for (const name of ["content-type", "accept", "if-match", "if-none-match", "last-event-id", "range"]) {
     const value = request.headers.get(name); if (value) headers.set(name, value);
   }
   if (rewrittenBody === undefined && request.headers.has("content-length")) headers.set("content-length", request.headers.get("content-length")!);
@@ -175,7 +175,7 @@ async function forward(request: Request, url: URL, identity: Record<string, stri
   try {
     const upstream = await fetch(url, { method: request.method, headers, body: rewrittenBody ?? request.body, signal: abort.signal, redirect: "error", duplex: "half" } as RequestInit);
     const outputHeaders = new Headers({ "x-lightspeed-contract-revision": HTTP_CONTRACT_REVISION });
-    for (const name of ["content-type", "content-length", "cache-control", "etag", "content-disposition", "retry-after"]) {
+    for (const name of ["content-type", "content-length", "cache-control", "etag", "content-disposition", "retry-after", "content-range", "accept-ranges"]) {
       const value = upstream.headers.get(name); if (value) outputHeaders.set(name, value);
     }
     if (watch) { outputHeaders.set("cache-control", "no-store"); outputHeaders.set("x-accel-buffering", "no"); }
