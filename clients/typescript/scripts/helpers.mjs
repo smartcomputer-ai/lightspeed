@@ -91,6 +91,7 @@ export const HELPERS = [
   ["models/defaults/put", "putModelDefaults"],
   ["blobs/put", "putBlobs"],
   ["blobs/has", "hasBlobs"],
+  ["blobs/compose", "composeBlob", "blobRef"],
   ["vfs/snapshots/commit", "commitSnapshot"],
   ["vfs/snapshots/read", "readSnapshot", "snapshotRef"],
   ["vfs/workspaces/update", "updateWorkspace", "workspaceId"],

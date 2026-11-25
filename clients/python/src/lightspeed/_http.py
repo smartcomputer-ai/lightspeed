@@ -3317,6 +3317,44 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                'summary': 'Store content-addressed blobs',
                'target': None,
                'transfer': 'json'},
+ 'blobs/compose': {'access': {'action': 'useResource', 'kind': 'universe'},
+                   'description': 'Streams the part blobs, in order, into '
+                                  'blobRef and verifies its length and SHA-256 '
+                                  'before publishing. Upload a large file as '
+                                  'parts with blobs/upload, use blobs/has to '
+                                  'resume, then compose. Composing existing '
+                                  'content only renews its grace. Parts stay '
+                                  'ordinary blobs, collected after the usual '
+                                  'grace period.',
+                   'events': None,
+                   'group': 'blobs/put',
+                   'method': 'POST',
+                   'operationId': 'blobs/compose',
+                   'parameters': [{'in': 'path',
+                                   'name': 'universe',
+                                   'required': True,
+                                   'schema': {'description': 'Universe UUID or '
+                                                             'active handle.',
+                                              'type': 'string'}},
+                                  {'in': 'path',
+                                   'name': 'blobRef',
+                                   'required': True,
+                                   'schema': {'description': 'The ref of the '
+                                                             'joined content.',
+                                              'type': 'string'}}],
+                   'params': {'schema': {'$ref': 'api.schema.json#/definitions/BlobComposeParams'},
+                              'type': 'BlobComposeParams'},
+                   'path': '/api/v1/universes/{universe}/blobs/{blobRef}/compose',
+                   'pathFields': [{'field': 'blobRef', 'parameter': 'blobRef'}],
+                   'queryFields': [],
+                   'result': {'schema': {'$ref': 'api.schema.json#/definitions/BlobPutResult'},
+                              'type': 'BlobPutResult'},
+                   'role': 'contributor',
+                   'scope': 'universe',
+                   'success': 'ok',
+                   'summary': 'Join uploaded parts into one blob',
+                   'target': None,
+                   'transfer': 'json'},
  'blobs/read': {'access': {'action': 'read', 'kind': 'universe'},
                 'description': 'Streams immutable blob bytes from this '
                                'universe. Accepts one `Range: bytes=` range '

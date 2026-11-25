@@ -78,6 +78,7 @@ OPERATIONS = (
     'profiles/put',
     'profiles/delete',
     'blobs/put',
+    'blobs/compose',
     'blobs/read',
     'blobs/has',
     'vfs/snapshots/commit',
@@ -231,6 +232,7 @@ OPERATION_INFO = {
     'profiles/put': {'scope': 'universe', 'access': {'action': 'manageProfile', 'kind': 'universe'}, 'summary': 'Create or replace an agent profile', 'description': 'Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.', 'streaming': False, 'notifications': []},
     'profiles/delete': {'scope': 'universe', 'access': {'action': 'manageProfile', 'kind': 'universe'}, 'summary': 'Delete an agent profile', 'description': 'Deletes the catalog document; sessions previously created or configured from it retain their materialized state.', 'streaming': False, 'notifications': []},
     'blobs/put': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Store content-addressed blobs', 'description': 'Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.', 'streaming': False, 'notifications': []},
+    'blobs/compose': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Join uploaded parts into one blob', 'description': 'Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.', 'streaming': False, 'notifications': []},
     'blobs/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a content-addressed blob', 'description': 'Streams immutable blob bytes from this universe. Accepts one `Range: bytes=` range (start-, start-end or -suffix) and answers it with 206 and Content-Range; other ranges are ignored and the whole blob is sent. An unsatisfiable range gets 416 with the blob length. Content-Length reports the size of the sent bytes.', 'streaming': False, 'notifications': []},
     'blobs/has': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Check blob availability', 'description': 'Checks a batch of content references without returning blob bodies, preserving request order.', 'streaming': False, 'notifications': []},
     'vfs/snapshots/commit': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Commit a VFS snapshot', 'description': 'Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.', 'streaming': False, 'notifications': []},
@@ -379,6 +381,7 @@ CLIENT_HELPERS = {
     'put_model_defaults': 'models/defaults/put',
     'put_blobs': 'blobs/put',
     'has_blobs': 'blobs/has',
+    'compose_blob': 'blobs/compose',
     'commit_snapshot': 'vfs/snapshots/commit',
     'read_snapshot': 'vfs/snapshots/read',
     'update_workspace': 'vfs/workspaces/update',
@@ -665,6 +668,9 @@ class GeneratedClient:
     @overload
     async def call(self, method: Literal['blobs/put'], params: Api.BlobPutParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResponse: ...
+    @overload
+    async def call(self, method: Literal['blobs/compose'], params: Api.BlobComposeParams,
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResult: ...
     @overload
     async def call(self, method: Literal['blobs/read'], params: Api.BlobReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> bytes: ...
@@ -2176,6 +2182,25 @@ class GeneratedClient:
         if blob_refs is not UNSET:
             params['blobRefs'] = blob_refs
         return cast(Api.BlobHasResponse, await self._invoke('blobs/has', params, headers))
+
+    async def compose_blob(self, blob_ref: str, *, parts: list[str], size_bytes: int, headers: HeadersInput | None = None) -> Api.BlobPutResult:
+        """Join uploaded parts into one blob
+
+        Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before
+        publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then
+        compose. Composing existing content only renews its grace. Parts stay ordinary blobs,
+        collected after the usual grace period.
+
+        Args:
+            blob_ref: The ref of the joined content.
+            parts: Refs of the parts in order, at least one and at most 10,000. A part may repeat.
+            size_bytes: Length of the joined content: the sum of the parts' lengths.
+        """
+        params: dict[str, Any] = {}
+        params['blobRef'] = blob_ref
+        params['parts'] = parts
+        params['sizeBytes'] = size_bytes
+        return cast(Api.BlobPutResult, await self._invoke('blobs/compose', params, headers))
 
     async def commit_snapshot(self, *, manifest: Any, headers: HeadersInput | None = None) -> Api.VfsSnapshotCommitResponse:
         """Commit a VFS snapshot

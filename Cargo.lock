@@ -5352,6 +5352,7 @@ dependencies = [
  "futures",
  "futures-util",
  "harness",
+ "hex",
  "hmac",
  "http",
  "http-body-util",

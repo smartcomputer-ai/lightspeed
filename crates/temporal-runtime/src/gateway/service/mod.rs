@@ -38,7 +38,7 @@ mod workflow;
 use api_config::harness_session_config_from_api;
 #[cfg(test)]
 use api_config::*;
-use blobs::{has_blobs, put_blobs};
+use blobs::{compose_blob, has_blobs, put_blobs};
 use catalogs::parse_client_context_key;
 use common::now_ms;
 use credentials_api::{
@@ -3648,6 +3648,15 @@ impl AgentApiService for GatewayAgentApi {
     async fn has_blobs(&self, params: BlobHasParams) -> Result<BlobHasResponse, AgentApiError> {
         self.authorize_method(METHOD_BLOBS_HAS, None).await?;
         has_blobs(self.store.as_ref(), params).await
+    }
+
+    async fn compose_blob(
+        &self,
+        params: BlobComposeParams,
+    ) -> Result<BlobPutResult, AgentApiError> {
+        self.authorize_method(api::METHOD_BLOBS_COMPOSE, None)
+            .await?;
+        compose_blob(self.store.as_ref(), params).await
     }
 
     async fn commit_vfs_snapshot(

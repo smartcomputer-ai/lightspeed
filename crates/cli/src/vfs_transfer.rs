@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,10 +30,15 @@ pub(crate) const DEFAULT_PUT_MANY_MAX_BATCH_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const DEFAULT_PUT_MANY_MAX_BATCH_FILES: usize = 128;
 pub(crate) const DEFAULT_HAS_MANY_MAX_REFS: usize = 1_000;
 pub(crate) const DEFAULT_MAX_FILES: u64 = 10_000;
-pub(crate) const DEFAULT_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
-/// One file travels in one `blobs/upload` request, so the Runtime's request
-/// body limit (64 MiB by default) bounds it.
-pub(crate) const DEFAULT_MAX_SINGLE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const DEFAULT_MAX_TOTAL_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
+/// Large files go up in parts joined by `blobs/compose`, so a file is bounded
+/// only by the largest blob a store accepts.
+pub(crate) const DEFAULT_MAX_SINGLE_FILE_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
+/// Files above this size are uploaded as parts of this size. It must stay at
+/// or below the Runtime's `LIGHTSPEED_GATEWAY_MAX_BLOB_UPLOAD_BYTES`.
+pub(crate) const DEFAULT_PART_BYTES: u64 = 256 * 1024 * 1024;
+/// The Runtime's default limit for one streamed blob upload.
+const RUNTIME_DEFAULT_BLOB_UPLOAD_BYTES: u64 = 512 * 1024 * 1024;
 pub(crate) const DEFAULT_MAX_DEPTH: usize = 64;
 /// Files above this size stream from disk in a request of their own; smaller
 /// ones are batched through `blobs/put`.
@@ -49,6 +54,8 @@ pub(crate) struct SnapshotUploadOptions {
     pub max_put_many_batch_files: usize,
     pub max_has_many_refs: usize,
     pub stream_threshold_bytes: u64,
+    /// Files above this size are uploaded as parts of this size and joined.
+    pub part_bytes: u64,
     /// Draw progress lines for large files on stderr.
     pub progress: bool,
 }
@@ -66,6 +73,7 @@ impl Default for SnapshotUploadOptions {
             max_put_many_batch_files: DEFAULT_PUT_MANY_MAX_BATCH_FILES,
             max_has_many_refs: DEFAULT_HAS_MANY_MAX_REFS,
             stream_threshold_bytes: DEFAULT_STREAM_THRESHOLD_BYTES,
+            part_bytes: DEFAULT_PART_BYTES,
             progress: false,
         }
     }
@@ -139,7 +147,12 @@ pub(crate) enum SnapshotEntrySource {
 /// Where an uploaded blob's bytes come from.
 #[derive(Clone, Debug)]
 pub(crate) enum UploadSource {
-    Path(PathBuf),
+    /// `length` bytes of the file at `path`, from `offset` on.
+    FileRange {
+        path: PathBuf,
+        offset: u64,
+        length: u64,
+    },
     Bytes(Vec<u8>),
 }
 
@@ -163,6 +176,12 @@ pub(crate) trait CasVfsApi {
         source: UploadSource,
         size_bytes: u64,
         progress: Arc<Progress>,
+    ) -> Result<BlobPutResult, AgentApiError>;
+
+    /// Join uploaded parts into one blob through `blobs/compose`.
+    async fn compose_blob(
+        &self,
+        params: api::BlobComposeParams,
     ) -> Result<BlobPutResult, AgentApiError>;
 
     /// Open a blob for reading from `offset` on. The returned offset is where
@@ -212,10 +231,20 @@ impl CasVfsApi for HttpAgentApi {
                 progress.advance(bytes.len() as u64);
                 reqwest::Body::from(bytes)
             }
-            UploadSource::Path(path) => {
-                let file = tokio::fs::File::open(&path).await.map_err(|error| {
+            UploadSource::FileRange {
+                path,
+                offset,
+                length,
+            } => {
+                use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+                let open = async {
+                    let mut file = tokio::fs::File::open(&path).await?;
+                    file.seek(std::io::SeekFrom::Start(offset)).await?;
+                    Ok::<_, std::io::Error>(file.take(length))
+                };
+                let file = open.await.map_err(|error| {
                     AgentApiError::invalid_request(format!(
-                        "failed to open {}: {error}",
+                        "failed to read {}: {error}",
                         path.display()
                     ))
                 })?;
@@ -223,6 +252,13 @@ impl CasVfsApi for HttpAgentApi {
             }
         };
         HttpAgentApi::upload_blob(self, blob_ref.as_str(), body, size_bytes).await
+    }
+
+    async fn compose_blob(
+        &self,
+        params: api::BlobComposeParams,
+    ) -> Result<BlobPutResult, AgentApiError> {
+        self.request(api::METHOD_BLOBS_COMPOSE, params).await
     }
 
     async fn open_blob(&self, blob_ref: String, offset: u64) -> Result<BlobChunks, AgentApiError> {
@@ -266,7 +302,7 @@ impl CasVfsApi for HttpAgentApi {
 
 /// Read a file as a stream of bounded chunks, counting them as progress.
 fn file_chunks(
-    file: tokio::fs::File,
+    file: impl tokio::io::AsyncRead + Unpin + Send + 'static,
     progress: Arc<Progress>,
 ) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> + Send + 'static {
     futures_util::stream::try_unfold(file, move |mut file| {
@@ -612,7 +648,7 @@ async fn upload_missing_blobs(
                 .stream_threshold_bytes
                 .min(options.max_put_many_batch_bytes)
         {
-            stats = add_upload_stats(stats, stream_upload(api, file, options.progress).await?)?;
+            stats = add_upload_stats(stats, stream_upload(api, file, options).await?)?;
             continue;
         }
         let bytes = read_source_bytes(file)
@@ -646,30 +682,41 @@ async fn upload_missing_blobs(
     Ok(stats)
 }
 
+/// Upload one file in a request of its own, or, above the part size, as
+/// parts joined by `blobs/compose`. Parts that already exist are skipped, so
+/// an interrupted upload resumes on the next run.
 async fn stream_upload(
     api: &(impl CasVfsApi + Sync),
     file: &SnapshotUploadEntry,
-    progress: bool,
+    options: &SnapshotUploadOptions,
 ) -> Result<UploadStats> {
-    let (source, label) = match &file.source {
-        SnapshotEntrySource::HostPath(path) => {
-            (UploadSource::Path(path.clone()), path.display().to_string())
-        }
-        SnapshotEntrySource::Bytes(bytes) => (
-            UploadSource::Bytes(bytes.clone()),
-            file.vfs_path.to_string(),
-        ),
+    let label = match &file.source {
+        SnapshotEntrySource::HostPath(path) => path.display().to_string(),
+        SnapshotEntrySource::Bytes(_) => file.vfs_path.to_string(),
     };
-    let progress = Progress::new(progress, "Uploading", label, file.size_bytes);
-    let result = api
-        .upload_blob(&file.blob_ref, source, file.size_bytes, progress.clone())
-        .await;
+    let part_bytes = options.part_bytes.max(1);
+    let progress = Progress::new(options.progress, "Uploading", label, file.size_bytes);
+    let result = if file.size_bytes <= part_bytes {
+        api.upload_blob(
+            &file.blob_ref,
+            upload_source(file, 0, file.size_bytes),
+            file.size_bytes,
+            progress.clone(),
+        )
+        .await
+        .map_err(crate::api_client::api_error)
+    } else {
+        upload_parts(api, file, part_bytes, options, progress.clone()).await
+    };
     progress.finish();
-    let item = result.map_err(crate::api_client::api_error).with_context(|| {
-        let hint = if file.size_bytes > DEFAULT_MAX_SINGLE_FILE_BYTES {
-            "; a file this large also needs the Runtime's LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES above its size"
+    let item = result.with_context(|| {
+        let request = file.size_bytes.min(part_bytes);
+        let hint = if request > RUNTIME_DEFAULT_BLOB_UPLOAD_BYTES {
+            format!(
+                "; requests of {request} bytes need the Runtime's LIGHTSPEED_GATEWAY_MAX_BLOB_UPLOAD_BYTES at least that high, or a lower --part-bytes"
+            )
         } else {
-            "; if it changed while uploading, run the upload again"
+            "; if it changed while uploading, run the upload again".to_owned()
         };
         format!(
             "failed to upload {} ({} bytes){hint}",
@@ -690,6 +737,115 @@ async fn stream_upload(
         blobs: 1,
         bytes: item.bytes,
     })
+}
+
+fn upload_source(file: &SnapshotUploadEntry, offset: u64, length: u64) -> UploadSource {
+    match &file.source {
+        SnapshotEntrySource::HostPath(path) => UploadSource::FileRange {
+            path: path.clone(),
+            offset,
+            length,
+        },
+        SnapshotEntrySource::Bytes(bytes) => {
+            UploadSource::Bytes(bytes[offset as usize..(offset + length) as usize].to_vec())
+        }
+    }
+}
+
+async fn upload_parts(
+    api: &(impl CasVfsApi + Sync),
+    file: &SnapshotUploadEntry,
+    part_bytes: u64,
+    options: &SnapshotUploadOptions,
+    progress: Arc<Progress>,
+) -> Result<BlobPutResult> {
+    let parts = part_refs(file, part_bytes)?;
+    if parts.len() > api::MAX_BLOB_COMPOSE_PARTS {
+        bail!(
+            "{} would need {} parts, more than the {} one blob may join; raise --part-bytes",
+            file.source.display(),
+            parts.len(),
+            api::MAX_BLOB_COMPOSE_PARTS
+        );
+    }
+    let unique = parts
+        .iter()
+        .map(|(blob_ref, _, _)| blob_ref.as_str().to_owned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let existing = existing_blob_refs(api, unique, options).await?;
+    let mut sent = BTreeSet::new();
+    for (blob_ref, offset, length) in &parts {
+        if existing.contains(blob_ref.as_str()) || !sent.insert(blob_ref.as_str().to_owned()) {
+            progress.advance(*length);
+            continue;
+        }
+        let item = api
+            .upload_blob(
+                blob_ref,
+                upload_source(file, *offset, *length),
+                *length,
+                progress.clone(),
+            )
+            .await
+            .map_err(crate::api_client::api_error)
+            .with_context(|| format!("failed to upload the part at byte {offset}"))?;
+        if item.blob_ref != blob_ref.as_str() || item.bytes != *length {
+            bail!(
+                "gateway stored unexpected part: expected {blob_ref} {length} bytes, got {} {} bytes",
+                item.blob_ref,
+                item.bytes
+            );
+        }
+    }
+    api.compose_blob(api::BlobComposeParams {
+        blob_ref: file.blob_ref.as_str().to_owned(),
+        parts: parts
+            .iter()
+            .map(|(blob_ref, _, _)| blob_ref.as_str().to_owned())
+            .collect(),
+        size_bytes: file.size_bytes,
+    })
+    .await
+    .map_err(crate::api_client::api_error)
+    .context("failed to join the uploaded parts")
+}
+
+/// Refs, offsets and lengths of a file's parts, read in bounded chunks.
+fn part_refs(file: &SnapshotUploadEntry, part_bytes: u64) -> Result<Vec<(BlobRef, u64, u64)>> {
+    let mut parts = Vec::new();
+    let mut offset = 0u64;
+    match &file.source {
+        SnapshotEntrySource::Bytes(bytes) => {
+            for chunk in bytes.chunks(part_bytes as usize) {
+                parts.push((BlobRef::from_bytes(chunk), offset, chunk.len() as u64));
+                offset += chunk.len() as u64;
+            }
+        }
+        SnapshotEntrySource::HostPath(path) => {
+            let mut reader = fs::File::open(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            loop {
+                let mut hasher = Sha256::new();
+                let length = hash_reader(&mut (&mut reader).take(part_bytes), &mut hasher)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                if length == 0 {
+                    break;
+                }
+                parts.push((blob_ref_from_hasher(hasher), offset, length));
+                offset += length;
+            }
+        }
+    }
+    if offset != file.size_bytes {
+        bail!(
+            "file changed while snapshotting {}: expected {} bytes, read {offset}",
+            file.source.display(),
+            file.size_bytes
+        );
+    }
+    Ok(parts)
 }
 
 async fn flush_put_many(
@@ -1477,6 +1633,77 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn large_file_goes_up_as_parts_and_skips_parts_that_exist() {
+        let temp = tempdir().unwrap();
+        let bytes = (0..50u8).collect::<Vec<_>>();
+        fs::write(temp.path().join("large.bin"), &bytes).unwrap();
+        // The second of four 16-byte parts is already there, as after an
+        // interrupted upload.
+        let present = BlobRef::from_bytes(&bytes[16..32]).as_str().to_owned();
+        let api = FakeCasVfsApi::new([]);
+        api.existing.lock().unwrap().insert(present.clone());
+        api.blobs
+            .lock()
+            .unwrap()
+            .insert(present.clone(), bytes[16..32].to_vec());
+        let options = SnapshotUploadOptions {
+            stream_threshold_bytes: 8,
+            part_bytes: 16,
+            ..SnapshotUploadOptions::default()
+        };
+
+        let summary = upload_snapshot_directory(&api, temp.path(), options)
+            .await
+            .unwrap();
+
+        assert_eq!(summary.uploaded_blobs, 1);
+        assert_eq!(summary.uploaded_bytes, 50);
+        let parts = [&bytes[..16], &bytes[16..32], &bytes[32..48], &bytes[48..]]
+            .map(|part| BlobRef::from_bytes(part).as_str().to_owned());
+        assert_eq!(api.composed.lock().unwrap().as_slice(), &[parts.to_vec()]);
+        let streamed = api.streamed.lock().unwrap().clone();
+        assert_eq!(
+            streamed,
+            vec![parts[0].clone(), parts[2].clone(), parts[3].clone()]
+        );
+        assert!(
+            api.existing
+                .lock()
+                .unwrap()
+                .contains(BlobRef::from_bytes(&bytes).as_str())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_parts_are_uploaded_once() {
+        let bytes = vec![9u8; 48];
+        let api = FakeCasVfsApi::new([]);
+        let plan = SnapshotUploadPlan {
+            root: "<generated>".to_owned(),
+            directories: Vec::new(),
+            files: vec![SnapshotUploadEntry {
+                vfs_path: VfsPath::parse("/same.bin").unwrap(),
+                source: SnapshotEntrySource::Bytes(bytes.clone()),
+                blob_ref: BlobRef::from_bytes(&bytes),
+                size_bytes: bytes.len() as u64,
+                media_type: None,
+                executable: false,
+            }],
+            warnings: Vec::new(),
+        };
+        let options = SnapshotUploadOptions {
+            stream_threshold_bytes: 8,
+            part_bytes: 16,
+            ..SnapshotUploadOptions::default()
+        };
+
+        upload_snapshot_plan(&api, plan, options).await.unwrap();
+
+        assert_eq!(api.streamed.lock().unwrap().len(), 1);
+        assert_eq!(api.composed.lock().unwrap()[0].len(), 3);
+    }
+
     #[test]
     fn hash_file_matches_whole_file_digest_across_buffer_boundaries() {
         let temp = tempdir().unwrap();
@@ -1638,6 +1865,7 @@ mod tests {
         snapshots: Mutex<BTreeMap<String, VfsSnapshotManifest>>,
         put_batches: Mutex<Vec<Vec<Vec<u8>>>>,
         streamed: Mutex<Vec<String>>,
+        composed: Mutex<Vec<Vec<String>>>,
         opened: Mutex<Vec<(String, u64)>>,
         fail_after_chunks: Mutex<Option<usize>>,
         ranges: bool,
@@ -1652,6 +1880,7 @@ mod tests {
                 snapshots: Mutex::new(BTreeMap::new()),
                 put_batches: Mutex::new(Vec::new()),
                 streamed: Mutex::new(Vec::new()),
+                composed: Mutex::new(Vec::new()),
                 opened: Mutex::new(Vec::new()),
                 fail_after_chunks: Mutex::new(None),
                 ranges: true,
@@ -1727,7 +1956,11 @@ mod tests {
         ) -> Result<BlobPutResult, AgentApiError> {
             let bytes = match source {
                 UploadSource::Bytes(bytes) => bytes,
-                UploadSource::Path(path) => fs::read(path).unwrap(),
+                UploadSource::FileRange {
+                    path,
+                    offset,
+                    length,
+                } => fs::read(path).unwrap()[offset as usize..(offset + length) as usize].to_vec(),
             };
             progress.advance(bytes.len() as u64);
             if bytes.len() as u64 != size_bytes || BlobRef::from_bytes(&bytes) != *blob_ref {
@@ -1750,6 +1983,41 @@ mod tests {
             Ok(BlobPutResult {
                 blob_ref: blob_ref.as_str().to_owned(),
                 bytes: bytes.len() as u64,
+            })
+        }
+
+        async fn compose_blob(
+            &self,
+            params: api::BlobComposeParams,
+        ) -> Result<BlobPutResult, AgentApiError> {
+            let mut joined = Vec::new();
+            {
+                let blobs = self.blobs.lock().unwrap();
+                for part in &params.parts {
+                    joined.extend(blobs.get(part).ok_or_else(|| {
+                        AgentApiError::invalid_request(format!("{part} does not exist"))
+                    })?);
+                }
+            }
+            if joined.len() as u64 != params.size_bytes
+                || BlobRef::from_bytes(&joined).as_str() != params.blob_ref
+            {
+                return Err(AgentApiError::invalid_request(
+                    "parts do not join to blobRef",
+                ));
+            }
+            self.composed.lock().unwrap().push(params.parts.clone());
+            self.existing
+                .lock()
+                .unwrap()
+                .insert(params.blob_ref.clone());
+            self.blobs
+                .lock()
+                .unwrap()
+                .insert(params.blob_ref.clone(), joined.clone());
+            Ok(BlobPutResult {
+                blob_ref: params.blob_ref,
+                bytes: joined.len() as u64,
             })
         }
 

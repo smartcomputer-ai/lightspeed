@@ -27,7 +27,7 @@ use super::{
 
 mod bytes;
 
-pub(super) fn router(max_body: usize) -> Router<Arc<GatewayState>> {
+pub(super) fn router(max_body: usize, max_blob_upload: usize) -> Router<Arc<GatewayState>> {
     let mut router = Router::new();
     macro_rules! invoke_operation {
         (initialize, Json, $params:ty, $state:ident, $received:ident, $binding:ident, $id:path) => {{
@@ -129,7 +129,7 @@ pub(super) fn router(max_body: usize) -> Router<Arc<GatewayState>> {
             on(
                 MethodFilter::PUT,
                 move |State(state): State<Arc<GatewayState>>, request: Request| async move {
-                    bytes::upload(state, request, max_body)
+                    bytes::upload(state, request, max_blob_upload)
                         .await
                         .unwrap_or_else(IntoResponse::into_response)
                 },
@@ -966,7 +966,7 @@ mod tests {
 
     #[test]
     fn all_declared_routes_mount_without_collisions() {
-        let _ = router(1024);
+        let _ = router(1024, 1024);
     }
 
     #[tokio::test(flavor = "current_thread")]

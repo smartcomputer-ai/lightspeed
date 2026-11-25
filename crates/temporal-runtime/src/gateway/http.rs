@@ -65,6 +65,9 @@ pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
 pub const DEFAULT_PUBLIC_BIND: &str = "127.0.0.1:18082";
 pub const DEFAULT_ENVIRONMENT_GATEWAY_BIND: &str = "127.0.0.1:18083";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// `blobs/upload` streams its body to a temporary file instead of holding it,
+/// so it has a limit of its own, large enough for the parts of a big file.
+pub const DEFAULT_MAX_BLOB_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 
 pub use super::authentication::{ACTOR_HEADER, UNIVERSE_HEADER};
 
@@ -475,11 +478,29 @@ pub fn gateway_router(
     max_request_body_bytes: usize,
     routes: GatewayRoutes,
 ) -> Router {
+    gateway_router_with_limits(
+        state,
+        max_request_body_bytes,
+        DEFAULT_MAX_BLOB_UPLOAD_BYTES,
+        routes,
+    )
+}
+
+/// [`gateway_router`] with its own limit for streamed `blobs/upload` bodies.
+pub fn gateway_router_with_limits(
+    state: Arc<GatewayState>,
+    max_request_body_bytes: usize,
+    max_blob_upload_bytes: usize,
+    routes: GatewayRoutes,
+) -> Router {
     let mut router = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/ready", get(readiness));
     if routes.api {
-        router = router.merge(resource::router(max_request_body_bytes));
+        router = router.merge(resource::router(
+            max_request_body_bytes,
+            max_blob_upload_bytes,
+        ));
     }
     if routes.public {
         router = router

@@ -342,6 +342,9 @@ pub trait AgentApiService: Send + Sync {
 
     async fn has_blobs(&self, params: BlobHasParams) -> Result<BlobHasResponse, AgentApiError>;
 
+    async fn compose_blob(&self, params: BlobComposeParams)
+    -> Result<BlobPutResult, AgentApiError>;
+
     async fn commit_vfs_snapshot(
         &self,
         params: VfsSnapshotCommitParams,

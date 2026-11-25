@@ -73,6 +73,7 @@ pub const METHOD_BLOBS_UPLOAD: &str = "blobs/upload";
 pub const METHOD_BLOBS_PUT: &str = "blobs/put";
 pub const METHOD_BLOBS_READ: &str = "blobs/read";
 pub const METHOD_BLOBS_HAS: &str = "blobs/has";
+pub const METHOD_BLOBS_COMPOSE: &str = "blobs/compose";
 pub const METHOD_VFS_SNAPSHOTS_COMMIT: &str = "vfs/snapshots/commit";
 pub const METHOD_VFS_SNAPSHOTS_READ: &str = "vfs/snapshots/read";
 pub const METHOD_VFS_WORKSPACES_CREATE: &str = "vfs/workspaces/create";

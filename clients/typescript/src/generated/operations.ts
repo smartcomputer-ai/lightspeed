@@ -73,6 +73,7 @@ export const OPERATIONS = [
   "profiles/put",
   "profiles/delete",
   "blobs/put",
+  "blobs/compose",
   "blobs/read",
   "blobs/has",
   "vfs/snapshots/commit",
@@ -689,6 +690,14 @@ export const OPERATION_INFO = {
     access: {"action":"useResource","kind":"universe"},
     summary: "Store content-addressed blobs",
     description: "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
+  },
+  "blobs/compose": {
+    scope: "universe",
+    streaming: false,
+    notifications: [],
+    access: {"action":"useResource","kind":"universe"},
+    summary: "Join uploaded parts into one blob",
+    description: "Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.",
   },
   "blobs/read": {
     scope: "universe",
@@ -1879,6 +1888,15 @@ export interface OperationMap {
   "blobs/put": {
     params: Api.BlobPutParams;
     result: Api.BlobPutResponse;
+  };
+  /**
+   * Join uploaded parts into one blob
+   *
+   * Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.
+   */
+  "blobs/compose": {
+    params: Api.BlobComposeParams;
+    result: Api.BlobPutResult;
   };
   /**
    * Read a content-addressed blob

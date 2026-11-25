@@ -168,7 +168,10 @@ impl MethodGroup {
         method_access(method)?;
         let group = |prefix: &str| method.starts_with(prefix);
         Some(
-            if matches!(method, METHOD_BLOBS_PUT | METHOD_BLOBS_UPLOAD) {
+            if matches!(
+                method,
+                METHOD_BLOBS_PUT | METHOD_BLOBS_UPLOAD | crate::METHOD_BLOBS_COMPOSE
+            ) {
                 Self::BlobsPut
             } else if matches!(method, "session/delete" | "session/retention/put") {
                 Self::SessionDelete
@@ -498,6 +501,7 @@ mod tests {
             ("blobs/has", Some(MethodGroup::Session)),
             ("blobs/put", Some(MethodGroup::BlobsPut)),
             ("blobs/upload", Some(MethodGroup::BlobsPut)),
+            ("blobs/compose", Some(MethodGroup::BlobsPut)),
             ("vfs/workspaces/create", Some(MethodGroup::Vfs)),
             ("profiles/put", Some(MethodGroup::Profiles)),
             ("models/list", Some(MethodGroup::Models)),

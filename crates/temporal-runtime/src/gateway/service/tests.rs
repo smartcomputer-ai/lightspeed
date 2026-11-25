@@ -3720,3 +3720,88 @@ fn a_request_only_answers_for_a_default_it_changes() {
     let no_default = features(vec![attached("a", false)]);
     assert_eq!(named(&no_default, Some(&on_a)), None);
 }
+
+fn compose_params(target: &[u8], parts: &[&[u8]]) -> api::BlobComposeParams {
+    api::BlobComposeParams {
+        blob_ref: harness::BlobRef::from_bytes(target).as_str().to_owned(),
+        parts: parts
+            .iter()
+            .map(|part| harness::BlobRef::from_bytes(part).as_str().to_owned())
+            .collect(),
+        size_bytes: target.len() as u64,
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn compose_blob_joins_parts_in_order_and_repeats_idempotently() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let first = vec![1u8; harness::storage::MAX_BLOB_RANGE_BYTES + 7];
+    let second = b"tail".to_vec();
+    store.put_bytes(first.clone()).await.unwrap();
+    store.put_bytes(second.clone()).await.unwrap();
+    let joined = [first.as_slice(), second.as_slice(), first.as_slice()].concat();
+    let params = compose_params(&joined, &[&first, &second, &first]);
+
+    let result = blobs::compose_blob(&store, params.clone())
+        .await
+        .expect("compose");
+    assert_eq!(result.blob_ref, params.blob_ref);
+    assert_eq!(result.bytes, joined.len() as u64);
+    let stored = store
+        .read_bytes(&harness::BlobRef::from_bytes(&joined))
+        .await
+        .unwrap();
+    assert_eq!(stored, joined);
+
+    let again = blobs::compose_blob(&store, params)
+        .await
+        .expect("compose again");
+    assert_eq!(again.bytes, joined.len() as u64);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn compose_blob_refuses_wrong_lengths_digests_and_missing_parts() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    store.put_bytes(b"abc".to_vec()).await.unwrap();
+    store.put_bytes(b"def".to_vec()).await.unwrap();
+    let kind = |result: Result<api::BlobPutResult, AgentApiError>| result.unwrap_err().kind;
+
+    let mut wrong_size = compose_params(b"abcdef", &[b"abc", b"def"]);
+    wrong_size.size_bytes = 5;
+    assert_eq!(
+        kind(blobs::compose_blob(&store, wrong_size).await),
+        AgentApiErrorKind::InvalidRequest
+    );
+
+    let mut wrong_digest = compose_params(b"abcdef", &[b"abc", b"def"]);
+    wrong_digest.blob_ref = harness::BlobRef::from_bytes(b"defabc").as_str().to_owned();
+    assert_eq!(
+        kind(blobs::compose_blob(&store, wrong_digest).await),
+        AgentApiErrorKind::InvalidRequest
+    );
+    assert!(
+        !store
+            .has_blob(&harness::BlobRef::from_bytes(b"abcdef"))
+            .await
+            .unwrap()
+    );
+
+    let missing = compose_params(b"abcxyz", &[b"abc", b"xyz"]);
+    assert_eq!(
+        kind(blobs::compose_blob(&store, missing).await),
+        AgentApiErrorKind::InvalidRequest
+    );
+
+    let mut none = compose_params(b"", &[]);
+    none.parts.clear();
+    assert_eq!(
+        kind(blobs::compose_blob(&store, none).await),
+        AgentApiErrorKind::InvalidRequest
+    );
+    let mut too_many = compose_params(b"abc", &[b"abc"]);
+    too_many.parts = vec![too_many.parts[0].clone(); api::MAX_BLOB_COMPOSE_PARTS + 1];
+    assert_eq!(
+        kind(blobs::compose_blob(&store, too_many).await),
+        AgentApiErrorKind::InvalidRequest
+    );
+}

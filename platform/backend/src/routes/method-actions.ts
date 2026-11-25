@@ -6,6 +6,7 @@ import type { CoreUniverseAction } from "@lightspeed-ai/platform-shared";
 
 /** The universe action each universe method requires. */
 export const METHOD_ACTIONS: Readonly<Record<string, CoreUniverseAction>> = {
+  "blobs/compose": "useResource",
   "blobs/has": "read",
   "blobs/put": "useResource",
   "blobs/read": "read",

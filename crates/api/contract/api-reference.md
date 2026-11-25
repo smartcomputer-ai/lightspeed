@@ -1086,6 +1086,22 @@ Decodes and stores a batch of base64 payloads, returning immutable content refer
 - Group: `blobs/put`
 - Role: `contributor`
 
+### `blobs/compose`
+
+**Join uploaded parts into one blob**
+
+Streams the part blobs, in order, into blobRef and verifies its length and SHA-256 before publishing. Upload a large file as parts with blobs/upload, use blobs/has to resume, then compose. Composing existing content only renews its grace. Parts stay ordinary blobs, collected after the usual grace period.
+
+- HTTP: `POST /api/v1/universes/{universe}/blobs/{blobRef}/compose`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `blobRef` → `blobRef`
+- Request body: JSON object: `parts`, `sizeBytes`
+- Access: `{"action":"useResource","kind":"universe"}`
+- Group: `blobs/put`
+- Role: `contributor`
+
 ### `blobs/read`
 
 **Read a content-addressed blob**
